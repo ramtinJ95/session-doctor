@@ -45,7 +45,7 @@ def doctor(
     ] = None,
 ) -> None:
     """Check local prerequisites without modifying agent session directories."""
-    database_path = db.expanduser() if db else default_database_path()
+    database_path = database_path_from_option(db)
     checks = [
         ("Python version", supports_current_python(), sys.version.split()[0]),
         (
@@ -141,7 +141,9 @@ def init_database(
     ] = None,
 ) -> None:
     """Create the local DuckDB database and schema tables."""
-    store = DuckDBStore(db.expanduser() if db else default_database_path())
+    database_path = database_path_from_option(db)
+    require_valid_database_path(database_path)
+    store = DuckDBStore(database_path)
     info = store.initialize()
     console.print(f"Initialized DuckDB store: {info.database_path}")
     console.print(f"Schema version: {info.schema_version}")
@@ -159,7 +161,9 @@ def database_info(
     ] = None,
 ) -> None:
     """Show local DuckDB database path and schema status."""
-    store = DuckDBStore(db.expanduser() if db else default_database_path())
+    database_path = database_path_from_option(db)
+    require_valid_database_path(database_path)
+    store = DuckDBStore(database_path)
     info = store.info()
 
     table = Table(title="DuckDB store")
@@ -191,6 +195,17 @@ def database_path_is_valid(path: Path) -> bool:
     if expanded_path.exists() and not expanded_path.is_file():
         return False
     return path_can_be_created(expanded_path.parent)
+
+
+def database_path_from_option(path: Path | None) -> Path:
+    return path.expanduser() if path else default_database_path()
+
+
+def require_valid_database_path(path: Path) -> None:
+    if database_path_is_valid(path):
+        return
+    console.print(f"[red]Invalid database path:[/red] {path}")
+    raise typer.Exit(1)
 
 
 def scan_adapter_summary(adapter: BaseAdapter) -> str:

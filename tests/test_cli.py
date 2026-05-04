@@ -39,6 +39,20 @@ def test_doctor_rejects_existing_directory_as_database_path(tmp_path) -> None:
     assert "Result: failed" in result.stdout
 
 
+def test_db_init_rejects_existing_directory_as_database_path(tmp_path) -> None:
+    result = runner.invoke(app, ["db", "init", "--db", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "Invalid database path" in result.stdout
+
+
+def test_db_info_rejects_existing_directory_as_database_path(tmp_path) -> None:
+    result = runner.invoke(app, ["db", "info", "--db", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "Invalid database path" in result.stdout
+
+
 def test_adapters_list_without_scan() -> None:
     result = runner.invoke(app, ["adapters", "list"])
 
