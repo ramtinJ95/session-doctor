@@ -5,7 +5,7 @@ from pathlib import Path
 
 import duckdb
 
-from .migrations import SCHEMA_VERSION, TABLE_NAMES, apply_migrations
+from .migrations import apply_migrations
 
 
 @dataclass(frozen=True)
@@ -67,11 +67,3 @@ class DuckDBStore:
             "SELECT MAX(version) FROM schema_migrations",
         ).fetchone()
         return int(row[0]) if row and row[0] is not None else None
-
-
-def expected_table_count() -> int:
-    return len(TABLE_NAMES)
-
-
-def current_schema_version() -> int:
-    return SCHEMA_VERSION
