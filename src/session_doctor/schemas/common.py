@@ -40,4 +40,3 @@ class SourceKind(StrEnum):
 Confidence = Annotated[float, Field(ge=0.0, le=1.0)]
 Metadata = dict[str, Any]
 OptionalDatetime = datetime | None
-

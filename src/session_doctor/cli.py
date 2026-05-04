@@ -4,16 +4,17 @@ import importlib.util
 import os
 import sys
 from pathlib import Path
+from typing import Annotated
 
+import typer
 from rich.console import Console
 from rich.table import Table
-import typer
 
 from . import __version__
 from .adapters import BaseAdapter, built_in_adapters
 from .config import default_database_path, supports_current_python
 from .schemas import SourceKind
-from .store import DuckDBStore, TABLE_NAMES
+from .store import TABLE_NAMES, DuckDBStore
 
 console = Console()
 
@@ -35,11 +36,13 @@ def version() -> None:
 
 @app.command()
 def doctor(
-    db: Path | None = typer.Option(
-        None,
-        "--db",
-        help="DuckDB path to check. Defaults to SESSION_DOCTOR_DB or app data.",
-    ),
+    db: Annotated[
+        Path | None,
+        typer.Option(
+            "--db",
+            help="DuckDB path to check. Defaults to SESSION_DOCTOR_DB or app data.",
+        ),
+    ] = None,
 ) -> None:
     """Check local prerequisites without modifying agent session directories."""
     database_path = db.expanduser() if db else default_database_path()
@@ -96,11 +99,13 @@ def doctor(
 
 @adapters_app.command("list")
 def list_adapters(
-    scan: bool = typer.Option(
-        False,
-        "--scan",
-        help="Count candidate source files under each default adapter root.",
-    ),
+    scan: Annotated[
+        bool,
+        typer.Option(
+            "--scan",
+            help="Count candidate source files under each default adapter root.",
+        ),
+    ] = False,
 ) -> None:
     """Show built-in adapters and their default roots."""
     table = Table(title="Built-in adapters")
@@ -127,11 +132,13 @@ def list_adapters(
 
 @db_app.command("init")
 def init_database(
-    db: Path | None = typer.Option(
-        None,
-        "--db",
-        help="DuckDB path to initialize. Defaults to SESSION_DOCTOR_DB or app data.",
-    ),
+    db: Annotated[
+        Path | None,
+        typer.Option(
+            "--db",
+            help="DuckDB path to initialize. Defaults to SESSION_DOCTOR_DB or app data.",
+        ),
+    ] = None,
 ) -> None:
     """Create the local DuckDB database and schema tables."""
     store = DuckDBStore(db.expanduser() if db else default_database_path())
@@ -143,11 +150,13 @@ def init_database(
 
 @db_app.command("info")
 def database_info(
-    db: Path | None = typer.Option(
-        None,
-        "--db",
-        help="DuckDB path to inspect. Defaults to SESSION_DOCTOR_DB or app data.",
-    ),
+    db: Annotated[
+        Path | None,
+        typer.Option(
+            "--db",
+            help="DuckDB path to inspect. Defaults to SESSION_DOCTOR_DB or app data.",
+        ),
+    ] = None,
 ) -> None:
     """Show local DuckDB database path and schema status."""
     store = DuckDBStore(db.expanduser() if db else default_database_path())
@@ -183,9 +192,7 @@ def scan_adapter_summary(adapter: BaseAdapter) -> str:
     for source in sources:
         counts[source.source_kind] += 1
     populated_counts = [
-        f"{source_kind.value}={count}"
-        for source_kind, count in counts.items()
-        if count
+        f"{source_kind.value}={count}" for source_kind, count in counts.items() if count
     ]
     return ", ".join(populated_counts) if populated_counts else "0"
 

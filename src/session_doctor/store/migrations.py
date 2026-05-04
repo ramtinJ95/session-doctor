@@ -218,4 +218,3 @@ CREATE_TABLE_STATEMENTS = (
     )
     """,
 )
-
