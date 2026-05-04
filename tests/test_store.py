@@ -3,7 +3,7 @@ from __future__ import annotations
 import duckdb
 import pytest
 
-from session_doctor.store import DuckDBStore, SCHEMA_VERSION, TABLE_NAMES
+from session_doctor.store import SCHEMA_VERSION, TABLE_NAMES, DuckDBStore
 from session_doctor.store.migrations import apply_migrations
 
 
@@ -45,4 +45,3 @@ def test_migration_rejects_newer_schema(tmp_path) -> None:
         )
         with pytest.raises(RuntimeError, match="newer"):
             apply_migrations(connection)
-

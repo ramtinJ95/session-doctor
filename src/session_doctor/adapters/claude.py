@@ -53,4 +53,3 @@ def classify_claude_path(path: Path) -> SourceKind:
     if path.suffix in {".md", ".txt"}:
         return SourceKind.MEMORY
     return SourceKind.AUXILIARY
-

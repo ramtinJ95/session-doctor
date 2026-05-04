@@ -54,4 +54,3 @@ class BaseAdapter(ABC):
         if root is not None:
             return root.expanduser()
         return self.default_roots()[0]
-

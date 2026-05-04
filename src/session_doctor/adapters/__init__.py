@@ -18,4 +18,3 @@ __all__ = [
     "PiAdapter",
     "built_in_adapters",
 ]
-

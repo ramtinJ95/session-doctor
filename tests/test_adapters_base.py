@@ -76,4 +76,3 @@ def test_classify_claude_path_prefers_tool_results(tmp_path) -> None:
     path = tmp_path / "project" / "session" / "tool-results" / "result.txt"
 
     assert classify_claude_path(path) == SourceKind.TOOL_RESULT
-

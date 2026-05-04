@@ -14,4 +14,3 @@ def stable_id(*parts: object) -> str:
 
 def source_id_for_path(agent_name: AgentName, path: Path | str) -> str:
     return stable_id("source", agent_name.value, Path(path).expanduser())
-

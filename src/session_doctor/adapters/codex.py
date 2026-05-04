@@ -31,4 +31,3 @@ class CodexAdapter(BaseAdapter):
             for path in sorted(discovery_root.rglob("*.jsonl"))
             if path.is_file()
         ]
-
