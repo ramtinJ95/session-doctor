@@ -11,11 +11,13 @@ import typer
 
 from . import __version__
 from .config import default_adapter_roots, default_database_path, supports_current_python
+from .store import DuckDBStore, TABLE_NAMES
 
 console = Console()
 
 app = typer.Typer(help="Inspect and diagnose local AI agent sessions.")
 adapters_app = typer.Typer(help="Inspect built-in session adapters.")
+db_app = typer.Typer(help="Manage the local DuckDB store.")
 
 
 @app.callback()
@@ -119,6 +121,44 @@ def list_adapters(
     console.print(table)
 
 
+@db_app.command("init")
+def init_database(
+    db: Path | None = typer.Option(
+        None,
+        "--db",
+        help="DuckDB path to initialize. Defaults to SESSION_DOCTOR_DB or app data.",
+    ),
+) -> None:
+    """Create the local DuckDB database and schema tables."""
+    store = DuckDBStore(db.expanduser() if db else default_database_path())
+    info = store.initialize()
+    console.print(f"Initialized DuckDB store: {info.database_path}")
+    console.print(f"Schema version: {info.schema_version}")
+    console.print(f"Tables: {len(info.tables)}/{len(TABLE_NAMES)}")
+
+
+@db_app.command("info")
+def database_info(
+    db: Path | None = typer.Option(
+        None,
+        "--db",
+        help="DuckDB path to inspect. Defaults to SESSION_DOCTOR_DB or app data.",
+    ),
+) -> None:
+    """Show local DuckDB database path and schema status."""
+    store = DuckDBStore(db.expanduser() if db else default_database_path())
+    info = store.info()
+
+    table = Table(title="DuckDB store")
+    table.add_column("Property")
+    table.add_column("Value")
+    table.add_row("Path", str(info.database_path))
+    table.add_row("Exists", "yes" if info.exists else "no")
+    table.add_row("Schema version", str(info.schema_version or "unknown"))
+    table.add_row("Tables", f"{len(info.tables)}/{len(TABLE_NAMES)}")
+    console.print(table)
+
+
 def os_access_writable(path: Path) -> bool:
     try:
         return path.exists() and path.is_dir() and os.access(path, os.W_OK)
@@ -170,3 +210,4 @@ def graph(session_id: str) -> None:
 
 
 app.add_typer(adapters_app, name="adapters")
+app.add_typer(db_app, name="db")
