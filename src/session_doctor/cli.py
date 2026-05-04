@@ -55,11 +55,11 @@ def doctor(
         ),
     ]
 
-    database_parent_writable = path_can_be_created(database_path.parent)
+    database_path_valid = database_path_is_valid(database_path)
     checks.append(
         (
             "Database path",
-            database_parent_writable,
+            database_path_valid,
             str(database_path),
         )
     )
@@ -184,6 +184,13 @@ def path_can_be_created(path: Path) -> bool:
     while not current_path.exists() and current_path != current_path.parent:
         current_path = current_path.parent
     return os_access_writable(current_path)
+
+
+def database_path_is_valid(path: Path) -> bool:
+    expanded_path = path.expanduser()
+    if expanded_path.exists() and not expanded_path.is_file():
+        return False
+    return path_can_be_created(expanded_path.parent)
 
 
 def scan_adapter_summary(adapter: BaseAdapter) -> str:

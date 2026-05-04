@@ -27,7 +27,7 @@ class ClaudeCodeAdapter(BaseAdapter):
         ]
 
     def _source_for_path(self, path: Path, root: Path) -> SessionSource:
-        source_kind = classify_claude_path(path)
+        source_kind = classify_claude_path(path, root)
         return SessionSource(
             source_id=source_id_for_path(self.name, path),
             agent_name=self.name,
@@ -40,13 +40,14 @@ class ClaudeCodeAdapter(BaseAdapter):
         )
 
 
-def classify_claude_path(path: Path) -> SourceKind:
-    parent_names = {parent.name for parent in path.parents}
-    if "tool-results" in parent_names:
+def classify_claude_path(path: Path, root: Path | None = None) -> SourceKind:
+    relative_path = path.relative_to(root) if root and path.is_relative_to(root) else path
+    parts = relative_path.parts
+    if len(parts) >= 4 and parts[-2] == "tool-results":
         return SourceKind.TOOL_RESULT
-    if "subagents" in parent_names and path.suffix == ".jsonl":
+    if len(parts) >= 4 and parts[-2] == "subagents" and path.suffix == ".jsonl":
         return SourceKind.SUBSESSION
-    if "subagents" in parent_names and path.suffix == ".json":
+    if len(parts) >= 4 and parts[-2] == "subagents" and path.suffix == ".json":
         return SourceKind.SUBAGENT_METADATA
     if path.suffix == ".jsonl":
         return SourceKind.ROOT_SESSION

@@ -75,4 +75,21 @@ def test_parse_source_is_deferred() -> None:
 def test_classify_claude_path_prefers_tool_results(tmp_path) -> None:
     path = tmp_path / "project" / "session" / "tool-results" / "result.txt"
 
-    assert classify_claude_path(path) == SourceKind.TOOL_RESULT
+    assert classify_claude_path(path, tmp_path) == SourceKind.TOOL_RESULT
+
+
+def test_claude_discovery_classifies_layout_names_relative_to_root(tmp_path) -> None:
+    root_named_tool_results = tmp_path / "tool-results" / "session.jsonl"
+    project_named_subagents = tmp_path / "subagents" / "session.jsonl"
+    real_subagent = tmp_path / "project" / "session" / "subagents" / "agent-a.jsonl"
+
+    for path in (root_named_tool_results, project_named_subagents, real_subagent):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}\n")
+
+    sources = ClaudeCodeAdapter().discover(tmp_path)
+    by_path = {source.source_path: source.source_kind for source in sources}
+
+    assert by_path[str(root_named_tool_results)] == SourceKind.ROOT_SESSION
+    assert by_path[str(project_named_subagents)] == SourceKind.ROOT_SESSION
+    assert by_path[str(real_subagent)] == SourceKind.SUBSESSION
