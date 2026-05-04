@@ -30,6 +30,15 @@ def test_db_info_reports_missing_temp_database(tmp_path) -> None:
     assert "no" in result.stdout
 
 
+def test_doctor_rejects_existing_directory_as_database_path(tmp_path) -> None:
+    result = runner.invoke(app, ["doctor", "--db", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "Database path" in result.stdout
+    assert "error" in result.stdout
+    assert "Result: failed" in result.stdout
+
+
 def test_adapters_list_without_scan() -> None:
     result = runner.invoke(app, ["adapters", "list"])
 
