@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .common import AgentName, Confidence, NormalizedRole, SourceKind
+from .common import AgentName, Confidence, NormalizedRole, SessionDoctorModel, SourceKind
 from .events import RawEvent
 from .files import FileActivity
 from .graph import GraphEdge, GraphNode
@@ -23,9 +23,9 @@ __all__ = [
     "ParseWarning",
     "RawEvent",
     "Session",
+    "SessionDoctorModel",
     "SessionSource",
     "SourceKind",
     "ToolCall",
     "ToolResult",
 ]
-

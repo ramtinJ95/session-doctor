@@ -10,7 +10,9 @@ from rich.table import Table
 import typer
 
 from . import __version__
-from .config import default_adapter_roots, default_database_path, supports_current_python
+from .adapters import BaseAdapter, built_in_adapters
+from .config import default_database_path, supports_current_python
+from .schemas import SourceKind
 from .store import DuckDBStore, TABLE_NAMES
 
 console = Console()
@@ -72,14 +74,15 @@ def doctor(
             has_errors = True
         table.add_row(check_name, "ok" if ok else "error", detail)
 
-    for adapter_root in default_adapter_roots():
-        exists = adapter_root.path.exists()
+    for adapter in built_in_adapters():
+        root = adapter.default_roots()[0]
+        exists = root.exists()
         if not exists:
             has_warnings = True
         table.add_row(
-            f"{adapter_root.display_name} sessions",
+            f"{adapter.display_name} sessions",
             "found" if exists else "missing",
-            str(adapter_root.path),
+            str(root),
         )
 
     console.print(table)
@@ -107,15 +110,16 @@ def list_adapters(
     if scan:
         table.add_column("Candidates")
 
-    for adapter_root in default_adapter_roots():
-        exists = adapter_root.path.exists()
+    for adapter in built_in_adapters():
+        root = adapter.default_roots()[0]
+        exists = root.exists()
         row = [
-            adapter_root.display_name,
-            str(adapter_root.path),
+            adapter.display_name,
+            str(root),
             "found" if exists else "missing",
         ]
         if scan:
-            row.append(str(count_jsonl_candidates(adapter_root.path)) if exists else "0")
+            row.append(scan_adapter_summary(adapter) if exists else "0")
         table.add_row(*row)
 
     console.print(table)
@@ -173,8 +177,17 @@ def path_can_be_created(path: Path) -> bool:
     return os_access_writable(current_path)
 
 
-def count_jsonl_candidates(path: Path) -> int:
-    return sum(1 for candidate in path.rglob("*.jsonl") if candidate.is_file())
+def scan_adapter_summary(adapter: BaseAdapter) -> str:
+    sources = adapter.discover()
+    counts = {source_kind: 0 for source_kind in SourceKind}
+    for source in sources:
+        counts[source.source_kind] += 1
+    populated_counts = [
+        f"{source_kind.value}={count}"
+        for source_kind, count in counts.items()
+        if count
+    ]
+    return ", ".join(populated_counts) if populated_counts else "0"
 
 
 def not_implemented(command_name: str) -> None:
