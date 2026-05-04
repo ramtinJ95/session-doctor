@@ -1,0 +1,1619 @@
+# session-doctor Design Plan
+
+## Intent
+
+`session-doctor` is a local-first CLI for analyzing AI agent sessions across
+tools like Codex, Claude Code, and Pi.
+
+The goal is to detect when a session shows signs that:
+
+- the user is stuck
+- the user is repeating the same request
+- the agent is looping or misunderstanding the task
+- prompts are unclear
+- the task is too large or too hard for the current agent
+- tooling or environment failures are blocking progress
+- a project has grown complex enough that refactoring or task decomposition is
+  warranted
+
+The initial product should diagnose individual sessions well. The design should
+also preserve enough structure to support project-level trends across many
+sessions later, because that is the long-term goal.
+
+## Product Shape
+
+The durable product is a CLI, not a skill.
+
+Skills, MCP servers, and agent integrations can wrap the CLI later. The CLI
+itself should remain usable directly by a person and by any agent that can run
+terminal commands.
+
+Example command shape:
+
+```bash
+session-doctor ingest
+session-doctor sessions list
+session-doctor analyze <session-id>
+session-doctor report <session-id>
+session-doctor explain <session-id>
+session-doctor graph <session-id>
+session-doctor export --format jsonl
+session-doctor export --format parquet
+```
+
+The CLI should be local-only by default. It should not call an LLM or external
+API on its own unless an explicit future option enables that. LLM capability can
+come naturally from agents invoking the CLI and using their own reasoning over
+the structured output.
+
+## Initial Scope
+
+The first iteration should support:
+
+- Codex sessions
+- Claude Code sessions
+- Pi sessions
+- single-session diagnosis
+- normalized event storage
+- DuckDB-backed local analysis
+- deterministic features and explainable scoring
+- a planned graph command and graph projection model
+
+OpenCode and other agents should be considered future adapters. The architecture
+should make adding them straightforward, but they are not part of the first
+implementation slice.
+
+## Local Session Inspection Findings
+
+This section captures the initial read-only inspection of real local session
+stores. Keep it as implementation evidence so adapter work does not need to
+rediscover the same format details.
+
+### Codex
+
+Location:
+
+```text
+/Users/ramtinjavanmardi/.codex/sessions
+```
+
+Layout:
+
+```text
+~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<uuid>.jsonl
+```
+
+Observed corpus:
+
+- 148 `.jsonl` files
+- all inspected lines parsed as JSON
+- no other extensions observed in the session store
+
+Representative paths:
+
+```text
+/Users/ramtinjavanmardi/.codex/sessions/2026/05/03/rollout-2026-05-03T20-54-28-019def31-23cd-7e52-86c3-d8e0c47a7ae8.jsonl
+/Users/ramtinjavanmardi/.codex/sessions/2026/05/04/rollout-2026-05-04T18-51-19-019df3e6-c2f0-7313-bba5-cee83f873d26.jsonl
+/Users/ramtinjavanmardi/.codex/sessions/2026/04/30/rollout-2026-04-30T10-50-09-019ddd94-cd56-77c1-9b9c-bf9e575fc68e.jsonl
+```
+
+Every inspected record had this top-level envelope:
+
+```text
+timestamp: ISO-8601 Z string
+type: string
+payload: object
+```
+
+Top-level `type` values observed:
+
+```text
+session_meta
+turn_context
+response_item
+event_msg
+compacted
+```
+
+`session_meta` appears once per file. `payload.id` matches the UUID suffix in
+the filename in inspected examples. Useful keys:
+
+```text
+id
+timestamp
+cwd
+originator
+cli_version
+source
+model_provider
+base_instructions
+git
+agent_nickname
+agent_role
+```
+
+`turn_context` appears per turn and carries runtime context:
+
+```text
+turn_id
+cwd
+model
+current_date
+timezone
+approval_policy
+sandbox_policy
+permission_profile
+effort
+user_instructions
+developer_instructions
+summary
+```
+
+Messages appear in two overlapping representations:
+
+```text
+response_item payload.type=message
+event_msg payload.type=user_message or agent_message
+```
+
+`response_item` message fields:
+
+```text
+type
+role
+content
+phase
+```
+
+Observed roles:
+
+```text
+user
+assistant
+developer
+```
+
+Content is an array of blocks with keys like `type` and `text`. Observed content
+types:
+
+```text
+input_text
+output_text
+```
+
+Assistant phases include:
+
+```text
+commentary
+final_answer
+```
+
+Tool calls are mostly `response_item` records:
+
+```text
+function_call
+function_call_output
+custom_tool_call
+custom_tool_call_output
+```
+
+Useful tool-call fields:
+
+```text
+name
+arguments
+input
+call_id
+status
+output
+```
+
+Observed function names include:
+
+```text
+exec_command
+write_stdin
+update_plan
+spawn_agent
+wait_agent
+close_agent
+```
+
+Command completion has a richer `event_msg` form:
+
+```text
+payload.type=exec_command_end
+call_id
+turn_id
+command
+cwd
+parsed_cmd
+stdout
+stderr
+aggregated_output
+exit_code
+duration
+formatted_output
+status
+process_id
+```
+
+File edits are represented as:
+
+```text
+payload.type=patch_apply_end
+call_id
+turn_id
+stdout
+stderr
+success
+status
+changes
+```
+
+`changes` is keyed by absolute file path. Values can include:
+
+```text
+type
+unified_diff
+move_path
+content
+```
+
+Errors appear as:
+
+```text
+payload.type=error
+message
+codex_error_info
+```
+
+or as failed command events with nonzero `exit_code` or failed `status`.
+
+Codex parser risks:
+
+- The store is live and can change while being scanned.
+- Do not assume `payload.type` exists on every record.
+- There are overlapping message formats; prefer `response_item` for normalized
+  message parsing and use `event_msg` for richer command/edit events.
+- Command output, function arguments, tool output, message text, and patch diffs
+  may contain sensitive content.
+- `cwd` appears at session, turn, and command levels and can differ.
+- `model` is most reliable in `turn_context`; `session_meta` reliably provides
+  model provider.
+- Absolute paths in patch data should be normalized/redacted for reporting.
+- Small or aborted sessions may not have final answers.
+- `compacted` records indicate truncated or summarized prior context.
+
+### Claude Code
+
+Location:
+
+```text
+/Users/ramtinjavanmardi/.claude/projects
+```
+
+Layout:
+
+```text
+~/.claude/projects/<encoded-cwd>/<session-id>.jsonl
+~/.claude/projects/<encoded-cwd>/<session-id>/subagents/agent-*.jsonl
+~/.claude/projects/<encoded-cwd>/<session-id>/subagents/agent-*.meta.json
+~/.claude/projects/<encoded-cwd>/<session-id>/tool-results/*
+```
+
+The encoded project directory is a path-like value with `/` replaced by `-`.
+Use the event-level `cwd` as source of truth instead of trying to decode the
+directory name.
+
+Observed corpus:
+
+- 307 `.jsonl` transcript files
+- 72 root session JSONL files
+- 235 subagent JSONL files
+- 138 `.json` metadata files, mostly subagent metadata
+- 37 persisted tool result files under `tool-results/`
+- memory files also live under this tree and should not be treated as session
+  transcripts
+
+Representative paths:
+
+```text
+/Users/ramtinjavanmardi/.claude/projects/-Users-ramtinjavanmardi/141e0878-0937-4e86-b7b6-3a4f2693992d.jsonl
+/Users/ramtinjavanmardi/.claude/projects/-Users-ramtinjavanmardi-workspace-prefect-data-flows/80a9fdd2-d73d-4863-a53d-2c54f695afe0/subagents/agent-ad008e9.jsonl
+/Users/ramtinjavanmardi/.claude/projects/-Users-ramtinjavanmardi-workspace-classification-poc/08f94311-c003-4b77-95f6-0856f0cd8bb0/tool-results/b1x1mos8g.txt
+```
+
+Each JSONL line is one event object. Main top-level event types observed:
+
+```text
+assistant
+user
+progress
+system
+file-history-snapshot
+attachment
+queue-operation
+last-prompt
+permission-mode
+pr-link
+custom-title
+agent-name
+```
+
+For `assistant`, `user`, `progress`, and `system`, these fields were
+consistently present:
+
+```text
+type
+sessionId
+uuid
+parentUuid
+timestamp
+cwd
+gitBranch
+isSidechain
+userType
+version
+```
+
+Common but not universal fields:
+
+```text
+entrypoint
+slug
+promptId
+agentId
+sourceToolAssistantUUID
+```
+
+Assistant messages are nested under `message`:
+
+```text
+message.id
+message.type
+message.role
+message.model
+message.content
+message.stop_reason
+message.stop_sequence
+message.usage
+```
+
+Assistant content is a list. Observed assistant content block types:
+
+```text
+text
+thinking
+tool_use
+```
+
+User messages are also nested under `message`. User `message.content` can be a
+string or a list. Observed user list block types:
+
+```text
+tool_result
+text
+image
+document
+```
+
+Tool calls are assistant content blocks:
+
+```text
+type=tool_use
+id
+name
+input
+```
+
+Common tool names:
+
+```text
+Bash
+Read
+Edit
+Grep
+Glob
+TaskUpdate
+Write
+Agent
+TaskCreate
+MCP tools
+```
+
+Tool input fields by tool:
+
+```text
+Bash: command, description, timeout, run_in_background
+Read: file_path, limit, offset
+Edit: file_path, old_string, new_string, replace_all
+Write: file_path, content
+Grep: pattern, path, glob, output_mode, head_limit
+```
+
+Tool results are user content blocks:
+
+```text
+type=tool_result
+tool_use_id
+content
+is_error
+```
+
+`is_error` is not always present. Absence should be treated as unknown, not
+false.
+
+Claude Code also adds a top-level `toolUseResult` on many user events. Useful
+keys for Bash:
+
+```text
+stdout
+stderr
+interrupted
+isImage
+noOutputExpected
+```
+
+Useful keys for edits:
+
+```text
+filePath
+oldString
+newString
+originalFile
+structuredPatch
+replaceAll
+userModified
+```
+
+Command output can appear in several places:
+
+```text
+message.content[].tool_result.content
+toolUseResult.stdout
+toolUseResult.stderr
+progress.data.output
+progress.data.fullOutput
+tool-results/* persisted files
+```
+
+Error signals:
+
+```text
+tool_result.is_error=true
+toolUseResult.stderr
+toolUseResult.interrupted
+system subtype=api_error
+assistant top-level error
+assistant isApiErrorMessage
+assistant stop_reason=max_tokens or stop_sequence
+```
+
+Claude parser risks:
+
+- Discovery must classify root sessions, subagent sessions, subagent metadata,
+  persisted tool result files, memory files, and ignored auxiliary files.
+- Do not assume every line has `sessionId`.
+- Do not assume `message.content` is always a string.
+- Do not rely on encoded project directory names for `cwd`.
+- `entrypoint`, `slug`, `promptId`, `agentId`, and
+  `sourceToolAssistantUUID` are not universal.
+- Tool output and file patches can be large and sensitive.
+- Version drift is visible in the same tree; optional keys vary across Claude
+  Code versions.
+
+### Pi
+
+Location:
+
+```text
+/Users/ramtinjavanmardi/.pi/agent/sessions
+```
+
+Layout:
+
+```text
+~/.pi/agent/sessions/<cwd-derived-folder>/<timestamp>_<uuid>.jsonl
+```
+
+Observed corpus:
+
+- 143 `.jsonl` files
+- 15 project/cwd folders
+- all inspected lines parsed as JSON
+- filenames match `YYYY-MM-DDTHH-MM-SS-mmmZ_<uuid>.jsonl`
+
+Representative paths:
+
+```text
+/Users/ramtinjavanmardi/.pi/agent/sessions/--Users-ramtinjavanmardi--/2026-02-16T09-03-56-963Z_b298ea0b-59bc-4f77-bbac-aa487981e7a6.jsonl
+/Users/ramtinjavanmardi/.pi/agent/sessions/--Users-ramtinjavanmardi-workspace-classification_poc--/2026-04-05T20-13-46-802Z_e4ff0c98-d320-41fd-a0fa-d69c2503f901.jsonl
+/Users/ramtinjavanmardi/.pi/agent/sessions/--Users-ramtinjavanmardi-workspace-prefect-data-flows--/2026-04-16T12-12-41-020Z_019d9635-2ebb-768a-94e7-1a5c927c43de.jsonl
+```
+
+Every line is one top-level object with stable common fields:
+
+```text
+type
+id
+timestamp
+parentId
+```
+
+Top-level `type` values observed:
+
+```text
+message
+thinking_level_change
+model_change
+session
+compaction
+custom
+branch_summary
+session_info
+custom_message
+label
+```
+
+`session` row fields:
+
+```text
+type
+id
+timestamp
+cwd
+version
+```
+
+`version` was observed as `3`. `cwd` is reliable. The containing folder is
+lossy and should not be used as source of truth.
+
+Timestamp and ID notes:
+
+- top-level `timestamp` is an ISO UTC-like string
+- nested `message.timestamp` is epoch milliseconds
+- session event `id` matched filename UUID in 142 of 143 inspected files
+- keep both filename-derived and native session IDs
+- event IDs are unique within a file but not globally unique
+
+Message rows have `type=message` and a nested `message` object. Observed roles:
+
+```text
+user
+assistant
+toolResult
+bashExecution
+```
+
+User messages:
+
+```text
+message.role=user
+message.content=[{type, text}]
+```
+
+Assistant messages:
+
+```text
+message.role=assistant
+message.api
+message.provider
+message.model
+message.usage
+message.stopReason
+message.responseId
+message.content
+message.timestamp
+```
+
+Assistant content can include:
+
+```text
+thinking
+text
+toolCall
+```
+
+Tool-call content blocks:
+
+```text
+type=toolCall
+id
+name
+arguments
+partialJson
+```
+
+Observed tool names:
+
+```text
+bash
+read
+edit
+write
+webfetch
+websearch
+todo
+subagent
+deep_research
+deep_research_lite
+```
+
+Tool results:
+
+```text
+message.role=toolResult
+message.toolCallId
+message.toolName
+message.isError
+message.content
+message.details
+message.timestamp
+```
+
+`bashExecution` is a separate representation and should be handled explicitly:
+
+```text
+command
+output
+exitCode
+cancelled
+truncated
+excludeFromContext
+```
+
+Model metadata:
+
+```text
+model_change.provider
+model_change.modelId
+message.provider
+message.model
+message.api
+message.usage
+```
+
+Usage fields:
+
+```text
+input
+output
+cacheRead
+cacheWrite
+totalTokens
+cost
+```
+
+Error signals:
+
+```text
+toolResult.message.isError=true
+assistant message.errorMessage
+assistant message.stopReason=error or aborted
+bashExecution.exitCode != 0
+bashExecution.cancelled
+bashExecution.truncated
+tool-specific details.error
+```
+
+Pi parser risks:
+
+- Event IDs are not globally unique.
+- Filename UUID does not always match native session ID.
+- Do not derive `cwd` from the containing folder.
+- `parentId` can be null for bootstrap events.
+- Assistant content is mixed and may contain thinking, text, and tool calls in
+  one message.
+- `partialJson` exists; prefer parsed `arguments` when present.
+- Tool result text can contain command output or file contents.
+- `edit` and `write` arguments and details can contain full source content or
+  patches.
+- Some tool results include images.
+- Compaction and branch summary events contain useful file metadata but are
+  summaries, not direct turns.
+
+## Minimal Common Schema v0
+
+Codex, Claude Code, and Pi all have enough structure to normalize into one
+timeline model plus derived tool/file/usage tables.
+
+The first common schema should include:
+
+```text
+SessionSource
+RawEvent
+Session
+Message
+ToolCall
+ToolResult
+CommandRun
+FileActivity
+ModelUsage
+ParseWarning
+```
+
+Lowest common reliable fields:
+
+```text
+agent
+source_path
+record_index
+native_event_type
+native_event_id
+native_parent_event_id
+session_id
+timestamp
+cwd
+project_path
+agent_version
+model
+model_provider
+role
+content_block_types
+tool_call_id
+tool_name
+tool_result_is_error
+command_present
+command_exit_code
+file_paths_touched
+is_compaction_or_summary
+```
+
+### SessionSource
+
+```text
+source_id
+agent
+source_path
+source_kind
+discovered_at
+modified_at
+size_bytes
+content_hash
+adapter_version
+```
+
+`source_kind` examples:
+
+```text
+root_session_jsonl
+subagent_session_jsonl
+subagent_meta_json
+persisted_tool_result
+memory_file
+ignored_auxiliary
+```
+
+### Session
+
+```text
+session_id
+native_session_id
+filename_session_id
+agent
+source_path
+started_at
+ended_at
+cwd
+project_path
+git_branch
+agent_version
+parser_version
+is_subsession
+parent_session_id
+has_compaction
+```
+
+Keep both native and filename-derived session IDs where available. The stable
+internal `session_id` can be derived from:
+
+```text
+agent + source_path + native_session_id_or_filename_id
+```
+
+### RawEvent
+
+```text
+event_id
+session_id
+agent
+source_path
+record_index
+timestamp
+native_type
+native_subtype
+native_event_id
+native_parent_event_id
+payload_shape
+```
+
+`event_id` should be a synthetic stable key. Native event IDs are not globally
+unique across all agents and, in Pi, are only unique within a file.
+
+Recommended synthetic key:
+
+```text
+agent + session_id + source_path + record_index
+```
+
+Also preserve native IDs separately for graph edges and traceability.
+
+### Message
+
+```text
+message_id
+session_id
+event_id
+parent_event_id
+timestamp
+role
+normalized_role
+phase
+model
+provider
+stop_reason
+text
+text_length
+text_hash
+content_block_types
+is_sidechain
+```
+
+`text` should be stored locally for user and assistant messages because
+classification requires it. Reports should redact or summarize text by default
+unless the user explicitly asks to show it.
+
+### ToolCall
+
+```text
+tool_call_id
+session_id
+event_id
+timestamp
+tool_name
+normalized_tool_name
+argument_keys
+safe_path
+safe_url
+safe_query
+command_text
+has_large_or_sensitive_args
+```
+
+Do not store raw full arguments by default when they may contain file content,
+patches, secrets, or large command payloads. Preserve selected safe fields and
+argument key summaries.
+
+### ToolResult
+
+```text
+tool_result_id
+session_id
+event_id
+timestamp
+tool_call_id
+tool_name
+is_error
+output_length
+output_hash
+content_block_types
+persisted_output_path
+truncation_status
+```
+
+Store structural and error information by default, not raw output. Raw output
+can contain file contents, SQL, secrets, diffs, or long command logs.
+
+### CommandRun
+
+```text
+command_run_id
+session_id
+event_id
+tool_call_id
+command_text
+cwd
+exit_code
+status
+duration_ms
+stdout_length
+stderr_length
+interrupted
+cancelled
+truncated
+```
+
+Command text is useful for diagnosis and should be stored locally, but reports
+should redact obvious secrets.
+
+### FileActivity
+
+```text
+file_activity_id
+session_id
+event_id
+tool_call_id
+action
+path
+first_changed_line
+has_diff
+diff_length
+success
+```
+
+Actions:
+
+```text
+read
+write
+edit
+patch
+delete
+move
+unknown
+```
+
+Store paths and structural patch metadata by default. Do not store raw diffs,
+raw old/new strings, or write content by default.
+
+### ModelUsage
+
+```text
+usage_id
+session_id
+event_id
+model
+provider
+input_tokens
+output_tokens
+cache_read_tokens
+cache_write_tokens
+total_tokens
+cost
+```
+
+Each adapter should map native usage keys into this common table and preserve
+unmapped keys only as optional metadata if needed later.
+
+### ParseWarning
+
+```text
+warning_id
+session_id
+event_id
+source_path
+record_index
+severity
+code
+message
+native_type
+```
+
+Use parse warnings for unsupported event types, malformed records, missing
+expected IDs, inconsistent filename/native session IDs, and redaction decisions
+that drop raw content.
+
+## Normalization Rules v0
+
+Normalize roles to:
+
+```text
+user
+assistant
+tool
+system
+developer
+progress
+unknown
+```
+
+Known mappings:
+
+```text
+Codex response_item.message.role=user       -> user
+Codex response_item.message.role=assistant  -> assistant
+Codex response_item.message.role=developer  -> developer
+Codex function_call_output                  -> tool
+Codex custom_tool_call_output               -> tool
+Codex event_msg exec_command_end            -> tool / command
+Codex event_msg patch_apply_end             -> tool / file activity
+
+Claude top-level assistant                  -> assistant
+Claude top-level user with text content      -> user
+Claude top-level user with tool_result       -> tool
+Claude top-level system                     -> system
+Claude top-level progress                   -> progress
+
+Pi message.role=user                        -> user
+Pi message.role=assistant                   -> assistant
+Pi message.role=toolResult                  -> tool
+Pi message.role=bashExecution               -> tool / command
+```
+
+Normalize tool names conservatively:
+
+```text
+Bash, bash, exec_command -> shell
+Read, read               -> read
+Edit, edit               -> edit
+Write, write             -> write
+Grep, grep               -> search
+Glob, glob               -> glob
+Agent, subagent          -> subagent
+webfetch                 -> web_fetch
+websearch                -> web_search
+```
+
+Keep the native tool name in addition to the normalized tool name.
+
+## Privacy And Storage Defaults
+
+The CLI is local-only by default, but local session logs still contain sensitive
+data. The parser and reports should be conservative.
+
+Default storage behavior:
+
+- store user and assistant message text locally because classification depends
+  on it
+- do not show message text in reports unless `--show-text` is explicitly passed
+- do not store raw tool output by default
+- do not store raw command stdout/stderr by default
+- do not store raw diffs by default
+- do not store raw `write.content`, `old_string`, `new_string`, or full edit
+  bodies by default
+- store lengths, hashes, content types, paths, error flags, truncation flags,
+  and selected safe metadata
+- store command text locally, but redact obvious secrets in reports
+- store full paths locally, but display home-relative or redacted paths in
+  reports
+
+Raw-content support can be added later behind explicit flags, for example:
+
+```bash
+session-doctor ingest --store-tool-output
+session-doctor report <session-id> --show-text
+session-doctor report <session-id> --show-tool-output
+```
+
+The default should optimize for safe local analytics and classification, not
+verbatim replay.
+
+## Adapter Implementation Order
+
+Recommended first implementation order:
+
+1. Codex
+2. Pi
+3. Claude Code
+
+Reasoning:
+
+- Codex has a clean envelope, strong `turn_context`, and rich command/edit
+  events.
+- Pi has regular event IDs, parent IDs, explicit session rows, and clean
+  tool-call/result linkage, making it a good validation source for graph
+  projection.
+- Claude Code is very important but has the most discovery complexity because
+  root sessions, subagent sessions, subagent metadata, persisted tool results,
+  memory files, and auxiliary files share the same tree.
+
+## Graphify Inspiration
+
+Graphify is useful inspiration for product and architecture shape, but it should
+not be treated as a session-log parser.
+
+Useful ideas to borrow:
+
+- staged pipeline
+- CLI-first package with optional agent integration
+- platform-specific install surfaces
+- stable IDs
+- provenance on extracted artifacts
+- confidence labels
+- local reports
+- query/MCP surface later
+- incremental cache/manifest design
+
+Important distinction:
+
+Graphify supports many agents by installing skills, hooks, and rules into those
+agents. It does not appear to parse historical Codex, Claude, OpenCode, or Pi
+session logs. `session-doctor` needs deterministic per-agent session adapters as
+its foundation.
+
+## Architecture
+
+The core pipeline should be:
+
+```text
+discover -> parse -> normalize -> persist -> feature -> classify -> report
+                                                    |
+                                                    v
+                                               graph projection
+```
+
+Each stage should have a narrow responsibility and should be testable without an
+LLM.
+
+## Layer 1: Discovery
+
+Discovery finds candidate session files for supported agents.
+
+Initial discovery targets:
+
+```text
+Codex       ~/.codex/sessions
+Claude Code ~/.claude/projects
+Pi          ~/.pi or the current Pi session/log location
+```
+
+Discovery should produce candidate records, not parsed sessions:
+
+```text
+SessionSource
+  agent
+  path
+  discovered_at
+  size_bytes
+  modified_at
+  content_hash
+```
+
+The exact Pi session location should be verified during implementation before
+the adapter is built.
+
+## Layer 2: Agent Adapters
+
+Each supported agent gets its own adapter module.
+
+```text
+session_doctor/adapters/codex.py
+session_doctor/adapters/claude.py
+session_doctor/adapters/pi.py
+```
+
+Adapters should parse native files into the normalized event model. They should
+not compute product-level classifications.
+
+Adapter responsibilities:
+
+- read native session files
+- preserve native event IDs and event types where available
+- normalize role/message/tool-call structure
+- attach source provenance
+- emit parse warnings for ambiguous or unsupported events
+- remain deterministic and unit-testable
+
+The adapter registry should make future support for OpenCode and other agents
+explicit:
+
+```text
+agent name -> discovery defaults -> parser -> adapter version
+```
+
+Adapter version should be part of the cache key so old parsed results can be
+invalidated safely when parsing logic changes.
+
+## Layer 3: Normalized Event Model
+
+The normalized model is the source of truth. Graphs, reports, and metrics should
+be derived from it.
+
+Use Pydantic for schemas and validation.
+
+Core entities:
+
+```text
+Session
+Turn
+Message
+ToolCall
+ToolResult
+CommandRun
+FileEdit
+ParseWarning
+ClassificationSignal
+SessionMetric
+```
+
+Every normalized record should include provenance:
+
+```text
+agent
+session_id
+source_path
+source_line_or_index
+native_event_type
+native_event_id
+timestamp
+project_path
+parser_version
+confidence
+```
+
+The model should allow incomplete timestamps or missing fields, because agent
+logs will not all expose the same metadata.
+
+Confidence labels should be used consistently:
+
+```text
+EXTRACTED   directly present in the source log
+INFERRED    derived from surrounding events or text
+AMBIGUOUS   plausible but uncertain; should be surfaced for review
+```
+
+## Layer 4: Persistence
+
+DuckDB should be included early because it is a key part of the tool.
+
+DuckDB is not the classifier. It is the local analytical store for normalized
+events, features, classifications, and future project-level trends.
+
+Initial storage should include:
+
+```text
+sessions
+messages
+tool_calls
+tool_results
+file_edits
+parse_warnings
+message_features
+session_features
+message_classifications
+session_classifications
+graph_nodes
+graph_edges
+```
+
+The first implementation can also export JSONL for portability, but DuckDB
+should be the primary local query/report substrate.
+
+Design requirements:
+
+- local-only by default
+- no background service required
+- deterministic schema migrations or versioned rebuilds
+- easy deletion/rebuild of derived tables
+- export to JSONL and Parquet
+
+## Layer 5: Feature Extraction
+
+Feature extraction should start deterministic and explainable.
+
+Message-level features:
+
+```text
+frustration_marker_count
+correction_marker_count
+scope_boundary_marker_count
+repeat_request_similarity
+mentions_prior_attempt
+asks_to_stop_or_pause
+ambiguity_signal
+urgency_signal
+negative_sentiment_hint
+```
+
+Session-level features:
+
+```text
+turn_count
+user_message_count
+assistant_message_count
+tool_call_count
+failed_tool_call_count
+failed_tool_ratio
+same_error_repeated_count
+same_file_edited_repeatedly_count
+correction_count
+repeat_request_count
+scope_boundary_count
+unresolved_ending_signal
+```
+
+Sentiment analysis should be treated as one feature, not the primary classifier.
+Generic sentiment can miss domain-specific frustration such as:
+
+```text
+"we already tried that"
+"this is still broken"
+"why are you changing unrelated files"
+"stop"
+"no, that is not what I asked"
+```
+
+Domain-specific markers and repetition signals are more important than generic
+positive/negative sentiment.
+
+## Layer 6: Classification
+
+Classification should be multi-label.
+
+Message-level labels:
+
+```text
+neutral
+clarification
+correction
+scope_boundary
+frustration
+repeat_request
+blocked
+stop_or_pause
+positive_resolution
+```
+
+Session-level labels:
+
+```text
+healthy
+agent_misunderstood
+agent_looping
+task_too_large
+prompt_ambiguous
+repo_complexity_high
+tooling_blocked
+user_stuck
+resolved_after_corrections
+abandoned_or_stopped
+```
+
+Scores should be explainable:
+
+```text
+friction_score
+stuckness_score
+prompt_clarity_risk
+agent_fit_risk
+project_complexity_signal
+```
+
+Every classification should include evidence:
+
+```text
+label
+score
+confidence
+evidence_event_ids
+evidence_summary
+```
+
+Initial scoring can be weighted deterministic rules. Later, once enough real
+sessions are labeled, the tool can add local ML or agent-assisted classification
+as an optional layer.
+
+## Layer 7: Graph View
+
+Graph view should be planned from the beginning, even if it is not the first MVP
+feature to be fully implemented.
+
+The graph is a derived projection over the normalized timeline. It is not the
+source of truth.
+
+Primary source of truth:
+
+```text
+Session -> Turn -> Message -> ToolCall -> ToolResult
+```
+
+Derived graph view:
+
+```text
+nodes = messages, goals, assistant actions, tool calls, tool results, files,
+        errors, classifications
+edges = asks_for, responds_to, edits, runs, fails_with, same_failure_as,
+        repeats_goal_of, corrects, references_prior_attempt, causes_retry
+```
+
+Example:
+
+```text
+user_message_17 --repeats_goal_of--> user_message_3
+tool_result_8  --same_failure_as--> tool_result_13
+user_message_17 --corrects--> assistant_message_16
+assistant_action_12 --edits--> file:src/foo.py
+tool_result_13 --fails_with--> error:AssertionError
+```
+
+Graph view should help detect:
+
+- loops
+- repeated goals
+- repeated tool failures
+- same file edited repeatedly
+- correction chains
+- user frustration tied to specific assistant behavior
+- cross-session stuck patterns in future project-level analysis
+
+The command should exist in the public plan:
+
+```bash
+session-doctor graph <session-id>
+```
+
+Initial output can be JSON nodes/edges. Later it can support Markdown summaries,
+Graphviz, HTML, or MCP/query access.
+
+## Layer 8: Reporting
+
+The first report should focus on single-session diagnosis.
+
+Report sections:
+
+```text
+summary
+session metadata
+classification labels
+friction/stuckness scores
+key evidence
+repeated requests
+corrections and scope boundaries
+tool failure loops
+same-error repeats
+same-file edit loops
+ending state
+recommended interpretation
+```
+
+The report should be useful to a person reviewing the session and to an agent
+trying to understand why the session went poorly.
+
+Example interpretation:
+
+```text
+This session likely became stuck because the user repeated the same goal three
+times, the same test failure appeared twice, and the final user message corrected
+the assistant's previous approach.
+```
+
+Reports should be available as terminal output and Markdown. Machine-readable
+JSON should be available for agents and tests.
+
+## Phase Plan
+
+### Phase 0: Design Document
+
+Create and review this design document before implementation.
+
+### Phase 1: Project Skeleton
+
+Set up:
+
+- Python package
+- uv project metadata
+- Typer CLI
+- test structure
+- DuckDB dependency
+- initial schema modules
+
+No real classification yet.
+
+### Phase 2: Normalized Schemas
+
+Define Pydantic models for:
+
+- sessions
+- turns
+- messages
+- tool calls/results
+- command runs
+- file edits
+- parse warnings
+- features
+- classifications
+- graph nodes/edges
+
+Add unit tests for model validation and serialization.
+
+### Phase 3: DuckDB Store
+
+Create local DuckDB persistence for normalized records.
+
+Add commands to:
+
+- initialize the database
+- ingest parsed records
+- list sessions
+- inspect one session
+- rebuild derived tables
+
+### Phase 4: First Adapters
+
+Implement deterministic adapters for:
+
+- Codex
+- Claude Code
+- Pi
+
+Each adapter should have fixtures and parser tests.
+
+### Phase 5: Deterministic Features
+
+Implement first-pass feature extraction:
+
+- repeated request detection
+- correction markers
+- frustration markers
+- scope boundary markers
+- failed tool ratio
+- repeated error detection
+- same-file edit repetition
+
+### Phase 6: Single-Session Report
+
+Generate a Markdown and terminal report for a single session.
+
+The report should include evidence references back to normalized event IDs.
+
+### Phase 7: Classification Scoring
+
+Convert features into labels and scores.
+
+Keep the scoring simple, deterministic, and explainable at first.
+
+### Phase 8: Graph Projection
+
+Implement the derived graph model and `session-doctor graph <session-id>`.
+
+Start with JSON output:
+
+```json
+{
+  "nodes": [],
+  "edges": []
+}
+```
+
+Later output formats can be added after the graph semantics stabilize.
+
+### Phase 9: Project-Level Trends
+
+Extend the DuckDB model and reports across sessions:
+
+- trend by project
+- trend by week/month
+- repeated stuck patterns
+- agent fit by project/task type
+- prompt clarity drift
+- project complexity signals
+
+This is not the first MVP, but the earlier schema should be designed to support
+it.
+
+### Phase 10: Agent Wrappers
+
+Add optional integrations:
+
+- Codex skill
+- Claude skill/command
+- Pi integration
+- MCP server or query tool
+
+These should call the CLI rather than duplicate business logic.
+
+## Non-Goals For First Iteration
+
+- Cloud service
+- web app
+- required LLM calls
+- full OpenCode support
+- training a supervised ML model
+- perfect sentiment analysis
+- project-wide trend reports
+- graphical UI for graph visualization
+
+## Open Implementation Questions
+
+- What is the exact current Pi session/log location and format?
+- Which Claude Code session files contain the most reliable role/tool metadata?
+- How much Codex event provenance can be preserved from JSONL logs?
+- What stable session ID should be used when native IDs are missing?
+- Should graph nodes be persisted in DuckDB immediately or generated on demand
+  from normalized event tables?
+- What threshold should separate `repeat_request` from normal iterative
+  clarification?
+
+These should be resolved during implementation with fixtures from real local
+session logs.

@@ -1,0 +1,15 @@
+.DS_Store
+.venv/
+.ruff_cache/
+.pytest_cache/
+.ty/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+scratch/
+tmp/
+*.duckdb
+*.duckdb.wal
+
