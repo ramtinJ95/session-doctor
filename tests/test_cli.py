@@ -100,3 +100,30 @@ def test_ingest_rejects_unsupported_agent(tmp_path) -> None:
 
     assert result.exit_code == 2
     assert "Only --agent codex" in result.stdout
+
+
+def test_sessions_list_shows_ingested_codex_session(tmp_path) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    fixture_path = FIXTURE_DIR / "basic-session.jsonl"
+    ingest_result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "codex",
+            "--source",
+            str(fixture_path),
+            "--db",
+            str(database_path),
+        ],
+    )
+    assert ingest_result.exit_code == 0
+
+    result = runner.invoke(app, ["sessions", "list", "--db", str(database_path)])
+
+    assert result.exit_code == 0
+    assert "Sessions" in result.stdout
+    assert "codex" in result.stdout
+    assert str(fixture_path) in result.stdout
+    assert "Response Items" in result.stdout
+    assert "Event Fallbacks" in result.stdout

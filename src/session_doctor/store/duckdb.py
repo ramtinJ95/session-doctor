@@ -21,6 +21,22 @@ class StoreInfo:
     tables: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class SessionSummary:
+    session_id: str
+    agent_name: str
+    started_at: str | None
+    ended_at: str | None
+    cwd: str | None
+    project_path: str | None
+    source_path: str | None
+    message_count: int
+    response_item_message_count: int
+    event_msg_fallback_count: int
+    command_count: int
+    warning_count: int
+
+
 class DuckDBStore:
     def __init__(self, database_path: Path) -> None:
         self.database_path = database_path.expanduser()
@@ -65,6 +81,62 @@ class DuckDBStore:
         with duckdb.connect(str(self.database_path), read_only=True) as connection:
             row = connection.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()
         return int(row[0]) if row else 0
+
+    def list_session_summaries(self) -> tuple[SessionSummary, ...]:
+        if not self.database_path.exists():
+            return ()
+        with duckdb.connect(str(self.database_path), read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    s.session_id,
+                    s.agent_name,
+                    CAST(s.started_at AS VARCHAR),
+                    CAST(s.ended_at AS VARCHAR),
+                    s.cwd,
+                    s.project_path,
+                    ss.source_path,
+                    COUNT(DISTINCT m.message_id) AS message_count,
+                    COUNT(DISTINCT c.command_run_id) AS command_count,
+                    COUNT(DISTINCT w.warning_id) AS warning_count
+                FROM sessions s
+                LEFT JOIN session_sources ss ON ss.source_id = s.source_id
+                LEFT JOIN messages m ON m.session_id = s.session_id
+                LEFT JOIN command_runs c ON c.session_id = s.session_id
+                LEFT JOIN parse_warnings w ON w.source_id = s.source_id
+                GROUP BY
+                    s.session_id,
+                    s.agent_name,
+                    s.started_at,
+                    s.ended_at,
+                    s.cwd,
+                    s.project_path,
+                    ss.source_path
+                ORDER BY s.started_at NULLS LAST, s.session_id
+                """
+            ).fetchall()
+            message_source_counts = self._message_source_counts(connection)
+
+        summaries: list[SessionSummary] = []
+        for row in rows:
+            session_counts = message_source_counts.get(row[0], {})
+            summaries.append(
+                SessionSummary(
+                    session_id=str(row[0]),
+                    agent_name=str(row[1]),
+                    started_at=row[2],
+                    ended_at=row[3],
+                    cwd=row[4],
+                    project_path=row[5],
+                    source_path=row[6],
+                    message_count=int(row[7]),
+                    response_item_message_count=session_counts.get("response_item", 0),
+                    event_msg_fallback_count=session_counts.get("event_msg_fallback", 0),
+                    command_count=int(row[8]),
+                    warning_count=int(row[9]),
+                )
+            )
+        return tuple(summaries)
 
     def info(self) -> StoreInfo:
         if not self.database_path.exists():
@@ -189,6 +261,23 @@ class DuckDBStore:
             f"INSERT INTO {table_name} ({column_names}) VALUES ({placeholders})",
             values,
         )
+
+    @staticmethod
+    def _message_source_counts(
+        connection: duckdb.DuckDBPyConnection,
+    ) -> dict[str, dict[str, int]]:
+        rows = connection.execute(
+            "SELECT session_id, metadata_json FROM messages",
+        ).fetchall()
+        counts: dict[str, dict[str, int]] = {}
+        for session_id, metadata_payload in rows:
+            metadata = parse_metadata(metadata_payload)
+            source = metadata.get("codex_message_source")
+            if not isinstance(source, str):
+                continue
+            session_counts = counts.setdefault(str(session_id), {})
+            session_counts[source] = session_counts.get(source, 0) + 1
+        return counts
 
 
 def session_rows(bundle: ParsedSessionBundle) -> list[dict[str, Any]]:
@@ -361,3 +450,13 @@ def parse_warning_rows(bundle: ParsedSessionBundle) -> list[dict[str, Any]]:
 
 def metadata_json(metadata: dict[str, Any]) -> str:
     return json.dumps(metadata, sort_keys=True, default=str)
+
+
+def parse_metadata(payload: object) -> dict[str, Any]:
+    if not isinstance(payload, str):
+        return {}
+    try:
+        parsed = json.loads(payload)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
