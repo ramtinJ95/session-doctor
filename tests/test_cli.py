@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from typer.testing import CliRunner
 
 from session_doctor import __version__
 from session_doctor.cli import app
+from session_doctor.store import DuckDBStore
 
 runner = CliRunner()
+FIXTURE_DIR = Path(__file__).parent / "fixtures" / "codex"
 
 
 def test_cli_help() -> None:
@@ -60,3 +64,39 @@ def test_adapters_list_without_scan() -> None:
     assert "Codex" in result.stdout
     assert "Claude Code" in result.stdout
     assert "Pi" in result.stdout
+
+
+def test_ingest_codex_fixture_writes_database_and_prints_summary(tmp_path) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    fixture_path = FIXTURE_DIR / "basic-session.jsonl"
+
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "codex",
+            "--source",
+            str(fixture_path),
+            "--db",
+            str(database_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Codex ingest" in result.stdout
+    assert "Response item messages" in result.stdout
+    assert "Event message fallbacks" in result.stdout
+    store = DuckDBStore(database_path)
+    assert store.table_count("sessions") == 1
+    assert store.table_count("messages") == 2
+
+
+def test_ingest_rejects_unsupported_agent(tmp_path) -> None:
+    result = runner.invoke(
+        app,
+        ["ingest", "--agent", "claude", "--db", str(tmp_path / "session-doctor.duckdb")],
+    )
+
+    assert result.exit_code == 2
+    assert "Only --agent codex" in result.stdout

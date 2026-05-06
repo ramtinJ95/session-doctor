@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 
@@ -11,9 +12,16 @@ from rich.console import Console
 from rich.table import Table
 
 from . import __version__
-from .adapters import BaseAdapter, built_in_adapters
+from .adapters import BaseAdapter, CodexAdapter, built_in_adapters
+from .adapters.codex import (
+    CODEX_MESSAGE_SOURCE_EVENT_MSG_FALLBACK,
+    CODEX_MESSAGE_SOURCE_RESPONSE_ITEM,
+)
 from .config import default_database_path, supports_current_python
+from .ids import source_id_for_path
 from .schemas import SourceKind
+from .schemas.common import AgentName
+from .schemas.sessions import SessionSource
 from .store import TABLE_NAMES, DuckDBStore
 
 console = Console()
@@ -21,6 +29,19 @@ console = Console()
 app = typer.Typer(help="Inspect and diagnose local AI agent sessions.")
 adapters_app = typer.Typer(help="Inspect built-in session adapters.")
 db_app = typer.Typer(help="Manage the local DuckDB store.")
+
+
+@dataclass
+class IngestSummary:
+    source_count: int = 0
+    skipped_source_count: int = 0
+    session_count: int = 0
+    message_count: int = 0
+    response_item_message_count: int = 0
+    event_msg_fallback_count: int = 0
+    command_count: int = 0
+    file_activity_count: int = 0
+    warning_count: int = 0
 
 
 @app.callback()
@@ -219,15 +240,70 @@ def scan_adapter_summary(adapter: BaseAdapter) -> str:
     return ", ".join(populated_counts) if populated_counts else "0"
 
 
-def not_implemented(command_name: str) -> None:
-    console.print(f"[yellow]{command_name} is not implemented in Phase 1.[/yellow]")
-    raise typer.Exit(2)
-
-
 @app.command()
-def ingest() -> None:
-    """Reserved for future session ingestion."""
-    not_implemented("ingest")
+def ingest(
+    agent: Annotated[
+        str,
+        typer.Option(
+            "--agent",
+            help="Agent adapter to ingest. Phase 2 supports codex.",
+        ),
+    ],
+    source: Annotated[
+        Path | None,
+        typer.Option(
+            "--source",
+            help="Codex JSONL file or directory. Defaults to the Codex session root.",
+        ),
+    ] = None,
+    db: Annotated[
+        Path | None,
+        typer.Option(
+            "--db",
+            help="DuckDB path to write. Defaults to SESSION_DOCTOR_DB or app data.",
+        ),
+    ] = None,
+) -> None:
+    """Parse and store local session records."""
+    if agent != AgentName.CODEX.value:
+        console.print("[red]Only --agent codex is implemented in Phase 2.[/red]")
+        raise typer.Exit(2)
+
+    database_path = database_path_from_option(db)
+    require_valid_database_path(database_path)
+    adapter = CodexAdapter()
+    sources = codex_sources_for_ingest(adapter, source)
+    store = DuckDBStore(database_path)
+    summary = IngestSummary(source_count=len(sources))
+
+    for session_source in sources:
+        try:
+            bundle = adapter.parse_source(session_source)
+            store.insert_parsed_bundle(session_source, bundle)
+        except Exception as exc:
+            summary.skipped_source_count += 1
+            console.print(f"[yellow]Skipped source:[/yellow] {session_source.source_path} ({exc})")
+            continue
+
+        summary.session_count += 1 if bundle.session else 0
+        summary.message_count += len(bundle.messages)
+        summary.command_count += len(bundle.command_runs)
+        summary.file_activity_count += len(bundle.file_activities)
+        summary.warning_count += len(bundle.parse_warnings)
+        source_counts = (
+            bundle.session.metadata.get("codex_message_source_counts", {})
+            if bundle.session
+            else {}
+        )
+        if isinstance(source_counts, dict):
+            summary.response_item_message_count += int(
+                source_counts.get(CODEX_MESSAGE_SOURCE_RESPONSE_ITEM, 0)
+            )
+            summary.event_msg_fallback_count += int(
+                source_counts.get(CODEX_MESSAGE_SOURCE_EVENT_MSG_FALLBACK, 0)
+            )
+
+    render_ingest_summary(summary, database_path)
 
 
 @app.command()
@@ -253,3 +329,49 @@ def graph(session_id: str) -> None:
 
 app.add_typer(adapters_app, name="adapters")
 app.add_typer(db_app, name="db")
+
+
+def not_implemented(command_name: str) -> None:
+    console.print(f"[yellow]{command_name} is not implemented in Phase 1.[/yellow]")
+    raise typer.Exit(2)
+
+
+def codex_sources_for_ingest(adapter: CodexAdapter, source: Path | None) -> list[SessionSource]:
+    if source is None:
+        return adapter.discover()
+
+    expanded_source = source.expanduser()
+    if expanded_source.is_dir():
+        return adapter.discover(expanded_source)
+    if expanded_source.is_file():
+        return [
+            SessionSource(
+                source_id=source_id_for_path(AgentName.CODEX, expanded_source),
+                agent_name=AgentName.CODEX,
+                source_path=str(expanded_source),
+                source_kind=SourceKind.ROOT_SESSION,
+            )
+        ]
+
+    console.print(f"[red]Source does not exist:[/red] {expanded_source}")
+    raise typer.Exit(1)
+
+
+def render_ingest_summary(summary: IngestSummary, database_path: Path) -> None:
+    table = Table(title="Codex ingest")
+    table.add_column("Metric")
+    table.add_column("Value")
+    table.add_row("Database", str(database_path))
+    table.add_row("Sources", str(summary.source_count))
+    table.add_row("Skipped sources", str(summary.skipped_source_count))
+    table.add_row("Sessions", str(summary.session_count))
+    table.add_row("Messages", str(summary.message_count))
+    table.add_row("Response item messages", str(summary.response_item_message_count))
+    table.add_row("Event message fallbacks", str(summary.event_msg_fallback_count))
+    table.add_row("Commands", str(summary.command_count))
+    table.add_row("File activities", str(summary.file_activity_count))
+    table.add_row("Warnings", str(summary.warning_count))
+    console.print(table)
+
+    if summary.skipped_source_count:
+        raise typer.Exit(1)
