@@ -61,9 +61,9 @@ def test_codex_parse_source_uses_event_msg_messages_as_fallback() -> None:
         (NormalizedRole.USER, "Only event message user text exists."),
         (NormalizedRole.ASSISTANT, "Only event message assistant text exists."),
     ]
-    assert {
-        message.metadata["codex_message_source"] for message in bundle.messages
-    } == {CODEX_MESSAGE_SOURCE_EVENT_MSG_FALLBACK}
+    assert {message.metadata["codex_message_source"] for message in bundle.messages} == {
+        CODEX_MESSAGE_SOURCE_EVENT_MSG_FALLBACK
+    }
     assert bundle.session is not None
     assert bundle.session.metadata["codex_message_source_counts"] == {
         CODEX_MESSAGE_SOURCE_RESPONSE_ITEM: 0,

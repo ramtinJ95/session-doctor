@@ -248,8 +248,8 @@ def extract_session_metadata(
             has_compaction = True
 
     latest_turn = turn_contexts[-1] if turn_contexts else {}
-    native_session_id = (
-        string_value(session_meta.get("id")) or session_id_from_filename(source_path)
+    native_session_id = string_value(session_meta.get("id")) or session_id_from_filename(
+        source_path
     )
     session_id = stable_id("session", AgentName.CODEX.value, source.source_path, native_session_id)
     cwd = string_value(latest_turn.get("cwd")) or string_value(session_meta.get("cwd"))
