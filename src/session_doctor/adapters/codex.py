@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -62,8 +63,8 @@ class CodexAdapter(BaseAdapter):
             parse_warnings=malformed_warnings,
         )
 
-        response_message_keys: set[tuple[NormalizedRole, str | None]] = set()
-        event_message_candidates: list[tuple[RawEvent, dict[str, Any]]] = []
+        response_messages: list[tuple[int, tuple[NormalizedRole, str | None]]] = []
+        event_message_candidates: list[tuple[int, RawEvent, dict[str, Any]]] = []
         response_item_message_count = 0
         event_msg_fallback_count = 0
         compacted_record_count = 0
@@ -86,7 +87,7 @@ class CodexAdapter(BaseAdapter):
                         timestamp,
                     )
                     bundle.messages.append(message)
-                    response_message_keys.add(message_identity(message))
+                    response_messages.append((record_index, message_identity(message)))
                     response_item_message_count += 1
                 elif payload_type in {"function_call", "custom_tool_call"}:
                     bundle.tool_calls.append(
@@ -127,7 +128,7 @@ class CodexAdapter(BaseAdapter):
                         )
                     )
                 elif payload_type in {"user_message", "agent_message"}:
-                    event_message_candidates.append((event, payload))
+                    event_message_candidates.append((record_index, event, payload))
                 elif payload_type == "token_count":
                     bundle.model_usage.append(
                         model_usage_from_token_count(session_metadata.session_id, event, payload)
@@ -173,9 +174,13 @@ class CodexAdapter(BaseAdapter):
                     )
                 )
 
-        for event, payload in event_message_candidates:
+        for record_index, event, payload in event_message_candidates:
             message = message_from_event_msg_fallback(session_metadata.session_id, event, payload)
-            if message_identity(message) in response_message_keys:
+            if has_nearby_response_message(
+                record_index,
+                message_identity(message),
+                response_messages,
+            ):
                 continue
             bundle.messages.append(message)
             event_msg_fallback_count += 1
@@ -457,7 +462,7 @@ def tool_result_from_web_search_end(
     return ToolResult(
         tool_result_id=stable_id("tool_result", session_id, call_id or event.event_id),
         session_id=session_id,
-        tool_call_id=stable_id("tool_call", session_id, call_id) if call_id else None,
+        tool_call_id=None,
         source_event_id=event.event_id,
         native_tool_call_id=call_id,
         timestamp=event.timestamp,
@@ -478,14 +483,14 @@ def command_run_from_event_msg(
     event: RawEvent,
     payload: dict[str, Any],
 ) -> CommandRun:
-    stdout = string_value(payload.get("stdout")) or ""
-    stderr = string_value(payload.get("stderr")) or ""
+    stdout, stderr, output_source = command_output_parts(payload)
+    call_id = string_value(payload.get("call_id"))
     return CommandRun(
         command_run_id=stable_id("command_run", session_id, event.event_id),
         session_id=session_id,
         source_event_id=event.event_id,
-        tool_call_id=string_value(payload.get("call_id")),
-        command=string_value(payload.get("command")) or "",
+        tool_call_id=stable_id("tool_call", session_id, call_id) if call_id else None,
+        command=command_text(payload.get("command")),
         cwd=string_value(payload.get("cwd")),
         ended_at=event.timestamp,
         exit_code=int_value(payload.get("exit_code")),
@@ -496,6 +501,7 @@ def command_run_from_event_msg(
             "status": string_value(payload.get("status")),
             "duration": payload.get("duration"),
             "process_id": payload.get("process_id"),
+            "output_source": output_source,
         },
     )
 
@@ -593,6 +599,17 @@ def message_identity(message: Message) -> tuple[NormalizedRole, str | None]:
     return (message.role, message.text_hash)
 
 
+def has_nearby_response_message(
+    record_index: int,
+    identity: tuple[NormalizedRole, str | None],
+    response_messages: list[tuple[int, tuple[NormalizedRole, str | None]]],
+) -> bool:
+    return any(
+        response_identity == identity and abs(response_record_index - record_index) <= 1
+        for response_record_index, response_identity in response_messages
+    )
+
+
 def increment_count(counts: dict[str, int], key: str) -> None:
     counts[key] = counts.get(key, 0) + 1
 
@@ -639,6 +656,31 @@ def argument_keys(arguments: str | None) -> list[str]:
     if isinstance(parsed, dict):
         return sorted(str(key) for key in parsed)
     return []
+
+
+def command_text(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return shlex.join(str(part) for part in value)
+    return ""
+
+
+def command_output_parts(payload: dict[str, Any]) -> tuple[str, str, str]:
+    stdout = string_value(payload.get("stdout")) or ""
+    stderr = string_value(payload.get("stderr")) or ""
+    if stdout or stderr:
+        return stdout, stderr, "stdout_stderr"
+
+    aggregated_output = string_value(payload.get("aggregated_output")) or ""
+    if aggregated_output:
+        return aggregated_output, "", "aggregated_output"
+
+    formatted_output = string_value(payload.get("formatted_output")) or ""
+    if formatted_output:
+        return formatted_output, "", "formatted_output"
+
+    return "", "", "empty"
 
 
 def hash_json(value: object) -> str:

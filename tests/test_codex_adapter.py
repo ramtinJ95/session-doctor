@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from session_doctor.adapters.codex import (
@@ -7,7 +8,7 @@ from session_doctor.adapters.codex import (
     CODEX_MESSAGE_SOURCE_RESPONSE_ITEM,
     CodexAdapter,
 )
-from session_doctor.ids import source_id_for_path
+from session_doctor.ids import source_id_for_path, stable_id
 from session_doctor.schemas import AgentName, NormalizedRole, SessionSource
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "codex"
@@ -77,9 +78,12 @@ def test_codex_parse_source_records_command_and_patch_metadata() -> None:
     bundle = CodexAdapter().parse_source(source_for_fixture(fixture_path))
 
     command_run = bundle.command_runs[0]
-    assert command_run.command == "pytest -q"
+    assert command_run.command == "/bin/zsh -lc 'pytest -q'"
     assert command_run.exit_code == 1
     assert command_run.output_length == len("failed")
+    assert command_run.stdout_hash is not None
+    assert command_run.metadata["output_source"] == "aggregated_output"
+    assert command_run.tool_call_id == stable_id("tool_call", command_run.session_id, "call-1")
 
     file_activity = bundle.file_activities[0]
     assert file_activity.path == "/tmp/session-doctor/src/example.py"
@@ -103,6 +107,7 @@ def test_codex_parse_source_normalizes_expected_common_shapes() -> None:
         if tool_result.metadata.get("tool_name") == "web_search"
     )
     assert web_search_result.native_tool_call_id == "ws-1"
+    assert web_search_result.tool_call_id is None
     assert web_search_result.metadata["query"] == "codex docs"
 
     usage = bundle.model_usage[0]
@@ -129,3 +134,46 @@ def test_codex_parse_source_emits_warnings_without_stopping() -> None:
     assert len(bundle.parse_warnings) == 2
     assert bundle.session is not None
     assert bundle.session.metadata["compacted_record_count"] == 1
+
+
+def test_codex_parse_source_keeps_repeated_fallback_messages_across_turns(tmp_path) -> None:
+    session_path = tmp_path / "repeat.jsonl"
+    records = [
+        {
+            "timestamp": "2026-05-06T08:00:00Z",
+            "type": "session_meta",
+            "payload": {"id": "repeat-session", "cwd": "/tmp"},
+        },
+        {
+            "timestamp": "2026-05-06T08:00:01Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "same request"}],
+            },
+        },
+        {
+            "timestamp": "2026-05-06T08:00:02Z",
+            "type": "event_msg",
+            "payload": {"type": "user_message", "message": "same request"},
+        },
+        {
+            "timestamp": "2026-05-06T08:01:00Z",
+            "type": "event_msg",
+            "payload": {"type": "user_message", "message": "same request"},
+        },
+    ]
+    session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+
+    bundle = CodexAdapter().parse_source(source_for_fixture(session_path))
+
+    assert [(message.role, message.text) for message in bundle.messages] == [
+        (NormalizedRole.USER, "same request"),
+        (NormalizedRole.USER, "same request"),
+    ]
+    assert bundle.messages[0].metadata["codex_message_source"] == CODEX_MESSAGE_SOURCE_RESPONSE_ITEM
+    assert (
+        bundle.messages[1].metadata["codex_message_source"]
+        == CODEX_MESSAGE_SOURCE_EVENT_MSG_FALLBACK
+    )
