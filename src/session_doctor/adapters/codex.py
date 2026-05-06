@@ -12,6 +12,7 @@ from session_doctor.schemas import (
     CommandRun,
     FileActivity,
     Message,
+    ModelUsage,
     NormalizedRole,
     ParseWarning,
     RawEvent,
@@ -66,6 +67,7 @@ class CodexAdapter(BaseAdapter):
         response_item_message_count = 0
         event_msg_fallback_count = 0
         compacted_record_count = 0
+        expected_ignored_counts: dict[str, int] = {}
 
         for record_index, record in valid_records:
             record_type = string_value(record.get("type"))
@@ -94,6 +96,12 @@ class CodexAdapter(BaseAdapter):
                     bundle.tool_results.append(
                         tool_result_from_response_item(session_metadata.session_id, event, payload)
                     )
+                elif payload_type == "web_search_call":
+                    bundle.tool_calls.append(
+                        tool_call_from_web_search_call(session_metadata.session_id, event, payload)
+                    )
+                elif payload_type == "reasoning":
+                    increment_count(expected_ignored_counts, "response_item.reasoning")
                 else:
                     bundle.parse_warnings.append(
                         warning_for_record(
@@ -120,6 +128,16 @@ class CodexAdapter(BaseAdapter):
                     )
                 elif payload_type in {"user_message", "agent_message"}:
                     event_message_candidates.append((event, payload))
+                elif payload_type == "token_count":
+                    bundle.model_usage.append(
+                        model_usage_from_token_count(session_metadata.session_id, event, payload)
+                    )
+                elif payload_type == "web_search_end":
+                    bundle.tool_results.append(
+                        tool_result_from_web_search_end(session_metadata.session_id, event, payload)
+                    )
+                elif payload_type in {"task_started", "task_complete"}:
+                    increment_count(expected_ignored_counts, f"event_msg.{payload_type}")
                 elif payload_type == "error":
                     bundle.parse_warnings.append(
                         warning_for_record(
@@ -168,6 +186,7 @@ class CodexAdapter(BaseAdapter):
                 CODEX_MESSAGE_SOURCE_EVENT_MSG_FALLBACK: event_msg_fallback_count,
             }
             bundle.session.metadata["compacted_record_count"] = compacted_record_count
+            bundle.session.metadata["codex_expected_ignored_counts"] = expected_ignored_counts
 
         return bundle
 
@@ -376,6 +395,29 @@ def tool_call_from_response_item(
     )
 
 
+def tool_call_from_web_search_call(
+    session_id: str,
+    event: RawEvent,
+    payload: dict[str, Any],
+) -> ToolCall:
+    action = dict_value(payload.get("action"))
+    action_json = json.dumps(action, sort_keys=True, default=str)
+    return ToolCall(
+        tool_call_id=stable_id("tool_call", session_id, "web_search", event.event_id),
+        session_id=session_id,
+        source_event_id=event.event_id,
+        name="web_search",
+        timestamp=event.timestamp,
+        arguments_hash=hash_text(action_json) if action else None,
+        metadata={
+            "payload_type": string_value(payload.get("type")),
+            "status": string_value(payload.get("status")),
+            "query": string_value(action.get("query")),
+            "action_type": string_value(action.get("type")),
+        },
+    )
+
+
 def tool_result_from_response_item(
     session_id: str,
     event: RawEvent,
@@ -401,6 +443,32 @@ def tool_result_from_response_item(
         metadata={
             "payload_type": string_value(payload.get("type")),
             "status": string_value(payload.get("status")),
+        },
+    )
+
+
+def tool_result_from_web_search_end(
+    session_id: str,
+    event: RawEvent,
+    payload: dict[str, Any],
+) -> ToolResult:
+    call_id = string_value(payload.get("call_id"))
+    query = string_value(payload.get("query"))
+    return ToolResult(
+        tool_result_id=stable_id("tool_result", session_id, call_id or event.event_id),
+        session_id=session_id,
+        tool_call_id=stable_id("tool_call", session_id, call_id) if call_id else None,
+        source_event_id=event.event_id,
+        native_tool_call_id=call_id,
+        timestamp=event.timestamp,
+        is_error=False,
+        output_hash=hash_text(query) if query else None,
+        output_length=text_length(query),
+        metadata={
+            "payload_type": string_value(payload.get("type")),
+            "tool_name": "web_search",
+            "query": query,
+            "action_type": string_value(dict_value(payload.get("action")).get("type")),
         },
     )
 
@@ -477,6 +545,34 @@ def file_activities_from_patch_event(
     return activities
 
 
+def model_usage_from_token_count(
+    session_id: str,
+    event: RawEvent,
+    payload: dict[str, Any],
+) -> ModelUsage:
+    info = dict_value(payload.get("info"))
+    last_usage = dict_value(info.get("last_token_usage"))
+    total_usage = dict_value(info.get("total_token_usage"))
+    usage = last_usage or total_usage
+    return ModelUsage(
+        model_usage_id=stable_id("model_usage", session_id, event.event_id),
+        session_id=session_id,
+        source_event_id=event.event_id,
+        timestamp=event.timestamp,
+        input_tokens=int_value(usage.get("input_tokens")),
+        output_tokens=int_value(usage.get("output_tokens")),
+        cache_read_tokens=int_value(usage.get("cached_input_tokens")),
+        total_tokens=int_value(usage.get("total_tokens")),
+        metadata={
+            "payload_type": string_value(payload.get("type")),
+            "model_context_window": info.get("model_context_window"),
+            "reasoning_output_tokens": usage.get("reasoning_output_tokens"),
+            "total_token_usage": total_usage,
+            "rate_limits": payload.get("rate_limits"),
+        },
+    )
+
+
 def warning_for_record(
     source: SessionSource,
     record_index: int,
@@ -495,6 +591,10 @@ def warning_for_record(
 
 def message_identity(message: Message) -> tuple[NormalizedRole, str | None]:
     return (message.role, message.text_hash)
+
+
+def increment_count(counts: dict[str, int], key: str) -> None:
+    counts[key] = counts.get(key, 0) + 1
 
 
 def text_and_block_types(content: object) -> tuple[str | None, list[str]]:

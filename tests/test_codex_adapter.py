@@ -29,12 +29,13 @@ def test_codex_parse_source_normalizes_core_records() -> None:
     assert bundle.session.native_session_id == "codex-session-1"
     assert bundle.session.cwd == "/tmp/session-doctor"
     assert bundle.session.model == "gpt-5.4"
-    assert len(bundle.raw_events) == 11
+    assert len(bundle.raw_events) == 17
     assert len(bundle.messages) == 2
-    assert len(bundle.tool_calls) == 1
-    assert len(bundle.tool_results) == 1
+    assert len(bundle.tool_calls) == 2
+    assert len(bundle.tool_results) == 2
     assert len(bundle.command_runs) == 1
     assert len(bundle.file_activities) == 1
+    assert len(bundle.model_usage) == 1
 
 
 def test_codex_parse_source_uses_response_item_as_canonical_message_source() -> None:
@@ -87,11 +88,44 @@ def test_codex_parse_source_records_command_and_patch_metadata() -> None:
     assert file_activity.metadata["diff_length"] == len("@@\n-old\n+new\n")
 
 
+def test_codex_parse_source_normalizes_expected_common_shapes() -> None:
+    fixture_path = FIXTURE_DIR / "basic-session.jsonl"
+    bundle = CodexAdapter().parse_source(source_for_fixture(fixture_path))
+
+    web_search_call = next(
+        tool_call for tool_call in bundle.tool_calls if tool_call.name == "web_search"
+    )
+    assert web_search_call.metadata["query"] == "codex docs"
+
+    web_search_result = next(
+        tool_result
+        for tool_result in bundle.tool_results
+        if tool_result.metadata.get("tool_name") == "web_search"
+    )
+    assert web_search_result.native_tool_call_id == "ws-1"
+    assert web_search_result.metadata["query"] == "codex docs"
+
+    usage = bundle.model_usage[0]
+    assert usage.input_tokens == 10
+    assert usage.output_tokens == 5
+    assert usage.cache_read_tokens == 2
+    assert usage.total_tokens == 15
+    assert usage.metadata["reasoning_output_tokens"] == 1
+
+    assert bundle.session is not None
+    assert bundle.session.metadata["codex_expected_ignored_counts"] == {
+        "event_msg.task_complete": 1,
+        "event_msg.task_started": 1,
+        "response_item.reasoning": 1,
+    }
+
+
 def test_codex_parse_source_emits_warnings_without_stopping() -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
     bundle = CodexAdapter().parse_source(source_for_fixture(fixture_path))
 
     warning_codes = {warning.metadata["code"] for warning in bundle.parse_warnings}
     assert {"malformed_json", "unsupported_record_type"}.issubset(warning_codes)
+    assert len(bundle.parse_warnings) == 2
     assert bundle.session is not None
     assert bundle.session.metadata["compacted_record_count"] == 1

@@ -64,12 +64,13 @@ def test_store_insert_parsed_bundle_persists_normalized_records(tmp_path) -> Non
 
     assert store.table_count("session_sources") == 1
     assert store.table_count("sessions") == 1
-    assert store.table_count("raw_events") == 11
+    assert store.table_count("raw_events") == 17
     assert store.table_count("messages") == 2
-    assert store.table_count("tool_calls") == 1
-    assert store.table_count("tool_results") == 1
+    assert store.table_count("tool_calls") == 2
+    assert store.table_count("tool_results") == 2
     assert store.table_count("command_runs") == 1
     assert store.table_count("file_activities") == 1
+    assert store.table_count("model_usage") == 1
     assert store.table_count("parse_warnings") == 2
 
 
@@ -84,7 +85,7 @@ def test_store_insert_parsed_bundle_replaces_existing_source_records(tmp_path) -
 
     assert store.table_count("session_sources") == 1
     assert store.table_count("sessions") == 1
-    assert store.table_count("raw_events") == 11
+    assert store.table_count("raw_events") == 17
     assert store.table_count("messages") == 2
     assert store.table_count("parse_warnings") == 2
 
