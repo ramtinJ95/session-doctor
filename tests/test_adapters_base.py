@@ -68,7 +68,7 @@ def test_parse_source_is_deferred() -> None:
         source_path="/tmp/session.jsonl",
     )
 
-    with pytest.raises(NotImplementedError, match="Phase 1"):
+    with pytest.raises(NotImplementedError, match="not implemented yet"):
         ClaudeCodeAdapter().parse_source(source)
 
 

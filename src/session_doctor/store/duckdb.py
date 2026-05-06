@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -238,7 +239,7 @@ class DuckDBStore:
                 source.agent_name.value,
                 source.source_path,
                 source.source_kind.value,
-                source.discovered_at,
+                duckdb_value(source.discovered_at),
                 native_session_id,
                 source.parent_source_id,
                 metadata_json(source.metadata),
@@ -256,7 +257,7 @@ class DuckDBStore:
         columns = list(rows[0])
         placeholders = ", ".join("?" for _ in columns)
         column_names = ", ".join(columns)
-        values = [[row[column] for column in columns] for row in rows]
+        values = [[duckdb_value(row[column]) for column in columns] for row in rows]
         connection.executemany(
             f"INSERT INTO {table_name} ({column_names}) VALUES ({placeholders})",
             values,
@@ -450,6 +451,14 @@ def parse_warning_rows(bundle: ParsedSessionBundle) -> list[dict[str, Any]]:
 
 def metadata_json(metadata: dict[str, Any]) -> str:
     return json.dumps(metadata, sort_keys=True, default=str)
+
+
+def duckdb_value(value: object) -> object:
+    if not isinstance(value, datetime):
+        return value
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value
+    return value.astimezone(UTC).replace(tzinfo=None)
 
 
 def parse_metadata(payload: object) -> dict[str, Any]:

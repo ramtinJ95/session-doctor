@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from shutil import copyfile
 
 from typer.testing import CliRunner
 
@@ -90,6 +91,46 @@ def test_ingest_codex_fixture_writes_database_and_prints_summary(tmp_path) -> No
     store = DuckDBStore(database_path)
     assert store.table_count("sessions") == 1
     assert store.table_count("messages") == 2
+
+
+def test_ingest_resolves_source_path_before_deriving_ids(tmp_path) -> None:
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        fixture_path = FIXTURE_DIR / "basic-session.jsonl"
+        relative_source = Path("sessions") / "basic-session.jsonl"
+        relative_source.parent.mkdir()
+        copyfile(fixture_path, relative_source)
+        database_path = Path("session-doctor.duckdb")
+
+        relative_result = runner.invoke(
+            app,
+            [
+                "ingest",
+                "--agent",
+                "codex",
+                "--source",
+                str(relative_source),
+                "--db",
+                str(database_path),
+            ],
+        )
+        absolute_result = runner.invoke(
+            app,
+            [
+                "ingest",
+                "--agent",
+                "codex",
+                "--source",
+                str(relative_source.resolve()),
+                "--db",
+                str(database_path),
+            ],
+        )
+
+        assert relative_result.exit_code == 0
+        assert absolute_result.exit_code == 0
+        store = DuckDBStore(database_path)
+        assert store.table_count("session_sources") == 1
+        assert store.table_count("sessions") == 1
 
 
 def test_ingest_rejects_unsupported_agent(tmp_path) -> None:

@@ -47,7 +47,7 @@ class BaseAdapter(ABC):
         raise NotImplementedError
 
     def parse_source(self, source: SessionSource) -> ParsedSessionBundle:
-        msg = f"{self.display_name} parsing is not implemented in Phase 1."
+        msg = f"{self.display_name} parsing is not implemented yet."
         raise NotImplementedError(msg)
 
     def root_for_discovery(self, root: Path | None = None) -> Path:

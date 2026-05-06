@@ -74,6 +74,31 @@ def test_store_insert_parsed_bundle_persists_normalized_records(tmp_path) -> Non
     assert store.table_count("parse_warnings") == 2
 
 
+def test_store_insert_parsed_bundle_preserves_utc_timestamps(tmp_path) -> None:
+    fixture_path = FIXTURE_DIR / "basic-session.jsonl"
+    source = source_for_fixture(fixture_path)
+    bundle = CodexAdapter().parse_source(source)
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+
+    store.insert_parsed_bundle(source, bundle)
+
+    with duckdb.connect(str(store.database_path), read_only=True) as connection:
+        session_started_at = connection.execute(
+            "SELECT CAST(started_at AS VARCHAR) FROM sessions"
+        ).fetchone()
+        first_event_timestamp = connection.execute(
+            """
+            SELECT CAST(timestamp AS VARCHAR)
+            FROM raw_events
+            ORDER BY record_index
+            LIMIT 1
+            """
+        ).fetchone()
+
+    assert session_started_at == ("2026-05-06 08:00:00",)
+    assert first_event_timestamp == ("2026-05-06 08:00:00",)
+
+
 def test_store_insert_parsed_bundle_replaces_existing_source_records(tmp_path) -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
     source = source_for_fixture(fixture_path)
