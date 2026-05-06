@@ -63,6 +63,73 @@ OpenCode and other agents should be considered future adapters. The architecture
 should make adding them straightforward, but they are not part of the first
 implementation slice.
 
+## Current Repository State
+
+Phase 1 has been implemented. The repository now has a working Python package,
+Typer CLI entry point, Pydantic schema foundations, DuckDB schema scaffold,
+privacy and stable-ID helpers, adapter discovery for Codex, Claude Code, and Pi,
+and quality tooling.
+
+Implemented Phase 1 commands:
+
+```bash
+session-doctor --help
+session-doctor version
+session-doctor doctor
+session-doctor adapters list
+session-doctor adapters list --scan
+session-doctor db init
+session-doctor db info
+```
+
+Reserved commands still exist as placeholders:
+
+```bash
+session-doctor ingest
+session-doctor analyze <session-id>
+session-doctor report <session-id>
+session-doctor graph <session-id>
+```
+
+Current implemented package shape:
+
+```text
+src/session_doctor/
+  cli.py
+  config.py
+  constants.py
+  ids.py
+  privacy.py
+  adapters/
+    base.py
+    codex.py
+    claude.py
+    pi.py
+  schemas/
+    common.py
+    events.py
+    files.py
+    graph.py
+    messages.py
+    sessions.py
+    tools.py
+    usage.py
+    warnings.py
+  store/
+    duckdb.py
+    migrations.py
+```
+
+The repository also has synthetic tests for CLI behavior, schema validation,
+DuckDB initialization, and adapter discovery. Full native parsing, ingestion of
+normalized records, feature extraction, classification, reports, and graph
+projection remain unimplemented.
+
+This means the original phase plan should not be followed literally from this
+point. Normalized schemas and the DuckDB table scaffold already exist, so the
+next useful implementation slice should prove the pipeline end to end for one
+agent before adding more broad modeling surface.
+
 ## Local Session Inspection Findings
 
 This section captures the initial read-only inspection of real local session
@@ -1477,6 +1544,8 @@ JSON should be available for agents and tests.
 
 Create and review this design document before implementation.
 
+Status: complete.
+
 ### Phase 1: Project Skeleton
 
 Set up:
@@ -1490,48 +1559,44 @@ Set up:
 
 No real classification yet.
 
-### Phase 2: Normalized Schemas
+Status: complete. The implemented Phase 1 also includes adapter discovery,
+DuckDB migration scaffolding, graph placeholder schemas/tables, privacy helpers,
+and reserved CLI commands.
 
-Define Pydantic models for:
+### Phase 2: Codex Parse And Ingest MVP
 
-- sessions
-- turns
-- messages
-- tool calls/results
-- command runs
-- file edits
-- parse warnings
-- features
-- classifications
-- graph nodes/edges
+Implement the first real vertical slice using Codex only:
 
-Add unit tests for model validation and serialization.
+- parse Codex JSONL session files into the existing normalized models
+- persist parsed bundles into DuckDB
+- implement `session-doctor ingest` for Codex sources
+- add `session-doctor sessions list` so ingestion can be inspected
+- keep parsing deterministic, local-only, and covered by synthetic fixtures
 
-### Phase 3: DuckDB Store
+This phase should tighten schemas and storage only where the Codex vertical
+slice proves gaps. It should not add feature extraction, classification,
+reports, graph projection, ML dependencies, or privacy/redaction hardening.
 
-Create local DuckDB persistence for normalized records.
+Detailed plan: `docs/phase-2-plan.md`.
 
-Add commands to:
+### Phase 3: Second Adapter
 
-- initialize the database
-- ingest parsed records
-- list sessions
-- inspect one session
-- rebuild derived tables
+Implement the next native adapter after Codex. Recommended order:
 
-### Phase 4: First Adapters
+1. Pi
+2. Claude Code
 
-Implement deterministic adapters for:
+Pi is the recommended second adapter because its event IDs, parent IDs, session
+rows, and tool-call/result linkage provide a good validation source for graph
+projection. Claude Code remains first-class, but its discovery and persisted
+tool-output layout are more complex.
 
-- Codex
-- Claude Code
-- Pi
+Each adapter should have synthetic fixtures, parser tests, ingest tests, and at
+least one manual smoke-test path against a copied local session file.
 
-Each adapter should have fixtures and parser tests.
+### Phase 4: Deterministic Features
 
-### Phase 5: Deterministic Features
-
-Implement first-pass feature extraction:
+Implement first-pass feature extraction over normalized records:
 
 - repeated request detection
 - correction markers
@@ -1541,19 +1606,23 @@ Implement first-pass feature extraction:
 - repeated error detection
 - same-file edit repetition
 
+Feature extraction should remain deterministic and explainable. Sentiment
+analysis remains optional future work and should not be the primary classifier.
+
+### Phase 5: Classification Scoring
+
+Convert features into labels and scores.
+
+Keep the scoring simple, deterministic, and explainable at first. Every
+classification should include evidence event IDs and an evidence summary.
+
 ### Phase 6: Single-Session Report
 
 Generate a Markdown and terminal report for a single session.
 
 The report should include evidence references back to normalized event IDs.
 
-### Phase 7: Classification Scoring
-
-Convert features into labels and scores.
-
-Keep the scoring simple, deterministic, and explainable at first.
-
-### Phase 8: Graph Projection
+### Phase 7: Graph Projection
 
 Implement the derived graph model and `session-doctor graph <session-id>`.
 
@@ -1568,7 +1637,7 @@ Start with JSON output:
 
 Later output formats can be added after the graph semantics stabilize.
 
-### Phase 9: Project-Level Trends
+### Phase 8: Project-Level Trends
 
 Extend the DuckDB model and reports across sessions:
 
@@ -1582,7 +1651,7 @@ Extend the DuckDB model and reports across sessions:
 This is not the first MVP, but the earlier schema should be designed to support
 it.
 
-### Phase 10: Agent Wrappers
+### Phase 9: Agent Wrappers
 
 Add optional integrations:
 
