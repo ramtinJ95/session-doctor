@@ -340,9 +340,7 @@ def ingest(
         summary.file_activity_count += len(bundle.file_activities)
         summary.warning_count += len(bundle.parse_warnings)
         source_counts = (
-            bundle.session.metadata.get("codex_message_source_counts", {})
-            if bundle.session
-            else {}
+            bundle.session.metadata.get("codex_message_source_counts", {}) if bundle.session else {}
         )
         if isinstance(source_counts, dict):
             summary.response_item_message_count += int(
