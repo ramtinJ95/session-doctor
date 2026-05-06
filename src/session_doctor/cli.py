@@ -380,7 +380,7 @@ app.add_typer(sessions_app, name="sessions")
 
 
 def not_implemented(command_name: str) -> None:
-    console.print(f"[yellow]{command_name} is not implemented in Phase 1.[/yellow]")
+    console.print(f"[yellow]{command_name} is not implemented yet.[/yellow]")
     raise typer.Exit(2)
 
 
@@ -389,19 +389,24 @@ def codex_sources_for_ingest(adapter: CodexAdapter, source: Path | None) -> list
         return adapter.discover()
 
     expanded_source = source.expanduser()
-    if expanded_source.is_dir():
-        return adapter.discover(expanded_source)
-    if expanded_source.is_file():
+    if not expanded_source.exists():
+        console.print(f"[red]Source does not exist:[/red] {expanded_source}")
+        raise typer.Exit(1)
+
+    resolved_source = expanded_source.resolve()
+    if resolved_source.is_dir():
+        return adapter.discover(resolved_source)
+    if resolved_source.is_file():
         return [
             SessionSource(
-                source_id=source_id_for_path(AgentName.CODEX, expanded_source),
+                source_id=source_id_for_path(AgentName.CODEX, resolved_source),
                 agent_name=AgentName.CODEX,
-                source_path=str(expanded_source),
+                source_path=str(resolved_source),
                 source_kind=SourceKind.ROOT_SESSION,
             )
         ]
 
-    console.print(f"[red]Source does not exist:[/red] {expanded_source}")
+    console.print(f"[red]Source is not a file or directory:[/red] {resolved_source}")
     raise typer.Exit(1)
 
 
