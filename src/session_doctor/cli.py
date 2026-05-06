@@ -29,6 +29,7 @@ console = Console()
 app = typer.Typer(help="Inspect and diagnose local AI agent sessions.")
 adapters_app = typer.Typer(help="Inspect built-in session adapters.")
 db_app = typer.Typer(help="Manage the local DuckDB store.")
+sessions_app = typer.Typer(help="Inspect ingested sessions.")
 
 
 @dataclass
@@ -197,6 +198,54 @@ def database_info(
     console.print(table)
 
 
+@sessions_app.command("list")
+def list_sessions(
+    db: Annotated[
+        Path | None,
+        typer.Option(
+            "--db",
+            help="DuckDB path to inspect. Defaults to SESSION_DOCTOR_DB or app data.",
+        ),
+    ] = None,
+) -> None:
+    """List sessions stored in DuckDB."""
+    database_path = database_path_from_option(db)
+    require_valid_database_path(database_path)
+    store = DuckDBStore(database_path)
+    summaries = store.list_session_summaries()
+
+    table = Table(title="Sessions")
+    table.add_column("Session ID")
+    table.add_column("Agent")
+    table.add_column("Started")
+    table.add_column("Messages")
+    table.add_column("Response Items")
+    table.add_column("Event Fallbacks")
+    table.add_column("Commands")
+    table.add_column("Warnings")
+    table.add_column("Source Path")
+
+    for summary in summaries:
+        table.add_row(
+            summary.session_id,
+            summary.agent_name,
+            summary.started_at or "",
+            str(summary.message_count),
+            str(summary.response_item_message_count),
+            str(summary.event_msg_fallback_count),
+            str(summary.command_count),
+            str(summary.warning_count),
+            summary.source_path or "",
+        )
+
+    console.print(table)
+    for summary in summaries:
+        typer.echo(f"Response Items: {summary.response_item_message_count}")
+        typer.echo(f"Event Fallbacks: {summary.event_msg_fallback_count}")
+        if summary.source_path:
+            typer.echo(f"Source path: {summary.source_path}")
+
+
 def os_access_writable(path: Path) -> bool:
     try:
         return path.exists() and path.is_dir() and os.access(path, os.W_OK)
@@ -329,6 +378,7 @@ def graph(session_id: str) -> None:
 
 app.add_typer(adapters_app, name="adapters")
 app.add_typer(db_app, name="db")
+app.add_typer(sessions_app, name="sessions")
 
 
 def not_implemented(command_name: str) -> None:

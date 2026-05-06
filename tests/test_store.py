@@ -89,6 +89,22 @@ def test_store_insert_parsed_bundle_replaces_existing_source_records(tmp_path) -
     assert store.table_count("parse_warnings") == 2
 
 
+def test_store_list_session_summaries_includes_message_source_counts(tmp_path) -> None:
+    fixture_path = FIXTURE_DIR / "basic-session.jsonl"
+    source = source_for_fixture(fixture_path)
+    bundle = CodexAdapter().parse_source(source)
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    store.insert_parsed_bundle(source, bundle)
+
+    summaries = store.list_session_summaries()
+
+    assert len(summaries) == 1
+    assert summaries[0].message_count == 2
+    assert summaries[0].response_item_message_count == 2
+    assert summaries[0].event_msg_fallback_count == 0
+    assert summaries[0].source_path == str(fixture_path)
+
+
 def source_for_fixture(path: Path) -> SessionSource:
     return SessionSource(
         source_id=source_id_for_path(AgentName.CODEX, path),
