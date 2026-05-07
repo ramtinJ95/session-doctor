@@ -65,12 +65,13 @@ implementation slice.
 
 ## Current Repository State
 
-Phase 1 has been implemented. The repository now has a working Python package,
-Typer CLI entry point, Pydantic schema foundations, DuckDB schema scaffold,
-privacy and stable-ID helpers, adapter discovery for Codex, Claude Code, and Pi,
-and quality tooling.
+Phase 1 and Phase 2 have been implemented. The repository now has a working
+Python package, Typer CLI entry point, Pydantic schema foundations, DuckDB
+storage, privacy and stable-ID helpers, adapter discovery for Codex, Claude
+Code, and Pi, Codex parsing, Codex ingestion, session listing, and quality
+tooling.
 
-Implemented Phase 1 commands:
+Implemented commands:
 
 ```bash
 session-doctor --help
@@ -80,12 +81,13 @@ session-doctor adapters list
 session-doctor adapters list --scan
 session-doctor db init
 session-doctor db info
+session-doctor ingest --agent codex
+session-doctor sessions list
 ```
 
 Reserved commands still exist as placeholders:
 
 ```bash
-session-doctor ingest
 session-doctor analyze <session-id>
 session-doctor report <session-id>
 session-doctor graph <session-id>
@@ -121,14 +123,22 @@ src/session_doctor/
 ```
 
 The repository also has synthetic tests for CLI behavior, schema validation,
-DuckDB initialization, and adapter discovery. Full native parsing, ingestion of
-normalized records, feature extraction, classification, reports, and graph
-projection remain unimplemented.
+DuckDB initialization, adapter discovery, Codex parsing, DuckDB bundle
+persistence, ingest behavior, and session listing.
 
-This means the original phase plan should not be followed literally from this
-point. Normalized schemas and the DuckDB table scaffold already exist, so the
-next useful implementation slice should prove the pipeline end to end for one
-agent before adding more broad modeling surface.
+The implemented Codex vertical slice is:
+
+```text
+Codex JSONL source -> Codex adapter -> normalized records -> DuckDB -> sessions list
+```
+
+Feature extraction, classification, reports, graph projection, Pi parsing, and
+Claude Code parsing remain unimplemented.
+
+This means the next useful implementation slice should make the ingested Codex
+data diagnostically useful before adding more parser breadth. The Phase 3 plan
+therefore focuses on deterministic Codex analysis and stored derived rows rather
+than a second adapter.
 
 ## Local Session Inspection Findings
 
@@ -1565,7 +1575,7 @@ and reserved CLI commands.
 
 ### Phase 2: Codex Parse And Ingest MVP
 
-Implement the first real vertical slice using Codex only:
+Implemented the first real vertical slice using Codex only:
 
 - parse Codex JSONL session files into the existing normalized models
 - persist parsed bundles into DuckDB
@@ -1577,9 +1587,32 @@ This phase should tighten schemas and storage only where the Codex vertical
 slice proves gaps. It should not add feature extraction, classification,
 reports, graph projection, ML dependencies, or privacy/redaction hardening.
 
+Status: complete.
+
 Detailed plan: `docs/phase-2-plan.md`.
 
-### Phase 3: Second Adapter
+### Phase 3: Codex Analysis MVP
+
+Make the Phase 2 Codex data diagnostically useful before adding another parser:
+
+- add derived feature and classification schemas
+- add DuckDB tables and write APIs for analysis rows
+- implement deterministic repeated-request similarity
+- implement correction, frustration, scope-boundary, failed-command,
+  repeated-failure, same-file-edit, and unresolved-ending signals
+- add a small deterministic classification layer
+- implement `session-doctor analyze <session-id>`
+- write a machine-readable JSON artifact by default
+- keep analysis local-only, deterministic, and covered by fixtures
+
+This phase should persist derived rows by default and rebuild them for the
+target session whenever analysis runs. It should not add a second adapter,
+Markdown reports, graph projection, ML dependencies, LLM calls, or
+privacy/redaction hardening.
+
+Detailed plan: `docs/phase-3-plan.md`.
+
+### Phase 4: Second Adapter
 
 Implement the next native adapter after Codex. Recommended order:
 
@@ -1594,9 +1627,10 @@ tool-output layout are more complex.
 Each adapter should have synthetic fixtures, parser tests, ingest tests, and at
 least one manual smoke-test path against a copied local session file.
 
-### Phase 4: Deterministic Features
+### Phase 5: Broader Deterministic Features
 
-Implement first-pass feature extraction over normalized records:
+Broaden deterministic feature extraction after the Phase 3 Codex Analysis MVP
+has proven the core model:
 
 - repeated request detection
 - correction markers
@@ -1609,20 +1643,20 @@ Implement first-pass feature extraction over normalized records:
 Feature extraction should remain deterministic and explainable. Sentiment
 analysis remains optional future work and should not be the primary classifier.
 
-### Phase 5: Classification Scoring
+### Phase 6: Classification Scoring
 
-Convert features into labels and scores.
+Expand features into richer labels and scores.
 
 Keep the scoring simple, deterministic, and explainable at first. Every
 classification should include evidence event IDs and an evidence summary.
 
-### Phase 6: Single-Session Report
+### Phase 7: Single-Session Report
 
 Generate a Markdown and terminal report for a single session.
 
 The report should include evidence references back to normalized event IDs.
 
-### Phase 7: Graph Projection
+### Phase 8: Graph Projection
 
 Implement the derived graph model and `session-doctor graph <session-id>`.
 
@@ -1637,7 +1671,7 @@ Start with JSON output:
 
 Later output formats can be added after the graph semantics stabilize.
 
-### Phase 8: Project-Level Trends
+### Phase 9: Project-Level Trends
 
 Extend the DuckDB model and reports across sessions:
 
@@ -1651,7 +1685,7 @@ Extend the DuckDB model and reports across sessions:
 This is not the first MVP, but the earlier schema should be designed to support
 it.
 
-### Phase 9: Agent Wrappers
+### Phase 10: Agent Wrappers
 
 Add optional integrations:
 
