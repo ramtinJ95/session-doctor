@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from session_doctor.adapters import ParsedSessionBundle
-from session_doctor.analysis import REPEAT_REQUEST_SIMILARITY_THRESHOLD, analyze_features
+from session_doctor.analysis import (
+    REPEAT_REQUEST_SIMILARITY_THRESHOLD,
+    analyze_features,
+    classify_session,
+)
 from session_doctor.analysis.features import request_similarity
 from session_doctor.schemas import (
     AgentName,
@@ -141,6 +145,43 @@ def test_analyze_features_detects_message_and_session_signals() -> None:
     assert session_features["unresolved_ending_signal"].feature_value == "true"
 
 
+def test_classify_session_emits_initial_deterministic_labels() -> None:
+    bundle = analysis_fixture_bundle()
+    features = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    classifications = classify_session(
+        bundle,
+        analysis_run_id="analysis-1",
+        message_features=features.message_features,
+        session_features=features.session_features,
+    )
+
+    labels = {classification.label for classification in classifications}
+    assert {"user_stuck", "tooling_blocked", "agent_looping"}.issubset(labels)
+    assert "resolved_after_corrections" not in labels
+    tooling_blocked = next(
+        classification
+        for classification in classifications
+        if classification.label == "tooling_blocked"
+    )
+    assert tooling_blocked.evidence_event_ids
+
+
+def test_classify_session_detects_resolution_after_correction() -> None:
+    bundle = resolved_after_correction_bundle()
+    features = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    classifications = classify_session(
+        bundle,
+        analysis_run_id="analysis-1",
+        message_features=features.message_features,
+        session_features=features.session_features,
+    )
+
+    labels = {classification.label for classification in classifications}
+    assert "resolved_after_corrections" in labels
+
+
 def analysis_fixture_bundle() -> ParsedSessionBundle:
     session = Session(
         session_id="session-1",
@@ -236,11 +277,46 @@ def analysis_fixture_bundle() -> ParsedSessionBundle:
     )
 
 
+def resolved_after_correction_bundle() -> ParsedSessionBundle:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    raw_events = [
+        RawEvent(
+            event_id=f"event-{index}",
+            source_id="source-1",
+            agent_name=AgentName.CODEX,
+            record_index=index,
+        )
+        for index in range(1, 5)
+    ]
+    messages = [
+        message("message-1", NormalizedRole.USER, "Please fix the failing test.", "event-1"),
+        message(
+            "message-2",
+            NormalizedRole.USER,
+            "No, that is not what I meant.",
+            "event-2",
+        ),
+        message(
+            "message-3",
+            NormalizedRole.ASSISTANT,
+            "Fixed and verified.",
+            "event-4",
+            metadata={"phase": "final_answer"},
+        ),
+    ]
+    return ParsedSessionBundle(session=session, raw_events=raw_events, messages=messages)
+
+
 def message(
     message_id: str,
     role: NormalizedRole,
     text: str,
     source_event_id: str,
+    metadata: dict[str, object] | None = None,
 ) -> Message:
     return Message(
         message_id=message_id,
@@ -249,4 +325,5 @@ def message(
         source_event_id=source_event_id,
         text=text,
         text_length=len(text),
+        metadata=metadata or {},
     )
