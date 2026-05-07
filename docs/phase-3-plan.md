@@ -277,12 +277,15 @@ The first fixture set should stay small and reviewable:
 Useful starting constants:
 
 ```text
+repeat_request_similarity_threshold = 0.35
 exact_normalized_text_boost = 0.10
 minimum_comparable_token_count = 4
 ```
 
-The repeated-request threshold should be named as a constant after fixture
-calibration, with a short test note showing the score margin that justified it.
+The first implementation selected `0.35` from the curated fixture score margins.
+The lowest positive fixture score is above the threshold, the highest negative
+or near-miss score is below it, and the tests keep a visible margin between the
+two groups.
 
 ### Correction Markers
 
@@ -740,6 +743,4 @@ Phase 3 is complete when:
 
 ## Open Questions For Implementation Review
 
-There are no known product decisions blocking Phase 3 implementation. The
-request-similarity threshold should be selected during implementation from the
-curated fixture score margins, then locked in tests.
+There are no known product decisions blocking Phase 3 implementation.

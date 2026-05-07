@@ -149,8 +149,7 @@ def resolved_after_last_correction(
     correction_indexes = [
         event_indexes[feature.source_event_id]
         for feature in message_features
-        if feature.feature_name == "correction_marker"
-        and feature.source_event_id in event_indexes
+        if feature.feature_name == "correction_marker" and feature.source_event_id in event_indexes
     ]
     if not correction_indexes:
         return False
