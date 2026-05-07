@@ -173,7 +173,7 @@ def test_sessions_list_shows_ingested_codex_session(tmp_path) -> None:
 
 def test_analyze_ingested_codex_session_writes_artifact_and_rows(tmp_path) -> None:
     database_path = tmp_path / "session-doctor.duckdb"
-    fixture_path = FIXTURE_DIR / "basic-session.jsonl"
+    fixture_path = FIXTURE_DIR / "repeated-failure-session.jsonl"
     ingest_result = runner.invoke(
         app,
         [
@@ -200,6 +200,8 @@ def test_analyze_ingested_codex_session_writes_artifact_and_rows(tmp_path) -> No
     payload = json.loads(artifact_path.read_text())
     assert payload["session"]["session_id"] == session_id
     assert "failed_command_ratio" in payload["summary_metrics"]
+    labels = {classification["label"] for classification in payload["classifications"]}
+    assert {"user_stuck", "tooling_blocked", "agent_looping"}.issubset(labels)
     assert store.table_count("analysis_runs") == 1
     assert store.table_count("session_features") > 0
     assert store.table_count("session_classifications") > 0

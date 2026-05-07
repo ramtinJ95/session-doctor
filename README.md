@@ -22,6 +22,13 @@ Phase 2 adds the first real vertical slice for Codex sessions:
 - `session-doctor ingest --agent codex`
 - `session-doctor sessions list`
 
+Phase 3 adds the first deterministic Codex analysis slice:
+
+- derived feature and classification rows
+- `session-doctor analyze <session-id>`
+- terminal summaries
+- default JSON analysis artifacts
+
 ## Usage
 
 Install dependencies:
@@ -69,6 +76,24 @@ If `--source` is omitted, Codex ingestion scans the default Codex session root:
 uv run session-doctor ingest --agent codex --db /tmp/session-doctor-test.duckdb
 ```
 
+Analyze an ingested session:
+
+```bash
+uv run session-doctor analyze <session-id> --db /tmp/session-doctor-test.duckdb
+uv run session-doctor analyze <session-id> \
+  --db /tmp/session-doctor-test.duckdb \
+  --format json
+```
+
+By default, `analyze` writes a JSON artifact beside the DuckDB file:
+
+```text
+<database-parent>/artifacts/<session-id>-analysis.json
+```
+
+Use `--no-artifact` to skip artifact writing or `--artifact <path>` to choose a
+specific output path.
+
 Run the quality gate:
 
 ```bash
@@ -82,3 +107,5 @@ Design references:
 
 - [Design Plan](docs/session-doctor-design.md)
 - [Phase 1 Plan](docs/phase-1-plan.md)
+- [Phase 2 Plan](docs/phase-2-plan.md)
+- [Phase 3 Plan](docs/phase-3-plan.md)

@@ -568,12 +568,8 @@ def analysis_payload(
         "summary_metrics": {
             feature.feature_name: feature.feature_value for feature in session_features
         },
-        "message_features": [
-            feature.model_dump(mode="json") for feature in message_features
-        ],
-        "session_features": [
-            feature.model_dump(mode="json") for feature in session_features
-        ],
+        "message_features": [feature.model_dump(mode="json") for feature in message_features],
+        "session_features": [feature.model_dump(mode="json") for feature in session_features],
         "classifications": [
             classification.model_dump(mode="json") for classification in classifications
         ],
