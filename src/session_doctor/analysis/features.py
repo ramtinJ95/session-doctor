@@ -282,7 +282,14 @@ def session_count_features(
             session_id,
             "failed_command_count",
             len(failed_commands),
-            evidence={"command_run_ids": [command.command_run_id for command in failed_commands]},
+            evidence={
+                "command_run_ids": [command.command_run_id for command in failed_commands],
+                "source_event_ids": [
+                    command.source_event_id
+                    for command in failed_commands
+                    if command.source_event_id
+                ],
+            },
         ),
         session_feature(
             analysis_run_id,
@@ -353,12 +360,16 @@ def repeated_failure_groups(bundle: ParsedSessionBundle) -> list[dict[str, objec
             group_values[f"stderr_hash:{command.stderr_hash}"].append(command.command_run_id)
         if command.stdout_hash:
             group_values[f"stdout_hash:{command.stdout_hash}"].append(command.command_run_id)
-        group_values[f"failed_command:{command.command}"].append(command.command_run_id)
+        group_values[f"failed_command:{command.command}"].append(
+            command.command_run_id,
+        )
 
     for result in bundle.tool_results:
         if result.is_error is not True or not result.output_hash:
             continue
-        group_values[f"tool_output_hash:{result.output_hash}"].append(result.tool_result_id)
+        group_values[f"tool_output_hash:{result.output_hash}"].append(
+            result.tool_result_id,
+        )
 
     return [
         {
