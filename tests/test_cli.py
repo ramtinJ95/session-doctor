@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from shutil import copyfile
 
@@ -168,3 +169,93 @@ def test_sessions_list_shows_ingested_codex_session(tmp_path) -> None:
     assert str(fixture_path) in result.stdout
     assert "Response Items" in result.stdout
     assert "Event Fallbacks" in result.stdout
+
+
+def test_analyze_ingested_codex_session_writes_artifact_and_rows(tmp_path) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    fixture_path = FIXTURE_DIR / "basic-session.jsonl"
+    ingest_result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "codex",
+            "--source",
+            str(fixture_path),
+            "--db",
+            str(database_path),
+        ],
+    )
+    assert ingest_result.exit_code == 0
+    store = DuckDBStore(database_path)
+    session_id = store.list_session_summaries()[0].session_id
+
+    result = runner.invoke(app, ["analyze", session_id, "--db", str(database_path)])
+
+    assert result.exit_code == 0
+    assert "Session analysis" in result.stdout
+    assert "Classifications" in result.stdout
+    artifact_path = tmp_path / "artifacts" / f"{session_id}-analysis.json"
+    assert artifact_path.exists()
+    payload = json.loads(artifact_path.read_text())
+    assert payload["session"]["session_id"] == session_id
+    assert "failed_command_ratio" in payload["summary_metrics"]
+    assert store.table_count("analysis_runs") == 1
+    assert store.table_count("session_features") > 0
+    assert store.table_count("session_classifications") > 0
+
+
+def test_analyze_json_format_still_writes_default_artifact(tmp_path) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    fixture_path = FIXTURE_DIR / "basic-session.jsonl"
+    ingest_result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "codex",
+            "--source",
+            str(fixture_path),
+            "--db",
+            str(database_path),
+        ],
+    )
+    assert ingest_result.exit_code == 0
+    session_id = DuckDBStore(database_path).list_session_summaries()[0].session_id
+
+    result = runner.invoke(
+        app,
+        ["analyze", session_id, "--db", str(database_path), "--format", "json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["session"]["session_id"] == session_id
+    assert (tmp_path / "artifacts" / f"{session_id}-analysis.json").exists()
+
+
+def test_analyze_no_artifact_skips_default_artifact(tmp_path) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    fixture_path = FIXTURE_DIR / "basic-session.jsonl"
+    ingest_result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "codex",
+            "--source",
+            str(fixture_path),
+            "--db",
+            str(database_path),
+        ],
+    )
+    assert ingest_result.exit_code == 0
+    session_id = DuckDBStore(database_path).list_session_summaries()[0].session_id
+
+    result = runner.invoke(
+        app,
+        ["analyze", session_id, "--db", str(database_path), "--no-artifact"],
+    )
+
+    assert result.exit_code == 0
+    assert not (tmp_path / "artifacts" / f"{session_id}-analysis.json").exists()

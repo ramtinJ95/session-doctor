@@ -138,6 +138,26 @@ def test_store_list_session_summaries_includes_message_source_counts(tmp_path) -
     assert summaries[0].source_path == str(fixture_path)
 
 
+def test_store_load_session_bundle_round_trips_ingested_records(tmp_path) -> None:
+    fixture_path = FIXTURE_DIR / "basic-session.jsonl"
+    source = source_for_fixture(fixture_path)
+    bundle = CodexAdapter().parse_source(source)
+    assert bundle.session is not None
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    store.insert_parsed_bundle(source, bundle)
+
+    loaded = store.load_session_bundle(bundle.session.session_id)
+
+    assert loaded is not None
+    assert loaded.session is not None
+    assert loaded.session.session_id == bundle.session.session_id
+    assert len(loaded.raw_events) == len(bundle.raw_events)
+    assert len(loaded.messages) == len(bundle.messages)
+    assert len(loaded.command_runs) == len(bundle.command_runs)
+    assert loaded.messages[0].content_block_types == ["input_text"]
+    assert loaded.messages[0].metadata["codex_message_source"] == "response_item"
+
+
 def test_store_replace_analysis_rows_rebuilds_derived_records(tmp_path) -> None:
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
     analysis_run = AnalysisRun(
