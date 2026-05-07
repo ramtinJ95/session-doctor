@@ -10,11 +10,22 @@ import duckdb
 
 from session_doctor.adapters import ParsedSessionBundle
 from session_doctor.schemas import (
+    AgentName,
     AnalysisRun,
+    CommandRun,
+    FileActivity,
+    Message,
     MessageFeature,
+    ModelUsage,
+    NormalizedRole,
+    ParseWarning,
+    RawEvent,
+    Session,
     SessionClassification,
     SessionFeature,
     SessionSource,
+    ToolCall,
+    ToolResult,
 )
 
 from .migrations import TABLE_NAMES, apply_migrations
@@ -179,6 +190,25 @@ class DuckDBStore:
             )
         return tuple(summaries)
 
+    def load_session_bundle(self, session_id: str) -> ParsedSessionBundle | None:
+        if not self.database_path.exists():
+            return None
+        with duckdb.connect(str(self.database_path), read_only=True) as connection:
+            session = self._load_session(connection, session_id)
+            if session is None:
+                return None
+            return ParsedSessionBundle(
+                session=session,
+                raw_events=self._load_raw_events(connection, session.source_id),
+                messages=self._load_messages(connection, session_id),
+                tool_calls=self._load_tool_calls(connection, session_id),
+                tool_results=self._load_tool_results(connection, session_id),
+                command_runs=self._load_command_runs(connection, session_id),
+                file_activities=self._load_file_activities(connection, session_id),
+                model_usage=self._load_model_usage(connection, session_id),
+                parse_warnings=self._load_parse_warnings(connection, session.source_id),
+            )
+
     def info(self) -> StoreInfo:
         if not self.database_path.exists():
             return StoreInfo(
@@ -336,6 +366,372 @@ class DuckDBStore:
             session_counts = counts.setdefault(str(session_id), {})
             session_counts[source] = session_counts.get(source, 0) + 1
         return counts
+
+    @staticmethod
+    def _load_session(
+        connection: duckdb.DuckDBPyConnection,
+        session_id: str,
+    ) -> Session | None:
+        row = connection.execute(
+            """
+            SELECT
+                session_id,
+                source_id,
+                agent_name,
+                native_session_id,
+                parent_session_id,
+                started_at,
+                ended_at,
+                cwd,
+                project_path,
+                agent_version,
+                model_provider,
+                model,
+                is_sidechain,
+                metadata_json
+            FROM sessions
+            WHERE session_id = ?
+            """,
+            [session_id],
+        ).fetchone()
+        if row is None:
+            return None
+        return Session(
+            session_id=row[0],
+            source_id=row[1],
+            agent_name=AgentName(row[2]),
+            native_session_id=row[3],
+            parent_session_id=row[4],
+            started_at=row[5],
+            ended_at=row[6],
+            cwd=row[7],
+            project_path=row[8],
+            agent_version=row[9],
+            model_provider=row[10],
+            model=row[11],
+            is_sidechain=bool(row[12]),
+            metadata=parse_metadata(row[13]),
+        )
+
+    @staticmethod
+    def _load_raw_events(
+        connection: duckdb.DuckDBPyConnection,
+        source_id: str,
+    ) -> list[RawEvent]:
+        rows = connection.execute(
+            """
+            SELECT
+                event_id,
+                source_id,
+                agent_name,
+                record_index,
+                native_event_type,
+                native_event_id,
+                native_parent_id,
+                timestamp,
+                payload_hash,
+                metadata_json
+            FROM raw_events
+            WHERE source_id = ?
+            ORDER BY record_index, event_id
+            """,
+            [source_id],
+        ).fetchall()
+        return [
+            RawEvent(
+                event_id=row[0],
+                source_id=row[1],
+                agent_name=AgentName(row[2]),
+                record_index=row[3],
+                native_event_type=row[4],
+                native_event_id=row[5],
+                native_parent_id=row[6],
+                timestamp=row[7],
+                payload_hash=row[8],
+                metadata=parse_metadata(row[9]),
+            )
+            for row in rows
+        ]
+
+    @staticmethod
+    def _load_messages(
+        connection: duckdb.DuckDBPyConnection,
+        session_id: str,
+    ) -> list[Message]:
+        rows = connection.execute(
+            """
+            SELECT
+                message_id,
+                session_id,
+                role,
+                source_event_id,
+                native_message_id,
+                parent_message_id,
+                timestamp,
+                text,
+                text_hash,
+                text_length,
+                content_block_types_json,
+                metadata_json
+            FROM messages
+            WHERE session_id = ?
+            ORDER BY timestamp NULLS LAST, message_id
+            """,
+            [session_id],
+        ).fetchall()
+        return [
+            Message(
+                message_id=row[0],
+                session_id=row[1],
+                role=NormalizedRole(row[2]),
+                source_event_id=row[3],
+                native_message_id=row[4],
+                parent_message_id=row[5],
+                timestamp=row[6],
+                text=row[7],
+                text_hash=row[8],
+                text_length=row[9],
+                content_block_types=parse_string_list(row[10]),
+                metadata=parse_metadata(row[11]),
+            )
+            for row in rows
+        ]
+
+    @staticmethod
+    def _load_tool_calls(
+        connection: duckdb.DuckDBPyConnection,
+        session_id: str,
+    ) -> list[ToolCall]:
+        rows = connection.execute(
+            """
+            SELECT
+                tool_call_id,
+                session_id,
+                source_event_id,
+                native_tool_call_id,
+                name,
+                timestamp,
+                arguments_hash,
+                metadata_json
+            FROM tool_calls
+            WHERE session_id = ?
+            ORDER BY timestamp NULLS LAST, tool_call_id
+            """,
+            [session_id],
+        ).fetchall()
+        return [
+            ToolCall(
+                tool_call_id=row[0],
+                session_id=row[1],
+                source_event_id=row[2],
+                native_tool_call_id=row[3],
+                name=row[4],
+                timestamp=row[5],
+                arguments_hash=row[6],
+                metadata=parse_metadata(row[7]),
+            )
+            for row in rows
+        ]
+
+    @staticmethod
+    def _load_tool_results(
+        connection: duckdb.DuckDBPyConnection,
+        session_id: str,
+    ) -> list[ToolResult]:
+        rows = connection.execute(
+            """
+            SELECT
+                tool_result_id,
+                session_id,
+                tool_call_id,
+                source_event_id,
+                native_tool_call_id,
+                timestamp,
+                is_error,
+                output_hash,
+                output_length,
+                metadata_json
+            FROM tool_results
+            WHERE session_id = ?
+            ORDER BY timestamp NULLS LAST, tool_result_id
+            """,
+            [session_id],
+        ).fetchall()
+        return [
+            ToolResult(
+                tool_result_id=row[0],
+                session_id=row[1],
+                tool_call_id=row[2],
+                source_event_id=row[3],
+                native_tool_call_id=row[4],
+                timestamp=row[5],
+                is_error=row[6],
+                output_hash=row[7],
+                output_length=row[8],
+                metadata=parse_metadata(row[9]),
+            )
+            for row in rows
+        ]
+
+    @staticmethod
+    def _load_command_runs(
+        connection: duckdb.DuckDBPyConnection,
+        session_id: str,
+    ) -> list[CommandRun]:
+        rows = connection.execute(
+            """
+            SELECT
+                command_run_id,
+                session_id,
+                source_event_id,
+                tool_call_id,
+                command,
+                cwd,
+                started_at,
+                ended_at,
+                exit_code,
+                stdout_hash,
+                stderr_hash,
+                output_length,
+                metadata_json
+            FROM command_runs
+            WHERE session_id = ?
+            ORDER BY ended_at NULLS LAST, started_at NULLS LAST, command_run_id
+            """,
+            [session_id],
+        ).fetchall()
+        return [
+            CommandRun(
+                command_run_id=row[0],
+                session_id=row[1],
+                source_event_id=row[2],
+                tool_call_id=row[3],
+                command=row[4],
+                cwd=row[5],
+                started_at=row[6],
+                ended_at=row[7],
+                exit_code=row[8],
+                stdout_hash=row[9],
+                stderr_hash=row[10],
+                output_length=row[11],
+                metadata=parse_metadata(row[12]),
+            )
+            for row in rows
+        ]
+
+    @staticmethod
+    def _load_file_activities(
+        connection: duckdb.DuckDBPyConnection,
+        session_id: str,
+    ) -> list[FileActivity]:
+        rows = connection.execute(
+            """
+            SELECT
+                file_activity_id,
+                session_id,
+                source_event_id,
+                path,
+                operation,
+                timestamp,
+                content_hash,
+                metadata_json
+            FROM file_activities
+            WHERE session_id = ?
+            ORDER BY timestamp NULLS LAST, file_activity_id
+            """,
+            [session_id],
+        ).fetchall()
+        return [
+            FileActivity(
+                file_activity_id=row[0],
+                session_id=row[1],
+                source_event_id=row[2],
+                path=row[3],
+                operation=row[4],
+                timestamp=row[5],
+                content_hash=row[6],
+                metadata=parse_metadata(row[7]),
+            )
+            for row in rows
+        ]
+
+    @staticmethod
+    def _load_model_usage(
+        connection: duckdb.DuckDBPyConnection,
+        session_id: str,
+    ) -> list[ModelUsage]:
+        rows = connection.execute(
+            """
+            SELECT
+                model_usage_id,
+                session_id,
+                source_event_id,
+                timestamp,
+                provider,
+                model,
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_write_tokens,
+                total_tokens,
+                cost,
+                metadata_json
+            FROM model_usage
+            WHERE session_id = ?
+            ORDER BY timestamp NULLS LAST, model_usage_id
+            """,
+            [session_id],
+        ).fetchall()
+        return [
+            ModelUsage(
+                model_usage_id=row[0],
+                session_id=row[1],
+                source_event_id=row[2],
+                timestamp=row[3],
+                provider=row[4],
+                model=row[5],
+                input_tokens=row[6],
+                output_tokens=row[7],
+                cache_read_tokens=row[8],
+                cache_write_tokens=row[9],
+                total_tokens=row[10],
+                cost=row[11],
+                metadata=parse_metadata(row[12]),
+            )
+            for row in rows
+        ]
+
+    @staticmethod
+    def _load_parse_warnings(
+        connection: duckdb.DuckDBPyConnection,
+        source_id: str,
+    ) -> list[ParseWarning]:
+        rows = connection.execute(
+            """
+            SELECT
+                warning_id,
+                source_id,
+                record_index,
+                severity,
+                message,
+                metadata_json
+            FROM parse_warnings
+            WHERE source_id = ?
+            ORDER BY record_index NULLS LAST, warning_id
+            """,
+            [source_id],
+        ).fetchall()
+        return [
+            ParseWarning(
+                warning_id=row[0],
+                source_id=row[1],
+                record_index=row[2],
+                severity=row[3],
+                message=row[4],
+                metadata=parse_metadata(row[5]),
+            )
+            for row in rows
+        ]
 
 
 def session_rows(bundle: ParsedSessionBundle) -> list[dict[str, Any]]:
@@ -593,3 +989,15 @@ def parse_metadata(payload: object) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def parse_string_list(payload: object) -> list[str]:
+    if not isinstance(payload, str):
+        return []
+    try:
+        parsed = json.loads(payload)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, str)]

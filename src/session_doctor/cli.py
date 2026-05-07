@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import sys
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -17,9 +19,17 @@ from .adapters.codex import (
     CODEX_MESSAGE_SOURCE_EVENT_MSG_FALLBACK,
     CODEX_MESSAGE_SOURCE_RESPONSE_ITEM,
 )
+from .analysis import analyze_features, classify_session
 from .config import default_database_path, supports_current_python
-from .ids import source_id_for_path
-from .schemas import SourceKind
+from .ids import source_id_for_path, stable_id
+from .schemas import (
+    AnalysisRun,
+    MessageFeature,
+    Session,
+    SessionClassification,
+    SessionFeature,
+    SourceKind,
+)
 from .schemas.common import AgentName
 from .schemas.sessions import SessionSource
 from .store import TABLE_NAMES, DuckDBStore
@@ -354,10 +364,100 @@ def ingest(
 
 
 @app.command()
-def analyze(session_id: str) -> None:
-    """Reserved for future session analysis."""
-    _ = session_id
-    not_implemented("analyze")
+def analyze(
+    session_id: str,
+    db: Annotated[
+        Path | None,
+        typer.Option(
+            "--db",
+            help="DuckDB path to inspect. Defaults to SESSION_DOCTOR_DB or app data.",
+        ),
+    ] = None,
+    output_format: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            help="Output format: terminal or json.",
+        ),
+    ] = "terminal",
+    artifact: Annotated[
+        Path | None,
+        typer.Option(
+            "--artifact",
+            help="Path for the machine-readable JSON artifact.",
+        ),
+    ] = None,
+    no_artifact: Annotated[
+        bool,
+        typer.Option(
+            "--no-artifact",
+            help="Skip writing the default JSON artifact.",
+        ),
+    ] = False,
+) -> None:
+    """Analyze one ingested session and persist derived rows."""
+    if output_format not in {"terminal", "json"}:
+        console.print("[red]Invalid --format:[/red] expected terminal or json")
+        raise typer.Exit(2)
+
+    database_path = database_path_from_option(db)
+    require_valid_database_path(database_path)
+    if not database_path.exists():
+        console.print(f"[red]Database does not exist:[/red] {database_path}")
+        raise typer.Exit(1)
+
+    store = DuckDBStore(database_path)
+    bundle = store.load_session_bundle(session_id)
+    if bundle is None or bundle.session is None:
+        console.print(f"[red]Session not found:[/red] {session_id}")
+        raise typer.Exit(1)
+
+    started_at = datetime.now(UTC)
+    analysis_run_id = stable_id("analysis_run", session_id, started_at.isoformat())
+    extracted_features = analyze_features(bundle, analysis_run_id)
+    classifications = classify_session(
+        bundle,
+        analysis_run_id,
+        extracted_features.message_features,
+        extracted_features.session_features,
+    )
+    artifact_path = artifact_path_for_analysis(database_path, session_id, artifact, no_artifact)
+    analysis_run = AnalysisRun(
+        analysis_run_id=analysis_run_id,
+        session_id=session_id,
+        started_at=started_at,
+        completed_at=datetime.now(UTC),
+        analyzer_version="phase3",
+        artifact_path=str(artifact_path) if artifact_path else None,
+    )
+    payload = analysis_payload(
+        bundle.session,
+        analysis_run,
+        extracted_features.message_features,
+        extracted_features.session_features,
+        classifications,
+    )
+
+    if artifact_path:
+        write_analysis_artifact(artifact_path, payload)
+
+    store.replace_analysis_rows(
+        analysis_run,
+        extracted_features.message_features,
+        extracted_features.session_features,
+        classifications,
+    )
+
+    if output_format == "json":
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True, default=str))
+        return
+
+    render_analysis_summary(
+        session_id,
+        analysis_run,
+        extracted_features.session_features,
+        classifications,
+    )
 
 
 @app.command()
@@ -428,3 +528,98 @@ def render_ingest_summary(summary: IngestSummary, database_path: Path) -> None:
 
     if summary.skipped_source_count:
         raise typer.Exit(1)
+
+
+def artifact_path_for_analysis(
+    database_path: Path,
+    session_id: str,
+    artifact: Path | None,
+    no_artifact: bool,
+) -> Path | None:
+    if no_artifact:
+        return None
+    if artifact is not None:
+        return artifact.expanduser()
+    return database_path.parent / "artifacts" / f"{session_id}-analysis.json"
+
+
+def write_analysis_artifact(path: Path, payload: dict[str, object]) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n",
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        console.print(f"[red]Could not write artifact:[/red] {path} ({exc})")
+        raise typer.Exit(1) from exc
+
+
+def analysis_payload(
+    session: Session,
+    analysis_run: AnalysisRun,
+    message_features: list[MessageFeature],
+    session_features: list[SessionFeature],
+    classifications: list[SessionClassification],
+) -> dict[str, object]:
+    return {
+        "session": session.model_dump(mode="json"),
+        "analysis_run": analysis_run.model_dump(mode="json"),
+        "summary_metrics": {
+            feature.feature_name: feature.feature_value for feature in session_features
+        },
+        "message_features": [
+            feature.model_dump(mode="json") for feature in message_features
+        ],
+        "session_features": [
+            feature.model_dump(mode="json") for feature in session_features
+        ],
+        "classifications": [
+            classification.model_dump(mode="json") for classification in classifications
+        ],
+    }
+
+
+def render_analysis_summary(
+    session_id: str,
+    analysis_run: AnalysisRun,
+    session_features: list[SessionFeature],
+    classifications: list[SessionClassification],
+) -> None:
+    summary_table = Table(title="Session analysis")
+    summary_table.add_column("Metric")
+    summary_table.add_column("Value")
+    summary_table.add_row("Session ID", session_id)
+    summary_table.add_row("Analysis run", analysis_run.analysis_run_id)
+    summary_table.add_row("Artifact", analysis_run.artifact_path or "")
+    for feature_name in (
+        "repeat_request_count",
+        "correction_count",
+        "frustration_count",
+        "scope_boundary_count",
+        "failed_command_ratio",
+        "repeated_failure_count",
+        "same_file_edited_repeatedly_count",
+        "unresolved_ending_signal",
+    ):
+        feature = next(
+            (candidate for candidate in session_features if candidate.feature_name == feature_name),
+            None,
+        )
+        if feature:
+            summary_table.add_row(feature_name, feature.feature_value)
+    console.print(summary_table)
+
+    classification_table = Table(title="Classifications")
+    classification_table.add_column("Label")
+    classification_table.add_column("Score")
+    classification_table.add_column("Confidence")
+    classification_table.add_column("Evidence")
+    for classification in classifications:
+        classification_table.add_row(
+            classification.label,
+            f"{classification.score:.2f}",
+            f"{classification.confidence:.2f}",
+            classification.evidence_summary,
+        )
+    console.print(classification_table)
