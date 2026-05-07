@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import duckdb
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 TABLE_NAMES = (
     "schema_migrations",
@@ -16,6 +16,10 @@ TABLE_NAMES = (
     "file_activities",
     "model_usage",
     "parse_warnings",
+    "analysis_runs",
+    "message_features",
+    "session_features",
+    "session_classifications",
     "graph_nodes",
     "graph_edges",
 )
@@ -192,6 +196,56 @@ CREATE_TABLE_STATEMENTS = (
         record_index INTEGER,
         severity VARCHAR NOT NULL,
         message VARCHAR NOT NULL,
+        metadata_json VARCHAR NOT NULL DEFAULT '{}'
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS analysis_runs (
+        analysis_run_id VARCHAR PRIMARY KEY,
+        session_id VARCHAR NOT NULL,
+        started_at TIMESTAMP,
+        completed_at TIMESTAMP,
+        analyzer_version VARCHAR NOT NULL,
+        artifact_path VARCHAR,
+        metadata_json VARCHAR NOT NULL DEFAULT '{}'
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS message_features (
+        message_feature_id VARCHAR PRIMARY KEY,
+        analysis_run_id VARCHAR NOT NULL,
+        session_id VARCHAR NOT NULL,
+        message_id VARCHAR NOT NULL,
+        source_event_id VARCHAR,
+        feature_name VARCHAR NOT NULL,
+        feature_value VARCHAR NOT NULL,
+        score DOUBLE NOT NULL,
+        evidence_json VARCHAR NOT NULL DEFAULT '{}',
+        metadata_json VARCHAR NOT NULL DEFAULT '{}'
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS session_features (
+        session_feature_id VARCHAR PRIMARY KEY,
+        analysis_run_id VARCHAR NOT NULL,
+        session_id VARCHAR NOT NULL,
+        feature_name VARCHAR NOT NULL,
+        feature_value VARCHAR NOT NULL,
+        score DOUBLE NOT NULL,
+        evidence_json VARCHAR NOT NULL DEFAULT '{}',
+        metadata_json VARCHAR NOT NULL DEFAULT '{}'
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS session_classifications (
+        session_classification_id VARCHAR PRIMARY KEY,
+        analysis_run_id VARCHAR NOT NULL,
+        session_id VARCHAR NOT NULL,
+        label VARCHAR NOT NULL,
+        score DOUBLE NOT NULL,
+        confidence DOUBLE NOT NULL,
+        evidence_event_ids_json VARCHAR NOT NULL DEFAULT '[]',
+        evidence_summary VARCHAR NOT NULL,
         metadata_json VARCHAR NOT NULL DEFAULT '{}'
     )
     """,

@@ -9,7 +9,13 @@ from typing import Any
 import duckdb
 
 from session_doctor.adapters import ParsedSessionBundle
-from session_doctor.schemas import SessionSource
+from session_doctor.schemas import (
+    AnalysisRun,
+    MessageFeature,
+    SessionClassification,
+    SessionFeature,
+    SessionSource,
+)
 
 from .migrations import TABLE_NAMES, apply_migrations
 
@@ -70,6 +76,40 @@ class DuckDBStore:
                 self._insert_rows(connection, "file_activities", file_activity_rows(bundle))
                 self._insert_rows(connection, "model_usage", model_usage_rows(bundle))
                 self._insert_rows(connection, "parse_warnings", parse_warning_rows(bundle))
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+
+    def replace_analysis_rows(
+        self,
+        analysis_run: AnalysisRun,
+        message_features: list[MessageFeature],
+        session_features: list[SessionFeature],
+        session_classifications: list[SessionClassification],
+    ) -> None:
+        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        with duckdb.connect(str(self.database_path)) as connection:
+            apply_migrations(connection)
+            connection.execute("BEGIN TRANSACTION")
+            try:
+                self._delete_analysis_records(connection, analysis_run.session_id)
+                self._insert_rows(connection, "analysis_runs", analysis_run_rows(analysis_run))
+                self._insert_rows(
+                    connection,
+                    "message_features",
+                    message_feature_rows(message_features),
+                )
+                self._insert_rows(
+                    connection,
+                    "session_features",
+                    session_feature_rows(session_features),
+                )
+                self._insert_rows(
+                    connection,
+                    "session_classifications",
+                    session_classification_rows(session_classifications),
+                )
                 connection.execute("COMMIT")
             except Exception:
                 connection.execute("ROLLBACK")
@@ -199,6 +239,10 @@ class DuckDBStore:
                 "command_runs",
                 "file_activities",
                 "model_usage",
+                "message_features",
+                "session_features",
+                "session_classifications",
+                "analysis_runs",
                 "graph_nodes",
                 "graph_edges",
             ):
@@ -210,6 +254,19 @@ class DuckDBStore:
         connection.execute("DELETE FROM raw_events WHERE source_id = ?", [source_id])
         connection.execute("DELETE FROM sessions WHERE source_id = ?", [source_id])
         connection.execute("DELETE FROM session_sources WHERE source_id = ?", [source_id])
+
+    @staticmethod
+    def _delete_analysis_records(
+        connection: duckdb.DuckDBPyConnection,
+        session_id: str,
+    ) -> None:
+        for table_name in (
+            "message_features",
+            "session_features",
+            "session_classifications",
+            "analysis_runs",
+        ):
+            connection.execute(f"DELETE FROM {table_name} WHERE session_id = ?", [session_id])
 
     @staticmethod
     def _insert_session_source(
@@ -446,6 +503,73 @@ def parse_warning_rows(bundle: ParsedSessionBundle) -> list[dict[str, Any]]:
             "metadata_json": metadata_json(warning.metadata),
         }
         for warning in bundle.parse_warnings
+    ]
+
+
+def analysis_run_rows(analysis_run: AnalysisRun) -> list[dict[str, Any]]:
+    return [
+        {
+            "analysis_run_id": analysis_run.analysis_run_id,
+            "session_id": analysis_run.session_id,
+            "started_at": analysis_run.started_at,
+            "completed_at": analysis_run.completed_at,
+            "analyzer_version": analysis_run.analyzer_version,
+            "artifact_path": analysis_run.artifact_path,
+            "metadata_json": metadata_json(analysis_run.metadata),
+        }
+    ]
+
+
+def message_feature_rows(features: list[MessageFeature]) -> list[dict[str, Any]]:
+    return [
+        {
+            "message_feature_id": feature.message_feature_id,
+            "analysis_run_id": feature.analysis_run_id,
+            "session_id": feature.session_id,
+            "message_id": feature.message_id,
+            "source_event_id": feature.source_event_id,
+            "feature_name": feature.feature_name,
+            "feature_value": feature.feature_value,
+            "score": feature.score,
+            "evidence_json": metadata_json(feature.evidence),
+            "metadata_json": metadata_json(feature.metadata),
+        }
+        for feature in features
+    ]
+
+
+def session_feature_rows(features: list[SessionFeature]) -> list[dict[str, Any]]:
+    return [
+        {
+            "session_feature_id": feature.session_feature_id,
+            "analysis_run_id": feature.analysis_run_id,
+            "session_id": feature.session_id,
+            "feature_name": feature.feature_name,
+            "feature_value": feature.feature_value,
+            "score": feature.score,
+            "evidence_json": metadata_json(feature.evidence),
+            "metadata_json": metadata_json(feature.metadata),
+        }
+        for feature in features
+    ]
+
+
+def session_classification_rows(
+    classifications: list[SessionClassification],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "session_classification_id": classification.session_classification_id,
+            "analysis_run_id": classification.analysis_run_id,
+            "session_id": classification.session_id,
+            "label": classification.label,
+            "score": classification.score,
+            "confidence": classification.confidence,
+            "evidence_event_ids_json": json.dumps(classification.evidence_event_ids),
+            "evidence_summary": classification.evidence_summary,
+            "metadata_json": metadata_json(classification.metadata),
+        }
+        for classification in classifications
     ]
 
 
