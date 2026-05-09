@@ -82,7 +82,6 @@ CORRECTION_MARKERS = {
     "stop doing": "stop_action",
     "still broken": "still_broken",
     "wrong": "wrong",
-    "no": "direct_rejection",
 }
 
 FRUSTRATION_MARKERS = {
