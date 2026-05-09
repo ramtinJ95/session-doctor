@@ -29,6 +29,12 @@ Phase 3 adds the first deterministic Codex analysis slice:
 - terminal summaries
 - default JSON analysis artifacts
 
+Phase 4 is planned to add Pi as the second native adapter:
+
+- Pi JSONL parsing
+- `session-doctor ingest --agent pi`
+- existing `sessions list` and `analyze` behavior over Pi-derived records
+
 ## Usage
 
 Install dependencies:
@@ -109,3 +115,4 @@ Design references:
 - [Phase 1 Plan](docs/phase-1-plan.md)
 - [Phase 2 Plan](docs/phase-2-plan.md)
 - [Phase 3 Plan](docs/phase-3-plan.md)
+- [Phase 4 Plan](docs/phase-4-plan.md)
