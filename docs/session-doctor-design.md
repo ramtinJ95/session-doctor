@@ -141,8 +141,9 @@ DuckDB normalized records -> deterministic analysis -> derived rows -> analyze o
 Reports, graph projection, Pi parsing, and Claude Code parsing remain
 unimplemented.
 
-This means the next useful implementation slice can either add the second
-adapter or build the first report over the deterministic analysis output.
+This means the next useful implementation slice is Phase 4: a second native
+adapter. The first report should follow after there is at least one non-Codex
+adapter validating the normalized model.
 
 ## Local Session Inspection Findings
 
@@ -1717,12 +1718,9 @@ These should call the CLI rather than duplicate business logic.
 
 - What is the exact current Pi session/log location and format?
 - Which Claude Code session files contain the most reliable role/tool metadata?
-- How much Codex event provenance can be preserved from JSONL logs?
-- What stable session ID should be used when native IDs are missing?
 - Should graph nodes be persisted in DuckDB immediately or generated on demand
   from normalized event tables?
-- What threshold should separate `repeat_request` from normal iterative
-  clarification?
 
-These should be resolved during implementation with fixtures from real local
-session logs.
+The adapter questions should be resolved during Phase 4 with synthetic fixtures
+and copied local session files. The graph persistence question should be
+resolved later when graph projection starts.
