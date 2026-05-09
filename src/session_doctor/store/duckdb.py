@@ -461,21 +461,22 @@ class DuckDBStore:
         rows = connection.execute(
             """
             SELECT
-                message_id,
-                session_id,
-                role,
-                source_event_id,
-                native_message_id,
-                parent_message_id,
-                timestamp,
-                text,
-                text_hash,
-                text_length,
-                content_block_types_json,
-                metadata_json
-            FROM messages
-            WHERE session_id = ?
-            ORDER BY timestamp NULLS LAST, message_id
+                m.message_id,
+                m.session_id,
+                m.role,
+                m.source_event_id,
+                m.native_message_id,
+                m.parent_message_id,
+                m.timestamp,
+                m.text,
+                m.text_hash,
+                m.text_length,
+                m.content_block_types_json,
+                m.metadata_json
+            FROM messages AS m
+            LEFT JOIN raw_events AS e ON e.event_id = m.source_event_id
+            WHERE m.session_id = ?
+            ORDER BY e.record_index NULLS LAST, m.timestamp NULLS LAST, m.message_id
             """,
             [session_id],
         ).fetchall()
