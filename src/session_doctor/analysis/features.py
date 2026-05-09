@@ -390,6 +390,19 @@ def unresolved_ending_evidence(
     message_features: list[MessageFeature],
 ) -> dict[str, object]:
     late_event_ids = ending_source_event_ids(bundle)
+    event_indexes = {
+        event.event_id: event.record_index
+        for event in bundle.raw_events
+        if event.event_id is not None
+    }
+    final_answer_indexes = [
+        event_indexes[message.source_event_id]
+        for message in bundle.messages
+        if message.role == NormalizedRole.ASSISTANT
+        and message.metadata.get("phase") == "final_answer"
+        and message.source_event_id in event_indexes
+    ]
+    final_answer_index = max(final_answer_indexes, default=None)
     late_message_ids = set()
     for message in bundle.messages:
         if message.source_event_id in late_event_ids:
@@ -411,6 +424,11 @@ def unresolved_ending_evidence(
         if command.source_event_id in late_event_ids
         and command.exit_code is not None
         and command.exit_code != 0
+        and (
+            final_answer_index is None
+            or command.source_event_id not in event_indexes
+            or event_indexes[command.source_event_id] > final_answer_index
+        )
     ]
     late_warning_ids = [
         warning.warning_id
@@ -418,18 +436,6 @@ def unresolved_ending_evidence(
         if warning.record_index is not None
         and warning.record_index >= ending_record_index_start(bundle)
     ]
-    final_assistant = next(
-        (
-            message
-            for message in reversed(bundle.messages)
-            if message.role == NormalizedRole.ASSISTANT
-        ),
-        None,
-    )
-    has_final_answer = (
-        final_assistant is not None and final_assistant.metadata.get("phase") == "final_answer"
-    )
-
     evidence: dict[str, object] = {}
     if late_feature_names:
         evidence["late_message_features"] = sorted(late_feature_names)
@@ -437,7 +443,7 @@ def unresolved_ending_evidence(
         evidence["late_failed_command_ids"] = late_failed_command_ids
     if late_warning_ids:
         evidence["late_parse_warning_ids"] = late_warning_ids
-    if not has_final_answer:
+    if final_answer_index is None:
         evidence["missing_final_answer"] = True
     return evidence
 
