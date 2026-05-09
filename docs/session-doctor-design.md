@@ -601,7 +601,7 @@ Layout:
 
 Observed corpus:
 
-- 143 `.jsonl` files
+- 147 `.jsonl` files as of the Phase 4 planning check
 - 15 project/cwd folders
 - all inspected lines parsed as JSON
 - filenames match `YYYY-MM-DDTHH-MM-SS-mmmZ_<uuid>.jsonl`
@@ -1227,7 +1227,7 @@ Initial discovery targets:
 ```text
 Codex       ~/.codex/sessions
 Claude Code ~/.claude/projects
-Pi          ~/.pi or the current Pi session/log location
+Pi          ~/.pi/agent/sessions
 ```
 
 Discovery should produce candidate records, not parsed sessions:
@@ -1242,8 +1242,11 @@ SessionSource
   content_hash
 ```
 
-The exact Pi session location should be verified during implementation before
-the adapter is built.
+Pi's current session location was re-verified during Phase 4 planning. The
+adapter should still use copied local session files for smoke tests rather than
+reading directly from the live store in automated tests.
+
+Detailed Pi parsing plan: `docs/phase-4-plan.md`.
 
 ## Layer 2: Agent Adapters
 
@@ -1634,6 +1637,8 @@ tool-output layout are more complex.
 Each adapter should have synthetic fixtures, parser tests, ingest tests, and at
 least one manual smoke-test path against a copied local session file.
 
+Detailed plan: `docs/phase-4-plan.md`.
+
 ### Phase 5: Broader Deterministic Features
 
 Broaden deterministic feature extraction after the Phase 3 Codex Analysis MVP
@@ -1716,11 +1721,10 @@ These should call the CLI rather than duplicate business logic.
 
 ## Open Implementation Questions
 
-- What is the exact current Pi session/log location and format?
 - Which Claude Code session files contain the most reliable role/tool metadata?
 - Should graph nodes be persisted in DuckDB immediately or generated on demand
   from normalized event tables?
 
-The adapter questions should be resolved during Phase 4 with synthetic fixtures
-and copied local session files. The graph persistence question should be
-resolved later when graph projection starts.
+The Claude adapter question should be resolved when Claude parsing starts. The
+graph persistence question should be resolved later when graph projection
+starts.
