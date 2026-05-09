@@ -595,6 +595,7 @@ def render_analysis_summary(
         "scope_boundary_count",
         "failed_command_ratio",
         "repeated_failure_count",
+        "repeated_command_failure_count",
         "same_file_edited_repeatedly_count",
         "unresolved_ending_signal",
     ):

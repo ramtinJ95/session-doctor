@@ -28,6 +28,7 @@ def classify_session(
     frustration_count = int_feature(feature_values, "frustration_count")
     failed_command_ratio = float_feature(feature_values, "failed_command_ratio")
     repeated_failure_count = int_feature(feature_values, "repeated_failure_count")
+    repeated_command_failure_count = int_feature(feature_values, "repeated_command_failure_count")
     same_file_repeated_count = int_feature(feature_values, "same_file_edited_repeatedly_count")
     unresolved_ending_signal = bool_feature(feature_values, "unresolved_ending_signal")
 
@@ -86,7 +87,9 @@ def classify_session(
             )
         )
 
-    if (repeat_request_count >= 2 and same_file_repeated_count >= 1) or repeated_failure_count >= 2:
+    if (repeat_request_count >= 2 and same_file_repeated_count >= 1) or (
+        repeated_failure_count >= 2 and repeated_command_failure_count > 0
+    ):
         classifications.append(
             classification(
                 analysis_run_id=analysis_run_id,
@@ -97,7 +100,7 @@ def classify_session(
                     0.45
                     + 0.15 * repeat_request_count
                     + 0.15 * same_file_repeated_count
-                    + 0.10 * repeated_failure_count,
+                    + 0.10 * repeated_command_failure_count,
                 ),
                 confidence=0.65,
                 evidence_event_ids=evidence_event_ids(
@@ -106,11 +109,11 @@ def classify_session(
                     [
                         "repeat_request_similarity",
                         "same_file_edited_repeatedly_count",
-                        "repeated_failure_count",
+                        "repeated_command_failure_count",
                     ],
                 ),
                 evidence_summary=(
-                    "Session has repeated request/file-edit evidence or repeated failures."
+                    "Session has repeated request/file-edit evidence or repeated command failures."
                 ),
                 metadata={"rule": "agent_looping_v1"},
             )

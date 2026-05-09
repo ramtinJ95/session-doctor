@@ -233,6 +233,10 @@ def session_count_features(
     ]
     failed_tool_results = [result for result in bundle.tool_results if result.is_error is True]
     repeated_failures = repeated_failure_groups(bundle)
+    repeated_command_failures = repeated_failure_groups_with_prefix(
+        repeated_failures,
+        "failed_command:",
+    )
     file_edit_counts = Counter(activity.path for activity in bundle.file_activities)
     repeated_file_edits = {path: count for path, count in file_edit_counts.items() if count > 1}
     unresolved_evidence = unresolved_ending_evidence(bundle, message_features)
@@ -328,6 +332,16 @@ def session_count_features(
         session_feature(
             analysis_run_id,
             session_id,
+            "repeated_command_failure_count",
+            sum(group["repeat_count"] for group in repeated_command_failures),
+            evidence={
+                "groups": repeated_command_failures,
+                "source_event_ids": repeated_failure_source_event_ids(repeated_command_failures),
+            },
+        ),
+        session_feature(
+            analysis_run_id,
+            session_id,
             "edited_file_count",
             len(file_edit_counts),
             evidence={"paths": sorted(file_edit_counts)},
@@ -391,6 +405,17 @@ def repeated_failure_groups(bundle: ParsedSessionBundle) -> list[dict[str, objec
         }
         for key, records in sorted(group_values.items())
         if len(records) > 1
+    ]
+
+
+def repeated_failure_groups_with_prefix(
+    groups: list[dict[str, object]],
+    key_prefix: str,
+) -> list[dict[str, object]]:
+    return [
+        group
+        for group in groups
+        if isinstance(group.get("key"), str) and str(group["key"]).startswith(key_prefix)
     ]
 
 
