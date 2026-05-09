@@ -202,17 +202,20 @@ def marker_features(
             continue
         text = normalized_marker_text(message.text)
         for feature_name, markers in marker_groups:
+            matched_marker_families: defaultdict[str, list[str]] = defaultdict(list)
             for marker, marker_family in markers.items():
                 if marker_matches(text, marker):
-                    features.append(
-                        message_feature(
-                            analysis_run_id=analysis_run_id,
-                            message=message,
-                            feature_name=feature_name,
-                            feature_value=marker_family,
-                            evidence={"matched_marker": marker},
-                        )
+                    matched_marker_families[marker_family].append(marker)
+            for marker_family, matched_markers in matched_marker_families.items():
+                features.append(
+                    message_feature(
+                        analysis_run_id=analysis_run_id,
+                        message=message,
+                        feature_name=feature_name,
+                        feature_value=marker_family,
+                        evidence={"matched_markers": matched_markers},
                     )
+                )
     return features
 
 

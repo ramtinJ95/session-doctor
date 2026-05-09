@@ -145,6 +145,38 @@ def test_analyze_features_detects_message_and_session_signals() -> None:
     assert session_features["unresolved_ending_signal"].feature_value == "true"
 
 
+def test_marker_features_deduplicate_same_family_per_message() -> None:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    bundle = ParsedSessionBundle(
+        session=session,
+        messages=[
+            message(
+                "message-1",
+                NormalizedRole.USER,
+                "Be thorough, this is very important. Don't do not change more scope.",
+                "event-1",
+            )
+        ],
+    )
+
+    result = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    marker_pairs = [
+        (feature.feature_name, feature.feature_value)
+        for feature in result.message_features
+        if feature.feature_name in {"frustration_marker", "scope_boundary_marker"}
+    ]
+    assert marker_pairs.count(("frustration_marker", "high_stakes")) == 1
+    assert marker_pairs.count(("scope_boundary_marker", "do_not")) == 1
+    assert len({feature.message_feature_id for feature in result.message_features}) == len(
+        result.message_features
+    )
+
+
 def test_classify_session_emits_initial_deterministic_labels() -> None:
     bundle = analysis_fixture_bundle()
     features = analyze_features(bundle, analysis_run_id="analysis-1")
