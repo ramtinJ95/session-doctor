@@ -5,12 +5,17 @@ from pathlib import Path
 import duckdb
 import pytest
 
+from session_doctor.adapters import ParsedSessionBundle
 from session_doctor.adapters.codex import CodexAdapter
 from session_doctor.ids import source_id_for_path
 from session_doctor.schemas import (
     AgentName,
     AnalysisRun,
+    Message,
     MessageFeature,
+    NormalizedRole,
+    RawEvent,
+    Session,
     SessionClassification,
     SessionFeature,
     SessionSource,
@@ -156,6 +161,59 @@ def test_store_load_session_bundle_round_trips_ingested_records(tmp_path) -> Non
     assert len(loaded.command_runs) == len(bundle.command_runs)
     assert loaded.messages[0].content_block_types == ["input_text"]
     assert loaded.messages[0].metadata["codex_message_source"] == "response_item"
+
+
+def test_store_load_session_bundle_orders_messages_by_raw_event_index(tmp_path) -> None:
+    source = SessionSource(
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+        source_path="/tmp/source.jsonl",
+    )
+    session = Session(
+        session_id="session-1", source_id=source.source_id, agent_name=AgentName.CODEX
+    )
+    bundle = ParsedSessionBundle(
+        session=session,
+        raw_events=[
+            RawEvent(
+                event_id="event-1",
+                source_id=source.source_id,
+                agent_name=AgentName.CODEX,
+                record_index=1,
+            ),
+            RawEvent(
+                event_id="event-2",
+                source_id=source.source_id,
+                agent_name=AgentName.CODEX,
+                record_index=2,
+            ),
+        ],
+        messages=[
+            Message(
+                message_id="z-message",
+                session_id=session.session_id,
+                role=NormalizedRole.USER,
+                source_event_id="event-1",
+                text="Original request.",
+                text_length=len("Original request."),
+            ),
+            Message(
+                message_id="a-message",
+                session_id=session.session_id,
+                role=NormalizedRole.USER,
+                source_event_id="event-2",
+                text="Repeated request.",
+                text_length=len("Repeated request."),
+            ),
+        ],
+    )
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    store.insert_parsed_bundle(source, bundle)
+
+    loaded = store.load_session_bundle(session.session_id)
+
+    assert loaded is not None
+    assert [message.message_id for message in loaded.messages] == ["z-message", "a-message"]
 
 
 def test_store_replace_analysis_rows_rebuilds_derived_records(tmp_path) -> None:
