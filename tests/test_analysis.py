@@ -289,6 +289,25 @@ def test_ending_signal_unions_timestamp_window_with_event_count_window() -> None
     assert "correction_marker" in unresolved_evidence["late_message_features"]
 
 
+def test_agent_looping_repeated_failure_evidence_includes_event_ids() -> None:
+    bundle = repeated_command_failure_bundle()
+    features = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    classifications = classify_session(
+        bundle,
+        analysis_run_id="analysis-1",
+        message_features=features.message_features,
+        session_features=features.session_features,
+    )
+
+    agent_looping = next(
+        classification
+        for classification in classifications
+        if classification.label == "agent_looping"
+    )
+    assert agent_looping.evidence_event_ids == ["event-1", "event-2", "event-3"]
+
+
 def analysis_fixture_bundle() -> ParsedSessionBundle:
     session = Session(
         session_id="session-1",
@@ -486,6 +505,34 @@ def bursty_timestamp_window_bundle() -> ParsedSessionBundle:
         )
     ]
     return ParsedSessionBundle(session=session, raw_events=raw_events, messages=messages)
+
+
+def repeated_command_failure_bundle() -> ParsedSessionBundle:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    raw_events = [
+        RawEvent(
+            event_id=f"event-{index}",
+            source_id="source-1",
+            agent_name=AgentName.CODEX,
+            record_index=index,
+        )
+        for index in range(1, 4)
+    ]
+    command_runs = [
+        CommandRun(
+            command_run_id=f"command-{index}",
+            session_id=session.session_id,
+            source_event_id=f"event-{index}",
+            command="pytest -q",
+            exit_code=1,
+        )
+        for index in range(1, 4)
+    ]
+    return ParsedSessionBundle(session=session, raw_events=raw_events, command_runs=command_runs)
 
 
 def message(

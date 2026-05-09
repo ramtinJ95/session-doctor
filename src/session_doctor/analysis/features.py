@@ -320,7 +320,10 @@ def session_count_features(
             session_id,
             "repeated_failure_count",
             sum(group["repeat_count"] for group in repeated_failures),
-            evidence={"groups": repeated_failures},
+            evidence={
+                "groups": repeated_failures,
+                "source_event_ids": repeated_failure_source_event_ids(repeated_failures),
+            },
         ),
         session_feature(
             analysis_run_id,
@@ -354,34 +357,52 @@ def session_count_features(
 
 
 def repeated_failure_groups(bundle: ParsedSessionBundle) -> list[dict[str, object]]:
-    group_values: defaultdict[str, list[str]] = defaultdict(list)
+    group_values: defaultdict[str, list[tuple[str, str | None]]] = defaultdict(list)
     for command in bundle.command_runs:
         if command.exit_code is None or command.exit_code == 0:
             continue
         if command.stderr_hash:
-            group_values[f"stderr_hash:{command.stderr_hash}"].append(command.command_run_id)
+            group_values[f"stderr_hash:{command.stderr_hash}"].append(
+                (command.command_run_id, command.source_event_id)
+            )
         if command.stdout_hash:
-            group_values[f"stdout_hash:{command.stdout_hash}"].append(command.command_run_id)
+            group_values[f"stdout_hash:{command.stdout_hash}"].append(
+                (command.command_run_id, command.source_event_id)
+            )
         group_values[f"failed_command:{command.command}"].append(
-            command.command_run_id,
+            (command.command_run_id, command.source_event_id),
         )
 
     for result in bundle.tool_results:
         if result.is_error is not True or not result.output_hash:
             continue
         group_values[f"tool_output_hash:{result.output_hash}"].append(
-            result.tool_result_id,
+            (result.tool_result_id, result.source_event_id),
         )
 
     return [
         {
             "key": key,
-            "record_ids": sorted(record_ids),
-            "repeat_count": len(record_ids) - 1,
+            "record_ids": sorted(record_id for record_id, _ in records),
+            "source_event_ids": sorted(
+                {source_event_id for _, source_event_id in records if source_event_id}
+            ),
+            "repeat_count": len(records) - 1,
         }
-        for key, record_ids in sorted(group_values.items())
-        if len(record_ids) > 1
+        for key, records in sorted(group_values.items())
+        if len(records) > 1
     ]
+
+
+def repeated_failure_source_event_ids(groups: list[dict[str, object]]) -> list[str]:
+    source_event_ids: set[str] = set()
+    for group in groups:
+        group_source_event_ids = group.get("source_event_ids", [])
+        if isinstance(group_source_event_ids, list):
+            source_event_ids.update(
+                event_id for event_id in group_source_event_ids if isinstance(event_id, str)
+            )
+    return sorted(source_event_ids)
 
 
 def unresolved_ending_evidence(
