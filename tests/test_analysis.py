@@ -214,6 +214,25 @@ def test_classify_session_detects_resolution_after_correction() -> None:
     assert "resolved_after_corrections" in labels
 
 
+def test_unresolved_ending_ignores_failed_commands_resolved_by_final_answer() -> None:
+    bundle = resolved_failed_command_bundle()
+
+    result = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    session_features = {feature.feature_name: feature for feature in result.session_features}
+    assert session_features["failed_command_count"].feature_value == "1"
+    assert session_features["unresolved_ending_signal"].feature_value == "false"
+
+    classifications = classify_session(
+        bundle,
+        analysis_run_id="analysis-1",
+        message_features=result.message_features,
+        session_features=result.session_features,
+    )
+
+    assert "user_stuck" not in {classification.label for classification in classifications}
+
+
 def analysis_fixture_bundle() -> ParsedSessionBundle:
     session = Session(
         session_id="session-1",
@@ -341,6 +360,48 @@ def resolved_after_correction_bundle() -> ParsedSessionBundle:
         ),
     ]
     return ParsedSessionBundle(session=session, raw_events=raw_events, messages=messages)
+
+
+def resolved_failed_command_bundle() -> ParsedSessionBundle:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    raw_events = [
+        RawEvent(
+            event_id=f"event-{index}",
+            source_id="source-1",
+            agent_name=AgentName.CODEX,
+            record_index=index,
+        )
+        for index in range(1, 5)
+    ]
+    messages = [
+        message("message-1", NormalizedRole.USER, "Please run the test.", "event-1"),
+        message(
+            "message-2",
+            NormalizedRole.ASSISTANT,
+            "The failure is fixed now.",
+            "event-4",
+            metadata={"phase": "final_answer"},
+        ),
+    ]
+    command_runs = [
+        CommandRun(
+            command_run_id="command-1",
+            session_id=session.session_id,
+            source_event_id="event-3",
+            command="pytest -q",
+            exit_code=1,
+        )
+    ]
+    return ParsedSessionBundle(
+        session=session,
+        raw_events=raw_events,
+        messages=messages,
+        command_runs=command_runs,
+    )
 
 
 def message(
