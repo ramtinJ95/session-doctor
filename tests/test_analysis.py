@@ -142,6 +142,7 @@ def test_analyze_features_detects_message_and_session_signals() -> None:
     assert session_features["failed_command_ratio"].feature_value == "1.0"
     assert session_features["failed_tool_result_count"].feature_value == "1"
     assert session_features["repeated_failure_count"].feature_value == "2"
+    assert session_features["repeated_command_failure_count"].feature_value == "1"
     assert session_features["same_file_edited_repeatedly_count"].feature_value == "1"
     assert session_features["max_edits_to_single_file"].feature_value == "2"
     assert session_features["unresolved_ending_signal"].feature_value == "true"
@@ -306,6 +307,25 @@ def test_agent_looping_repeated_failure_evidence_includes_event_ids() -> None:
         if classification.label == "agent_looping"
     )
     assert agent_looping.evidence_event_ids == ["event-1", "event-2", "event-3"]
+
+
+def test_agent_looping_ignores_non_command_repeated_failures() -> None:
+    for bundle in (
+        repeated_tool_result_failure_bundle(),
+        shared_stderr_distinct_command_failure_bundle(),
+    ):
+        features = analyze_features(bundle, analysis_run_id="analysis-1")
+
+        classifications = classify_session(
+            bundle,
+            analysis_run_id="analysis-1",
+            message_features=features.message_features,
+            session_features=features.session_features,
+        )
+
+        labels = {classification.label for classification in classifications}
+        assert "tooling_blocked" in labels
+        assert "agent_looping" not in labels
 
 
 def analysis_fixture_bundle() -> ParsedSessionBundle:
@@ -529,6 +549,63 @@ def repeated_command_failure_bundle() -> ParsedSessionBundle:
             source_event_id=f"event-{index}",
             command="pytest -q",
             exit_code=1,
+        )
+        for index in range(1, 4)
+    ]
+    return ParsedSessionBundle(session=session, raw_events=raw_events, command_runs=command_runs)
+
+
+def repeated_tool_result_failure_bundle() -> ParsedSessionBundle:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    raw_events = [
+        RawEvent(
+            event_id=f"event-{index}",
+            source_id="source-1",
+            agent_name=AgentName.CODEX,
+            record_index=index,
+        )
+        for index in range(1, 4)
+    ]
+    tool_results = [
+        ToolResult(
+            tool_result_id=f"tool-result-{index}",
+            session_id=session.session_id,
+            source_event_id=f"event-{index}",
+            is_error=True,
+            output_hash="same-tool-error",
+        )
+        for index in range(1, 4)
+    ]
+    return ParsedSessionBundle(session=session, raw_events=raw_events, tool_results=tool_results)
+
+
+def shared_stderr_distinct_command_failure_bundle() -> ParsedSessionBundle:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    raw_events = [
+        RawEvent(
+            event_id=f"event-{index}",
+            source_id="source-1",
+            agent_name=AgentName.CODEX,
+            record_index=index,
+        )
+        for index in range(1, 4)
+    ]
+    command_runs = [
+        CommandRun(
+            command_run_id=f"command-{index}",
+            session_id=session.session_id,
+            source_event_id=f"event-{index}",
+            command=f"pytest tests/test_{index}.py",
+            exit_code=1,
+            stderr_hash="shared-stderr",
         )
         for index in range(1, 4)
     ]
