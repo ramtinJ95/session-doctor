@@ -214,6 +214,17 @@ def test_classify_session_detects_resolution_after_correction() -> None:
 
     labels = {classification.label for classification in classifications}
     assert "resolved_after_corrections" in labels
+    assert "user_stuck" not in labels
+
+
+def test_unresolved_ending_ignores_markers_resolved_by_final_answer() -> None:
+    bundle = resolved_after_correction_bundle()
+
+    result = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    session_features = {feature.feature_name: feature for feature in result.session_features}
+    assert session_features["correction_count"].feature_value == "1"
+    assert session_features["unresolved_ending_signal"].feature_value == "false"
 
 
 def test_unresolved_ending_ignores_failed_commands_resolved_by_final_answer() -> None:

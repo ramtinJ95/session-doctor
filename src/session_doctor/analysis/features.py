@@ -404,7 +404,10 @@ def unresolved_ending_evidence(
     ]
     final_answer_index = max(final_answer_indexes, default=None)
     late_message_ids = set()
+    message_event_indexes: dict[str, int] = {}
     for message in bundle.messages:
+        if message.source_event_id in event_indexes:
+            message_event_indexes[message.message_id] = event_indexes[message.source_event_id]
         if message.source_event_id in late_event_ids:
             late_message_ids.add(message.message_id)
     late_feature_names = {
@@ -417,6 +420,11 @@ def unresolved_ending_evidence(
             "frustration_marker",
             "repeat_request_similarity",
         }
+        and (
+            final_answer_index is None
+            or feature.message_id not in message_event_indexes
+            or message_event_indexes[feature.message_id] > final_answer_index
+        )
     }
     late_failed_command_ids = [
         command.command_run_id
