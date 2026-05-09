@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from session_doctor.adapters import ParsedSessionBundle
 from session_doctor.analysis import (
     REPEAT_REQUEST_SIMILARITY_THRESHOLD,
@@ -233,6 +235,17 @@ def test_unresolved_ending_ignores_failed_commands_resolved_by_final_answer() ->
     assert "user_stuck" not in {classification.label for classification in classifications}
 
 
+def test_ending_signal_unions_timestamp_window_with_event_count_window() -> None:
+    bundle = bursty_timestamp_window_bundle()
+
+    result = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    session_features = {feature.feature_name: feature for feature in result.session_features}
+    unresolved_evidence = session_features["unresolved_ending_signal"].evidence
+    assert session_features["unresolved_ending_signal"].feature_value == "true"
+    assert "correction_marker" in unresolved_evidence["late_message_features"]
+
+
 def analysis_fixture_bundle() -> ParsedSessionBundle:
     session = Session(
         session_id="session-1",
@@ -402,6 +415,34 @@ def resolved_failed_command_bundle() -> ParsedSessionBundle:
         messages=messages,
         command_runs=command_runs,
     )
+
+
+def bursty_timestamp_window_bundle() -> ParsedSessionBundle:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    start = datetime(2026, 5, 10, 8, 0, tzinfo=UTC)
+    raw_events = [
+        RawEvent(
+            event_id=f"event-{index}",
+            source_id="source-1",
+            agent_name=AgentName.CODEX,
+            record_index=index,
+            timestamp=start + timedelta(seconds=index),
+        )
+        for index in range(1, 31)
+    ]
+    messages = [
+        message(
+            "message-1",
+            NormalizedRole.USER,
+            "No, that is not what I meant.",
+            "event-5",
+        )
+    ]
+    return ParsedSessionBundle(session=session, raw_events=raw_events, messages=messages)
 
 
 def message(

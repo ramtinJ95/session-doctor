@@ -451,8 +451,7 @@ def unresolved_ending_evidence(
 def ending_source_event_ids(bundle: ParsedSessionBundle) -> set[str]:
     start_index = ending_record_index_start(bundle)
     event_ids = {event.event_id for event in bundle.raw_events if event.record_index >= start_index}
-    if not event_ids:
-        event_ids.update(timestamp_window_source_event_ids(bundle))
+    event_ids.update(timestamp_window_source_event_ids(bundle))
     return event_ids
 
 
