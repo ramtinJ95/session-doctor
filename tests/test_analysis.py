@@ -179,6 +179,38 @@ def test_marker_features_deduplicate_same_family_per_message() -> None:
     )
 
 
+def test_scope_boundary_phrase_does_not_count_as_correction() -> None:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    bundle = ParsedSessionBundle(
+        session=session,
+        messages=[
+            message(
+                "message-1",
+                NormalizedRole.USER,
+                "No need to do code changes yet.",
+                "event-1",
+            )
+        ],
+    )
+
+    result = analyze_features(bundle, analysis_run_id="analysis-1")
+    classifications = classify_session(
+        bundle,
+        analysis_run_id="analysis-1",
+        message_features=result.message_features,
+        session_features=result.session_features,
+    )
+
+    session_features = {feature.feature_name: feature for feature in result.session_features}
+    assert session_features["scope_boundary_count"].feature_value == "1"
+    assert session_features["correction_count"].feature_value == "0"
+    assert "user_stuck" not in {classification.label for classification in classifications}
+
+
 def test_classify_session_emits_initial_deterministic_labels() -> None:
     bundle = analysis_fixture_bundle()
     features = analyze_features(bundle, analysis_run_id="analysis-1")
