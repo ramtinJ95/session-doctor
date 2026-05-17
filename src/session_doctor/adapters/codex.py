@@ -4,7 +4,7 @@ import json
 import shlex
 from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from session_doctor.ids import source_id_for_path, stable_id
 from session_doctor.privacy import hash_text, text_length
@@ -25,6 +25,18 @@ from session_doctor.schemas import (
 )
 
 from .base import BaseAdapter, ParsedSessionBundle
+from .common import (
+    bool_value,
+    dict_value,
+    hash_json,
+    increment_count,
+    int_value,
+    parse_timestamp,
+    read_jsonl_records,
+    string_value,
+    text_and_block_types,
+    warning_for_record,
+)
 
 CODEX_MESSAGE_SOURCE_RESPONSE_ITEM = "response_item"
 CODEX_MESSAGE_SOURCE_EVENT_MSG_FALLBACK = "event_msg_fallback"
@@ -206,46 +218,7 @@ def read_codex_jsonl(
     source: SessionSource,
     source_path: Path,
 ) -> tuple[list[tuple[int, dict[str, Any]]], list[ParseWarning]]:
-    records: list[tuple[int, dict[str, Any]]] = []
-    warnings: list[ParseWarning] = []
-    try:
-        with source_path.open(encoding="utf-8") as file:
-            for record_index, line in enumerate(file):
-                try:
-                    parsed = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    warnings.append(
-                        warning_for_record(
-                            source,
-                            record_index,
-                            "malformed_json",
-                            f"Malformed JSONL record: {exc.msg}",
-                            {"line": exc.lineno, "column": exc.colno},
-                        )
-                    )
-                    continue
-                if not isinstance(parsed, dict):
-                    warnings.append(
-                        warning_for_record(
-                            source,
-                            record_index,
-                            "non_object_record",
-                            "Codex record is not a JSON object",
-                            {"json_type": type(parsed).__name__},
-                        )
-                    )
-                    continue
-                records.append((record_index, parsed))
-    except OSError as exc:
-        warnings.append(
-            ParseWarning(
-                warning_id=stable_id("warning", source.source_id, "source_open_error"),
-                source_id=source.source_id,
-                message=f"Unable to read Codex source: {exc}",
-                metadata={"source_path": str(source_path)},
-            )
-        )
-    return records, warnings
+    return read_jsonl_records(source, source_path, agent_display_name="Codex")
 
 
 def extract_session_metadata(
@@ -579,22 +552,6 @@ def model_usage_from_token_count(
     )
 
 
-def warning_for_record(
-    source: SessionSource,
-    record_index: int,
-    code: str,
-    message: str,
-    metadata: dict[str, Any] | None = None,
-) -> ParseWarning:
-    return ParseWarning(
-        warning_id=stable_id("warning", source.source_id, record_index, code),
-        source_id=source.source_id,
-        record_index=record_index,
-        message=message,
-        metadata={"code": code, **(metadata or {})},
-    )
-
-
 def message_identity(message: Message) -> tuple[NormalizedRole, str | None]:
     return (message.role, message.text_hash)
 
@@ -608,32 +565,6 @@ def has_nearby_response_message(
         response_identity == identity and abs(response_record_index - record_index) <= 1
         for response_record_index, response_identity in response_messages
     )
-
-
-def increment_count(counts: dict[str, int], key: str) -> None:
-    counts[key] = counts.get(key, 0) + 1
-
-
-def text_and_block_types(content: object) -> tuple[str | None, list[str]]:
-    if isinstance(content, str):
-        return content, ["text"]
-    if not isinstance(content, list):
-        return None, []
-
-    texts: list[str] = []
-    block_types: list[str] = []
-    for block in content:
-        if not isinstance(block, dict):
-            continue
-        typed_block = dict_value(block)
-        block_type = string_value(typed_block.get("type"))
-        if block_type:
-            block_types.append(block_type)
-        block_text = string_value(typed_block.get("text"))
-        if block_text is not None:
-            texts.append(block_text)
-
-    return "\n".join(texts) if texts else None, block_types
 
 
 def normalize_codex_role(role: str | None) -> NormalizedRole:
@@ -683,37 +614,8 @@ def command_output_parts(payload: dict[str, Any]) -> tuple[str, str, str]:
     return "", "", "empty"
 
 
-def hash_json(value: object) -> str:
-    return hash_text(json.dumps(value, sort_keys=True, default=str, separators=(",", ":")))
-
-
 def session_id_from_filename(path: Path) -> str | None:
     stem = path.stem
     if "-" not in stem:
         return stem or None
     return stem.rsplit("-", maxsplit=1)[-1]
-
-
-def parse_timestamp(value: str | None) -> datetime | None:
-    if value is None:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
-def string_value(value: object) -> str | None:
-    return value if isinstance(value, str) else None
-
-
-def dict_value(value: object) -> dict[str, Any]:
-    return cast("dict[str, Any]", value) if isinstance(value, dict) else {}
-
-
-def int_value(value: object) -> int | None:
-    return value if isinstance(value, int) else None
-
-
-def bool_value(value: object) -> bool | None:
-    return value if isinstance(value, bool) else None

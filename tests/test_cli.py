@@ -230,8 +230,9 @@ def test_sessions_list_shows_ingested_codex_session(tmp_path) -> None:
     assert "Sessions" in result.stdout
     assert "codex" in result.stdout
     assert str(fixture_path) in result.stdout
-    assert "Response Items" in result.stdout
-    assert "Event Fallbacks" in result.stdout
+    assert "Response Items" not in result.stdout
+    assert "Event Fallbacks" not in result.stdout
+    assert "Commands" in result.stdout
 
 
 def test_analyze_ingested_codex_session_writes_artifact_and_rows(tmp_path) -> None:

@@ -233,8 +233,6 @@ def list_sessions(
     table.add_column("Agent")
     table.add_column("Started")
     table.add_column("Messages")
-    table.add_column("Response Items")
-    table.add_column("Event Fallbacks")
     table.add_column("Commands")
     table.add_column("Warnings")
     table.add_column("Source Path")
@@ -245,8 +243,6 @@ def list_sessions(
             summary.agent_name,
             summary.started_at or "",
             str(summary.message_count),
-            str(summary.response_item_message_count),
-            str(summary.event_msg_fallback_count),
             str(summary.command_count),
             str(summary.warning_count),
             summary.source_path or "",
@@ -254,8 +250,6 @@ def list_sessions(
 
     console.print(table)
     for summary in summaries:
-        typer.echo(f"Response Items: {summary.response_item_message_count}")
-        typer.echo(f"Event Fallbacks: {summary.event_msg_fallback_count}")
         if summary.source_path:
             typer.echo(f"Source path: {summary.source_path}")
 
