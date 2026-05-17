@@ -180,6 +180,44 @@ def test_marker_features_deduplicate_same_family_per_message() -> None:
     )
 
 
+def test_file_edit_features_ignore_repeated_reads() -> None:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.PI,
+    )
+    bundle = ParsedSessionBundle(
+        session=session,
+        file_activities=[
+            FileActivity(
+                file_activity_id="read-1",
+                session_id=session.session_id,
+                path="README.md",
+                operation="read",
+            ),
+            FileActivity(
+                file_activity_id="read-2",
+                session_id=session.session_id,
+                path="README.md",
+                operation="read",
+            ),
+            FileActivity(
+                file_activity_id="write-1",
+                session_id=session.session_id,
+                path="scratch/output.txt",
+                operation="write",
+            ),
+        ],
+    )
+
+    result = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    session_features = {feature.feature_name: feature for feature in result.session_features}
+    assert session_features["edited_file_count"].feature_value == "1"
+    assert session_features["same_file_edited_repeatedly_count"].feature_value == "0"
+    assert session_features["max_edits_to_single_file"].feature_value == "1"
+
+
 def test_scope_boundary_phrase_does_not_count_as_correction() -> None:
     session = Session(
         session_id="session-1",

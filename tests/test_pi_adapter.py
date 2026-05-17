@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from pathlib import Path
 
 from session_doctor.adapters.pi import PiAdapter
@@ -80,12 +81,9 @@ def test_pi_parse_source_normalizes_tools_commands_files_and_usage() -> None:
 
     assert [(command.command, command.exit_code) for command in bundle.command_runs] == [
         ("pytest tests/test_cli.py -q", 1),
-        ("pytest tests/test_cli.py -q", 1),
     ]
-    assert {command.metadata["source"] for command in bundle.command_runs} == {
-        "bashExecution",
-        "toolResult",
-    }
+    assert bundle.command_runs[0].metadata["source"] == "bashExecution"
+    assert bundle.command_runs[0].tool_call_id == bundle.tool_calls[0].tool_call_id
 
     assert [(activity.path, activity.operation) for activity in bundle.file_activities] == [
         ("tests/test_cli.py", "read"),
@@ -105,6 +103,84 @@ def test_pi_parse_source_normalizes_tools_commands_files_and_usage() -> None:
     assert usage.cache_read_tokens == 5
     assert usage.cache_write_tokens == 0
     assert usage.total_tokens == 125
+    assert usage.cost == Decimal("0.01")
+
+
+def test_pi_parse_source_preserves_phase_partial_json_details_and_event_result_ids(
+    tmp_path,
+) -> None:
+    session_path = tmp_path / "pi-rich-records.jsonl"
+    records = [
+        {
+            "type": "session",
+            "id": "pi-session-rich",
+            "timestamp": "2026-05-07T10:00:00.000Z",
+        },
+        {
+            "type": "message",
+            "id": "assistant-message-1",
+            "timestamp": "2026-05-07T10:00:01.000Z",
+            "message": {
+                "role": "assistant",
+                "provider": "openai-codex",
+                "model": "gpt-5.4",
+                "usage": {"cost": {"total": 0.02}},
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Done.",
+                        "signature": {"metadata": {"phase": "final_answer"}},
+                    },
+                    {
+                        "type": "toolCall",
+                        "id": "call-read-1",
+                        "name": "read",
+                        "partialJson": '{"path":"README.md","limit":20}',
+                    },
+                ],
+            },
+        },
+        {
+            "type": "message",
+            "id": "tool-result-1a",
+            "parentId": "assistant-message-1",
+            "timestamp": "2026-05-07T10:00:02.000Z",
+            "message": {
+                "role": "toolResult",
+                "toolCallId": "call-read-1",
+                "toolName": "read",
+                "details": {"output": "first output"},
+            },
+        },
+        {
+            "type": "message",
+            "id": "tool-result-1b",
+            "parentId": "assistant-message-1",
+            "timestamp": "2026-05-07T10:00:03.000Z",
+            "message": {
+                "role": "toolResult",
+                "toolCallId": "call-read-1",
+                "toolName": "read",
+                "details": {"message": "second output"},
+            },
+        },
+    ]
+    session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+
+    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+
+    assistant_message = bundle.messages[0]
+    assert assistant_message.metadata["phase"] == "final_answer"
+    assert bundle.tool_calls[0].arguments_hash is not None
+    assert bundle.tool_calls[0].metadata["partial_json_parseable"] is True
+    assert bundle.tool_calls[0].metadata["path"] == "README.md"
+    assert [(activity.path, activity.operation) for activity in bundle.file_activities] == [
+        ("README.md", "read")
+    ]
+    assert len({result.tool_result_id for result in bundle.tool_results}) == 2
+    assert all(result.output_hash is not None for result in bundle.tool_results)
+    assert [result.output_length for result in bundle.tool_results] == [12, 13]
+    assert bundle.model_usage[0].cost == Decimal("0.02")
 
 
 def test_pi_parse_source_allows_repeated_file_activity_in_one_message(tmp_path) -> None:
