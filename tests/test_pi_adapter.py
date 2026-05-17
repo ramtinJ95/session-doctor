@@ -247,6 +247,213 @@ def test_pi_parse_source_preserves_observed_non_file_tool_calls(tmp_path) -> Non
     assert bundle.file_activities == []
 
 
+def test_pi_parse_source_normalizes_exec_command_tool_result(tmp_path) -> None:
+    session_path = tmp_path / "pi-exec-command.jsonl"
+    records = [
+        {
+            "type": "session",
+            "id": "pi-session-exec-command",
+            "timestamp": "2026-05-07T10:00:00.000Z",
+        },
+        {
+            "type": "message",
+            "id": "assistant-message-1",
+            "timestamp": "2026-05-07T10:00:01.000Z",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "toolCall",
+                        "id": "call-exec-1",
+                        "name": "exec_command",
+                        "arguments": {"cmd": "pytest -q", "workdir": "/tmp/project"},
+                    }
+                ],
+            },
+        },
+        {
+            "type": "message",
+            "id": "tool-result-exec-1",
+            "parentId": "assistant-message-1",
+            "timestamp": "2026-05-07T10:00:02.000Z",
+            "message": {
+                "role": "toolResult",
+                "toolCallId": "call-exec-1",
+                "toolName": "exec_command",
+                "details": {"exit_code": 1, "output": "failed"},
+            },
+        },
+    ]
+    session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+
+    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+
+    command_values = [
+        (command.command, command.cwd, command.exit_code) for command in bundle.command_runs
+    ]
+    assert command_values == [("pytest -q", "/tmp/project", 1)]
+    assert bundle.command_runs[0].stdout_hash is not None
+    assert bundle.command_runs[0].output_length == len("failed")
+
+
+def test_pi_parse_source_dedupes_non_adjacent_bash_execution(tmp_path) -> None:
+    session_path = tmp_path / "pi-bash-non-adjacent.jsonl"
+    records = [
+        {
+            "type": "session",
+            "id": "pi-session-bash-non-adjacent",
+            "timestamp": "2026-05-07T10:00:00.000Z",
+        },
+        {
+            "type": "message",
+            "id": "assistant-message-1",
+            "timestamp": "2026-05-07T10:00:01.000Z",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "toolCall",
+                        "id": "call-bash-1",
+                        "name": "bash",
+                        "arguments": {"command": "pytest -q"},
+                    }
+                ],
+            },
+        },
+        {
+            "type": "message",
+            "id": "tool-result-bash-1",
+            "parentId": "assistant-message-1",
+            "timestamp": "2026-05-07T10:00:02.000Z",
+            "message": {
+                "role": "toolResult",
+                "toolCallId": "call-bash-1",
+                "toolName": "bash",
+                "isError": True,
+                "content": [{"type": "text", "text": "failed"}],
+            },
+        },
+        {
+            "type": "custom",
+            "id": "custom-between",
+            "parentId": "tool-result-bash-1",
+            "timestamp": "2026-05-07T10:00:03.000Z",
+            "data": {"kind": "between"},
+        },
+        {
+            "type": "message",
+            "id": "bash-execution-1",
+            "parentId": "tool-result-bash-1",
+            "timestamp": "2026-05-07T10:00:04.000Z",
+            "message": {
+                "role": "bashExecution",
+                "command": "pytest -q",
+                "exitCode": 1,
+                "output": "failed",
+            },
+        },
+    ]
+    session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+
+    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+
+    assert [(command.command, command.exit_code) for command in bundle.command_runs] == [
+        ("pytest -q", 1)
+    ]
+    assert bundle.command_runs[0].metadata["source"] == "bashExecution"
+
+
+def test_pi_parse_source_preserves_idless_tool_calls_without_collisions(tmp_path) -> None:
+    session_path = tmp_path / "pi-idless-tool-calls.jsonl"
+    records = [
+        {
+            "type": "session",
+            "id": "pi-session-idless-tool-calls",
+            "timestamp": "2026-05-07T10:00:00.000Z",
+        },
+        {
+            "type": "message",
+            "id": "assistant-message-1",
+            "timestamp": "2026-05-07T10:00:01.000Z",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "toolCall", "name": "websearch", "arguments": {"query": "first"}},
+                    {"type": "toolCall", "name": "websearch", "arguments": {"query": "second"}},
+                ],
+            },
+        },
+    ]
+    session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+
+    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+
+    assert len(bundle.tool_calls) == 2
+    assert len({tool_call.tool_call_id for tool_call in bundle.tool_calls}) == 2
+
+
+def test_pi_parse_source_normalizes_apply_patch_file_activity_and_result_hash(
+    tmp_path,
+) -> None:
+    session_path = tmp_path / "pi-apply-patch.jsonl"
+    patch = """*** Begin Patch
+*** Update File: src/example.py
+@@
+-old
++new
+*** Add File: scratch/new.txt
++created
+*** End Patch
+"""
+    records = [
+        {
+            "type": "session",
+            "id": "pi-session-apply-patch",
+            "timestamp": "2026-05-07T10:00:00.000Z",
+        },
+        {
+            "type": "message",
+            "id": "assistant-message-1",
+            "timestamp": "2026-05-07T10:00:01.000Z",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "toolCall",
+                        "id": "call-apply-patch-1",
+                        "name": "apply_patch",
+                        "arguments": {"input": patch},
+                    }
+                ],
+            },
+        },
+        {
+            "type": "message",
+            "id": "tool-result-apply-patch-1",
+            "parentId": "assistant-message-1",
+            "timestamp": "2026-05-07T10:00:02.000Z",
+            "message": {
+                "role": "toolResult",
+                "toolCallId": "call-apply-patch-1",
+                "toolName": "apply_patch",
+                "details": {"diff": patch, "result": "Success."},
+            },
+        },
+    ]
+    session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+
+    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+
+    assert [(activity.path, activity.operation) for activity in bundle.file_activities] == [
+        ("src/example.py", "update"),
+        ("scratch/new.txt", "write"),
+    ]
+    assert all(activity.content_hash is not None for activity in bundle.file_activities)
+    assert bundle.tool_results[0].output_hash is not None
+    assert bundle.tool_results[0].output_length is not None
+    assert bundle.tool_results[0].output_length > len("Success.")
+
+
 def test_pi_parse_source_allows_repeated_file_activity_in_one_message(tmp_path) -> None:
     session_path = tmp_path / "repeated-file-activity.jsonl"
     records = [
