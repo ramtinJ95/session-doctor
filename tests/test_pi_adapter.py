@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -19,6 +21,21 @@ def source_for_fixture(path: Path) -> SessionSource:
         agent_name=AgentName.PI,
         source_path=str(path),
     )
+
+
+def write_jsonl(path: Path, records: Iterable[Any]) -> None:
+    path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+
+
+def session_record(
+    session_id: str,
+    timestamp: str = "2026-05-07T10:00:00.000Z",
+    cwd: str | None = None,
+) -> dict[str, Any]:
+    record: dict[str, Any] = {"type": "session", "id": session_id, "timestamp": timestamp}
+    if cwd is not None:
+        record["cwd"] = cwd
+    return record
 
 
 def test_pi_parse_source_normalizes_session_raw_events_and_messages() -> None:
@@ -83,7 +100,7 @@ def test_pi_parse_source_warns_when_session_record_is_missing(tmp_path) -> None:
             },
         }
     ]
-    session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    write_jsonl(session_path, records)
 
     bundle = PiAdapter().parse_source(source_for_fixture(session_path))
 
@@ -97,14 +114,8 @@ def test_pi_parse_source_does_not_use_source_folder_as_session_cwd(tmp_path) -> 
     session_dir = tmp_path / "--Users-foo-workspace-my-project--"
     session_dir.mkdir()
     session_path = session_dir / "2026-05-07T10-00-00-000Z_filename-session.jsonl"
-    records = [
-        {
-            "type": "session",
-            "id": "pi-session-no-cwd",
-            "timestamp": "2026-05-07T10:00:00.000Z",
-        }
-    ]
-    session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    records = [session_record("pi-session-no-cwd")]
+    write_jsonl(session_path, records)
 
     bundle = PiAdapter().parse_source(source_for_fixture(session_path))
 
@@ -164,11 +175,7 @@ def test_pi_parse_source_preserves_phase_partial_json_details_and_event_result_i
 ) -> None:
     session_path = tmp_path / "pi-rich-records.jsonl"
     records = [
-        {
-            "type": "session",
-            "id": "pi-session-rich",
-            "timestamp": "2026-05-07T10:00:00.000Z",
-        },
+        session_record("pi-session-rich"),
         {
             "type": "message",
             "id": "assistant-message-1",
@@ -218,7 +225,7 @@ def test_pi_parse_source_preserves_phase_partial_json_details_and_event_result_i
             },
         },
     ]
-    session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    write_jsonl(session_path, records)
 
     bundle = PiAdapter().parse_source(source_for_fixture(session_path))
 
@@ -247,11 +254,7 @@ def test_pi_parse_source_preserves_observed_non_file_tool_calls(tmp_path) -> Non
     ]
     session_path = tmp_path / "pi-observed-tools.jsonl"
     records = [
-        {
-            "type": "session",
-            "id": "pi-session-observed-tools",
-            "timestamp": "2026-05-07T10:00:00.000Z",
-        },
+        session_record("pi-session-observed-tools"),
         {
             "type": "message",
             "id": "assistant-message-1",
@@ -285,7 +288,7 @@ def test_pi_parse_source_preserves_observed_non_file_tool_calls(tmp_path) -> Non
             for tool_name in tool_names
         ],
     ]
-    session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    write_jsonl(session_path, records)
 
     bundle = PiAdapter().parse_source(source_for_fixture(session_path))
 
@@ -303,11 +306,7 @@ def test_pi_parse_source_preserves_observed_non_file_tool_calls(tmp_path) -> Non
 def test_pi_parse_source_normalizes_exec_command_tool_result(tmp_path) -> None:
     session_path = tmp_path / "pi-exec-command.jsonl"
     records = [
-        {
-            "type": "session",
-            "id": "pi-session-exec-command",
-            "timestamp": "2026-05-07T10:00:00.000Z",
-        },
+        session_record("pi-session-exec-command"),
         {
             "type": "message",
             "id": "assistant-message-1",
@@ -338,7 +337,7 @@ def test_pi_parse_source_normalizes_exec_command_tool_result(tmp_path) -> None:
             },
         },
     ]
-    session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    write_jsonl(session_path, records)
 
     bundle = PiAdapter().parse_source(source_for_fixture(session_path))
 
@@ -354,11 +353,7 @@ def test_pi_parse_source_normalizes_exec_command_tool_result(tmp_path) -> None:
 def test_pi_parse_source_marks_tool_result_failed_from_structured_status(tmp_path) -> None:
     session_path = tmp_path / "pi-tool-result-status-failed.jsonl"
     records = [
-        {
-            "type": "session",
-            "id": "pi-session-tool-status",
-            "timestamp": "2026-05-07T10:00:00.000Z",
-        },
+        session_record("pi-session-tool-status"),
         {
             "type": "message",
             "id": "tool-result-1",
@@ -371,7 +366,7 @@ def test_pi_parse_source_marks_tool_result_failed_from_structured_status(tmp_pat
             },
         },
     ]
-    session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    write_jsonl(session_path, records)
 
     bundle = PiAdapter().parse_source(source_for_fixture(session_path))
 
@@ -381,11 +376,7 @@ def test_pi_parse_source_marks_tool_result_failed_from_structured_status(tmp_pat
 def test_pi_parse_source_dedupes_non_adjacent_bash_execution(tmp_path) -> None:
     session_path = tmp_path / "pi-bash-non-adjacent.jsonl"
     records = [
-        {
-            "type": "session",
-            "id": "pi-session-bash-non-adjacent",
-            "timestamp": "2026-05-07T10:00:00.000Z",
-        },
+        session_record("pi-session-bash-non-adjacent"),
         {
             "type": "message",
             "id": "assistant-message-1",
@@ -435,7 +426,7 @@ def test_pi_parse_source_dedupes_non_adjacent_bash_execution(tmp_path) -> None:
             },
         },
     ]
-    session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    write_jsonl(session_path, records)
 
     bundle = PiAdapter().parse_source(source_for_fixture(session_path))
 
@@ -448,11 +439,7 @@ def test_pi_parse_source_dedupes_non_adjacent_bash_execution(tmp_path) -> None:
 def test_pi_parse_source_preserves_idless_tool_calls_without_collisions(tmp_path) -> None:
     session_path = tmp_path / "pi-idless-tool-calls.jsonl"
     records = [
-        {
-            "type": "session",
-            "id": "pi-session-idless-tool-calls",
-            "timestamp": "2026-05-07T10:00:00.000Z",
-        },
+        session_record("pi-session-idless-tool-calls"),
         {
             "type": "message",
             "id": "assistant-message-1",
@@ -466,7 +453,7 @@ def test_pi_parse_source_preserves_idless_tool_calls_without_collisions(tmp_path
             },
         },
     ]
-    session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    write_jsonl(session_path, records)
 
     bundle = PiAdapter().parse_source(source_for_fixture(session_path))
 
@@ -488,11 +475,7 @@ def test_pi_parse_source_normalizes_apply_patch_file_activity_and_result_hash(
 *** End Patch
 """
     records = [
-        {
-            "type": "session",
-            "id": "pi-session-apply-patch",
-            "timestamp": "2026-05-07T10:00:00.000Z",
-        },
+        session_record("pi-session-apply-patch"),
         {
             "type": "message",
             "id": "assistant-message-1",
@@ -522,7 +505,7 @@ def test_pi_parse_source_normalizes_apply_patch_file_activity_and_result_hash(
             },
         },
     ]
-    session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    write_jsonl(session_path, records)
 
     bundle = PiAdapter().parse_source(source_for_fixture(session_path))
 
@@ -539,11 +522,7 @@ def test_pi_parse_source_normalizes_apply_patch_file_activity_and_result_hash(
 def test_pi_parse_source_hashes_top_level_edit_text_lengths(tmp_path) -> None:
     session_path = tmp_path / "pi-edit-old-new-text.jsonl"
     records = [
-        {
-            "type": "session",
-            "id": "pi-session-edit-old-new-text",
-            "timestamp": "2026-05-07T10:00:00.000Z",
-        },
+        session_record("pi-session-edit-old-new-text"),
         {
             "type": "message",
             "id": "assistant-message-1",
@@ -565,7 +544,7 @@ def test_pi_parse_source_hashes_top_level_edit_text_lengths(tmp_path) -> None:
             },
         },
     ]
-    session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    write_jsonl(session_path, records)
 
     bundle = PiAdapter().parse_source(source_for_fixture(session_path))
 
@@ -579,12 +558,7 @@ def test_pi_parse_source_hashes_top_level_edit_text_lengths(tmp_path) -> None:
 def test_pi_parse_source_allows_repeated_file_activity_in_one_message(tmp_path) -> None:
     session_path = tmp_path / "repeated-file-activity.jsonl"
     records = [
-        {
-            "type": "session",
-            "id": "pi-session-repeated-file",
-            "timestamp": "2026-05-07T10:00:00.000Z",
-            "cwd": "/tmp/session-doctor",
-        },
+        session_record("pi-session-repeated-file", cwd="/tmp/session-doctor"),
         {
             "type": "message",
             "id": "assistant-message-1",
@@ -610,7 +584,7 @@ def test_pi_parse_source_allows_repeated_file_activity_in_one_message(tmp_path) 
             },
         },
     ]
-    session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    write_jsonl(session_path, records)
 
     bundle = PiAdapter().parse_source(source_for_fixture(session_path))
 

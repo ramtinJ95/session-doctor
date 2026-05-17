@@ -2,29 +2,46 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from session_doctor.ids import source_id_for_path, stable_id
 from session_doctor.privacy import hash_text, text_length
 from session_doctor.schemas import (
     AgentName,
-    CommandRun,
-    FileActivity,
     Message,
-    ModelUsage,
     NormalizedRole,
     ParseWarning,
     RawEvent,
     Session,
     SessionSource,
     SourceKind,
-    ToolCall,
-    ToolResult,
 )
 
 from .base import BaseAdapter, ParsedSessionBundle
+from .common import (
+    JsonRecord,
+    content_blocks,
+    dict_value,
+    hash_json,
+    increment_count,
+    parse_timestamp,
+    read_jsonl_records,
+    string_value,
+    text_and_block_types,
+    warning_for_record,
+    warning_for_source,
+)
+from .pi_tools import (
+    arguments_from_tool_call_block,
+    bash_execution_parent_record_ids,
+    command_run_from_bash_execution,
+    command_run_from_tool_result,
+    file_activities_from_tool_call,
+    model_usage_from_message,
+    tool_call_from_block,
+    tool_result_from_message,
+)
 
 PI_METADATA_ONLY_TYPES = {
     "branch_summary",
@@ -191,37 +208,13 @@ class PiSessionMetadata:
 def read_pi_jsonl(
     source: SessionSource,
     source_path: Path,
-) -> tuple[list[tuple[int, dict[str, Any]]], list[ParseWarning]]:
-    records: list[tuple[int, dict[str, Any]]] = []
-    warnings: list[ParseWarning] = []
-    with source_path.open(encoding="utf-8") as file:
-        for record_index, line in enumerate(file):
-            try:
-                parsed = json.loads(line)
-            except json.JSONDecodeError as exc:
-                warnings.append(
-                    warning_for_record(
-                        source,
-                        record_index,
-                        "malformed_json",
-                        f"Malformed JSONL record: {exc.msg}",
-                        {"line": exc.lineno, "column": exc.colno},
-                    )
-                )
-                continue
-            if not isinstance(parsed, dict):
-                warnings.append(
-                    warning_for_record(
-                        source,
-                        record_index,
-                        "non_object_record",
-                        "Pi record is not a JSON object",
-                        {"json_type": type(parsed).__name__},
-                    )
-                )
-                continue
-            records.append((record_index, parsed))
-    return records, warnings
+) -> tuple[list[JsonRecord], list[ParseWarning]]:
+    return read_jsonl_records(
+        source,
+        source_path,
+        agent_display_name="Pi",
+        open_error="raise",
+    )
 
 
 def extract_session_metadata(
@@ -250,7 +243,7 @@ def extract_session_metadata(
     session_id = stable_id("session", AgentName.PI.value, source.source_path, native_session_id)
     cwd = string_value(session_record.get("cwd"))
     model = string_value(latest_model_change.get("modelId"))
-    source_path_project_hint = cwd_from_source_path(source_path)
+    source_path_project_hint = project_hint_from_source_path(source_path)
 
     session = Session(
         session_id=session_id,
@@ -310,7 +303,10 @@ def message_from_record(
     record: dict[str, Any],
 ) -> Message:
     message_payload = dict_value(record.get("message"))
-    raw_text, content_block_types = text_and_block_types(message_payload.get("content"))
+    raw_text, content_block_types = text_and_block_types(
+        message_payload.get("content"),
+        text_block_types={"text"},
+    )
     role = normalize_pi_role(string_value(message_payload.get("role")))
     text = raw_text if role in {NormalizedRole.USER, NormalizedRole.ASSISTANT} else None
     timestamp = string_value(message_payload.get("timestamp")) or string_value(
@@ -341,353 +337,6 @@ def message_from_record(
     )
 
 
-def tool_call_from_block(
-    session_id: str,
-    event: RawEvent,
-    block: dict[str, Any],
-    block_index: int,
-) -> ToolCall:
-    call_id = string_value(block.get("id"))
-    arguments = arguments_from_tool_call_block(block)
-    partial_json = string_value(block.get("partialJson"))
-    arguments_payload: object | None = arguments if arguments else partial_json
-    arguments_json = (
-        json.dumps(arguments_payload, sort_keys=True, default=str)
-        if arguments_payload is not None
-        else None
-    )
-    tool_call_id = (
-        stable_id("tool_call", session_id, call_id)
-        if call_id is not None
-        else stable_id("tool_call", session_id, event.event_id, block_index)
-    )
-    return ToolCall(
-        tool_call_id=tool_call_id,
-        session_id=session_id,
-        source_event_id=event.event_id,
-        native_tool_call_id=call_id,
-        name=string_value(block.get("name")) or "unknown",
-        timestamp=event.timestamp,
-        arguments_hash=hash_text(arguments_json) if arguments_json else None,
-        metadata={
-            "partial_json": partial_json is not None,
-            "partial_json_parseable": bool(partial_json and arguments),
-            "argument_keys": sorted(arguments.keys()),
-            "path": string_value(arguments.get("path")),
-            "timeout": arguments.get("timeout"),
-        },
-    )
-
-
-def tool_result_from_message(
-    session_id: str,
-    event: RawEvent,
-    record: dict[str, Any],
-) -> ToolResult:
-    message_payload = dict_value(record.get("message"))
-    call_id = string_value(message_payload.get("toolCallId"))
-    output = tool_result_output(message_payload)
-    details = dict_value(message_payload.get("details"))
-    return ToolResult(
-        tool_result_id=stable_id("tool_result", session_id, event.event_id),
-        session_id=session_id,
-        tool_call_id=stable_id("tool_call", session_id, call_id) if call_id else None,
-        source_event_id=event.event_id,
-        native_tool_call_id=call_id,
-        timestamp=event.timestamp,
-        is_error=tool_result_is_error(message_payload),
-        output_hash=hash_text(output) if output is not None else None,
-        output_length=text_length(output),
-        metadata={
-            "tool_name": string_value(message_payload.get("toolName")),
-            "details_keys": sorted(details.keys()),
-            "truncation": details.get("truncation"),
-        },
-    )
-
-
-def command_run_from_tool_result(
-    session_id: str,
-    event: RawEvent,
-    record: dict[str, Any],
-    tool_call_arguments_by_id: dict[str, dict[str, Any]],
-) -> CommandRun | None:
-    message_payload = dict_value(record.get("message"))
-    tool_name = string_value(message_payload.get("toolName"))
-    if tool_name not in {"bash", "exec_command"}:
-        return None
-    call_id = string_value(message_payload.get("toolCallId"))
-    arguments = tool_call_arguments_by_id.get(call_id or "", {})
-    command = command_from_tool_arguments(tool_name, arguments)
-    if command is None:
-        return None
-    cwd = string_value(arguments.get("workdir")) or string_value(arguments.get("cwd"))
-    output = tool_result_output(message_payload) or ""
-    return CommandRun(
-        command_run_id=stable_id("command_run", session_id, event.event_id),
-        session_id=session_id,
-        source_event_id=event.event_id,
-        tool_call_id=stable_id("tool_call", session_id, call_id) if call_id else None,
-        command=command,
-        cwd=cwd,
-        ended_at=event.timestamp,
-        exit_code=exit_code_from_tool_result(message_payload),
-        stdout_hash=hash_text(output) if output else None,
-        output_length=len(output),
-        metadata={
-            "source": "toolResult",
-            "tool_name": tool_name,
-            "is_error": bool_value(message_payload.get("isError")),
-        },
-    )
-
-
-def command_from_tool_arguments(tool_name: str | None, arguments: dict[str, Any]) -> str | None:
-    if tool_name == "exec_command":
-        return string_value(arguments.get("cmd")) or string_value(arguments.get("command"))
-    return string_value(arguments.get("command"))
-
-
-def command_run_from_bash_execution(
-    session_id: str,
-    event: RawEvent,
-    record: dict[str, Any],
-    tool_call_id_by_tool_result_id: dict[str, str],
-) -> CommandRun:
-    message_payload = dict_value(record.get("message"))
-    output = string_value(message_payload.get("output")) or ""
-    parent_id = string_value(record.get("parentId"))
-    call_id = tool_call_id_by_tool_result_id.get(parent_id or "")
-    return CommandRun(
-        command_run_id=stable_id("command_run", session_id, event.event_id),
-        session_id=session_id,
-        source_event_id=event.event_id,
-        tool_call_id=stable_id("tool_call", session_id, call_id) if call_id else None,
-        command=string_value(message_payload.get("command")) or "",
-        ended_at=event.timestamp,
-        exit_code=int_value(message_payload.get("exitCode")),
-        stdout_hash=hash_text(output) if output else None,
-        output_length=len(output),
-        metadata={
-            "source": "bashExecution",
-            "cancelled": bool_value(message_payload.get("cancelled")),
-            "truncated": bool_value(message_payload.get("truncated")),
-            "exclude_from_context": bool_value(message_payload.get("excludeFromContext")),
-        },
-    )
-
-
-def file_activities_from_tool_call(
-    session_id: str,
-    event: RawEvent,
-    block: dict[str, Any],
-    block_index: int,
-) -> list[FileActivity]:
-    tool_name = string_value(block.get("name"))
-    if tool_name not in {"apply_patch", "edit", "read", "write"}:
-        return []
-    arguments = arguments_from_tool_call_block(block)
-    if tool_name == "apply_patch":
-        return file_activities_from_apply_patch(
-            session_id,
-            event,
-            block,
-            block_index,
-            arguments,
-        )
-    path = string_value(arguments.get("path"))
-    if path is None:
-        return []
-    operation = file_activity_operation(tool_name)
-    content_payload = file_content_payload(tool_name, arguments)
-    return [
-        FileActivity(
-            file_activity_id=stable_id(
-                "file_activity",
-                session_id,
-                event.event_id,
-                string_value(block.get("id")) or block_index,
-                tool_name,
-                path,
-            ),
-            session_id=session_id,
-            source_event_id=event.event_id,
-            path=path,
-            operation=operation,
-            timestamp=event.timestamp,
-            content_hash=hash_text(content_payload) if content_payload else None,
-            metadata={
-                "tool_call_id": string_value(block.get("id")),
-                "argument_keys": sorted(arguments.keys()),
-                "content_length": text_length(content_payload),
-            },
-        )
-    ]
-
-
-def file_activity_operation(tool_name: str) -> str:
-    if tool_name == "edit":
-        return "update"
-    return tool_name
-
-
-def file_activities_from_apply_patch(
-    session_id: str,
-    event: RawEvent,
-    block: dict[str, Any],
-    block_index: int,
-    arguments: dict[str, Any],
-) -> list[FileActivity]:
-    patch_text = string_value(arguments.get("input")) or string_value(arguments.get("patch"))
-    if patch_text is None:
-        return []
-    changes = apply_patch_file_changes(patch_text)
-    activities: list[FileActivity] = []
-    for change_index, change in enumerate(changes):
-        path = str(change["path"])
-        operation = str(change["operation"])
-        added_lines = int(change["added_lines"])
-        removed_lines = int(change["removed_lines"])
-        content_payload = json.dumps(
-            {
-                "added_lines": added_lines,
-                "operation": operation,
-                "removed_lines": removed_lines,
-            },
-            sort_keys=True,
-        )
-        activities.append(
-            FileActivity(
-                file_activity_id=stable_id(
-                    "file_activity",
-                    session_id,
-                    event.event_id,
-                    string_value(block.get("id")) or block_index,
-                    "apply_patch",
-                    path,
-                    change_index,
-                ),
-                session_id=session_id,
-                source_event_id=event.event_id,
-                path=path,
-                operation=operation,
-                timestamp=event.timestamp,
-                content_hash=hash_text(content_payload),
-                metadata={
-                    "tool_call_id": string_value(block.get("id")),
-                    "argument_keys": sorted(arguments.keys()),
-                    "content_length": text_length(content_payload),
-                    "patch_added_lines": added_lines,
-                    "patch_removed_lines": removed_lines,
-                },
-            )
-        )
-    return activities
-
-
-def apply_patch_file_changes(patch_text: str) -> list[dict[str, int | str]]:
-    changes: list[dict[str, int | str]] = []
-    current_change: dict[str, int | str] | None = None
-    for line in patch_text.splitlines():
-        path, operation = apply_patch_header(line)
-        if path and operation:
-            current_change = {
-                "path": path,
-                "operation": operation,
-                "added_lines": 0,
-                "removed_lines": 0,
-            }
-            changes.append(current_change)
-            continue
-        if current_change is None:
-            continue
-        if line.startswith("+") and not line.startswith("+++"):
-            current_change["added_lines"] = int(current_change["added_lines"]) + 1
-        elif line.startswith("-") and not line.startswith("---"):
-            current_change["removed_lines"] = int(current_change["removed_lines"]) + 1
-    return changes
-
-
-def apply_patch_header(line: str) -> tuple[str | None, str | None]:
-    header_prefixes = {
-        "*** Add File: ": "write",
-        "*** Delete File: ": "delete",
-        "*** Update File: ": "update",
-    }
-    for prefix, operation in header_prefixes.items():
-        if line.startswith(prefix):
-            return line.removeprefix(prefix).strip(), operation
-    if line.startswith("diff --git "):
-        parts = line.split()
-        if len(parts) >= 4:
-            return strip_diff_prefix(parts[3]), "update"
-    return None, None
-
-
-def strip_diff_prefix(path: str) -> str:
-    if path.startswith("a/") or path.startswith("b/"):
-        return path[2:]
-    return path
-
-
-def model_usage_from_message(
-    session_id: str,
-    event: RawEvent,
-    record: dict[str, Any],
-) -> ModelUsage | None:
-    message_payload = dict_value(record.get("message"))
-    usage = dict_value(message_payload.get("usage"))
-    if not usage:
-        return None
-    cost = cost_from_usage(usage)
-    return ModelUsage(
-        model_usage_id=stable_id("model_usage", session_id, event.event_id),
-        session_id=session_id,
-        source_event_id=event.event_id,
-        timestamp=event.timestamp,
-        provider=string_value(message_payload.get("provider")),
-        model=string_value(message_payload.get("model")),
-        input_tokens=int_value(usage.get("input")),
-        output_tokens=int_value(usage.get("output")),
-        cache_read_tokens=int_value(usage.get("cacheRead")),
-        cache_write_tokens=int_value(usage.get("cacheWrite")),
-        total_tokens=int_value(usage.get("totalTokens")),
-        cost=cost,
-        metadata={
-            "cost": usage.get("cost"),
-            "stop_reason": string_value(message_payload.get("stopReason")),
-        },
-    )
-
-
-def text_and_block_types(content: object) -> tuple[str | None, list[str]]:
-    if isinstance(content, str):
-        return content, ["text"]
-    if not isinstance(content, list):
-        return None, []
-
-    texts: list[str] = []
-    block_types: list[str] = []
-    for block in content:
-        if not isinstance(block, dict):
-            continue
-        typed_block = dict_value(block)
-        block_type = string_value(typed_block.get("type"))
-        if block_type:
-            block_types.append(block_type)
-        if block_type == "text":
-            block_text = string_value(typed_block.get("text"))
-            if block_text is not None:
-                texts.append(block_text)
-
-    return "\n".join(texts) if texts else None, block_types
-
-
-def text_from_content(content: object) -> str | None:
-    text, _ = text_and_block_types(content)
-    return text
-
-
 def phase_from_content(content: object) -> str | None:
     for block in content_blocks(content):
         if string_value(block.get("type")) != "text":
@@ -716,256 +365,6 @@ def phase_from_metadata(value: object) -> str | None:
     return string_value(metadata.get("phase"))
 
 
-def arguments_from_tool_call_block(block: dict[str, Any]) -> dict[str, Any]:
-    arguments = dict_value(block.get("arguments"))
-    if arguments:
-        return arguments
-    partial_json = string_value(block.get("partialJson"))
-    if partial_json is None:
-        return arguments
-    try:
-        parsed = json.loads(partial_json)
-    except json.JSONDecodeError:
-        return arguments
-    return dict_value(parsed)
-
-
-def tool_result_output(message_payload: dict[str, Any]) -> str | None:
-    parts: list[str] = []
-    content_text = text_from_content(message_payload.get("content"))
-    if content_text:
-        parts.append(content_text)
-    details_text = text_from_details(dict_value(message_payload.get("details")))
-    if details_text:
-        parts.append(details_text)
-    return "\n".join(parts) if parts else None
-
-
-def tool_result_is_error(message_payload: dict[str, Any]) -> bool | None:
-    message_is_error = bool_value(message_payload.get("isError"))
-    if message_is_error is True:
-        return True
-    if details_have_failure_signal(dict_value(message_payload.get("details"))):
-        return True
-    return message_is_error
-
-
-DETAIL_FAILURE_STATUS_VALUES = {
-    "cancelled",
-    "canceled",
-    "error",
-    "errored",
-    "failed",
-    "failure",
-    "timed_out",
-    "timeout",
-}
-
-DETAIL_FAILURE_BOOL_KEYS = {
-    "cancelled",
-    "canceled",
-    "error",
-    "failed",
-    "failure",
-    "isError",
-    "is_error",
-    "timedOut",
-    "timed_out",
-}
-
-DETAIL_FAILURE_TEXT_KEYS = {
-    "error",
-    "errorCode",
-    "error_code",
-    "errorMessage",
-    "error_message",
-}
-
-DETAIL_STATUS_KEYS = {"outcome", "state", "status"}
-DETAIL_SUCCESS_BOOL_KEYS = {"ok", "success"}
-
-
-def details_have_failure_signal(value: object, *, depth: int = 0) -> bool:
-    if depth > 2:
-        return False
-    if not isinstance(value, dict):
-        return False
-    payload = dict_value(value)
-    for key, nested_value in payload.items():
-        if key in ("exitCode", "exit_code"):
-            exit_code = int_value(nested_value)
-            if exit_code is not None and exit_code != 0:
-                return True
-        if key in DETAIL_FAILURE_BOOL_KEYS and bool_value(nested_value) is True:
-            return True
-        if key in DETAIL_SUCCESS_BOOL_KEYS and bool_value(nested_value) is False:
-            return True
-        if key in DETAIL_FAILURE_TEXT_KEYS and string_value(nested_value):
-            return True
-        if key in DETAIL_STATUS_KEYS:
-            status = string_value(nested_value)
-            if status and status.lower().replace("-", "_") in DETAIL_FAILURE_STATUS_VALUES:
-                return True
-        if isinstance(nested_value, dict) and details_have_failure_signal(
-            nested_value,
-            depth=depth + 1,
-        ):
-            return True
-        if isinstance(nested_value, list):
-            for item in nested_value:
-                if isinstance(item, dict) and details_have_failure_signal(
-                    item,
-                    depth=depth + 1,
-                ):
-                    return True
-    return False
-
-
-DETAIL_TEXT_KEYS = {
-    "aggregated_output",
-    "content",
-    "diff",
-    "error",
-    "errorMessage",
-    "formatted_output",
-    "message",
-    "output",
-    "patch",
-    "result",
-    "stderr",
-    "stdout",
-    "text",
-}
-
-
-def text_from_details(value: object) -> str | None:
-    texts: list[str] = []
-    collect_detail_text(value, texts, depth=0)
-    return "\n".join(texts) if texts else None
-
-
-def collect_detail_text(value: object, texts: list[str], *, depth: int) -> None:
-    if depth > 2:
-        return
-    if isinstance(value, dict):
-        for key, nested_value in value.items():
-            if key in DETAIL_TEXT_KEYS:
-                nested_text = string_value(nested_value)
-                if nested_text:
-                    texts.append(nested_text)
-            if isinstance(nested_value, dict | list):
-                collect_detail_text(nested_value, texts, depth=depth + 1)
-    elif isinstance(value, list):
-        for item in value:
-            if isinstance(item, dict | list):
-                collect_detail_text(item, texts, depth=depth + 1)
-
-
-def exit_code_from_tool_result(message_payload: dict[str, Any]) -> int | None:
-    details = dict_value(message_payload.get("details"))
-    exit_code = exit_code_from_details(details)
-    if exit_code is not None:
-        return exit_code
-    is_error = bool_value(message_payload.get("isError"))
-    if is_error is True:
-        return 1
-    if is_error is False:
-        return 0
-    return None
-
-
-def exit_code_from_details(value: object, *, depth: int = 0) -> int | None:
-    if depth > 2:
-        return None
-    if not isinstance(value, dict):
-        return None
-    payload = dict_value(value)
-    for key in ("exitCode", "exit_code"):
-        exit_code = int_value(payload.get(key))
-        if exit_code is not None:
-            return exit_code
-    for nested_value in payload.values():
-        if isinstance(nested_value, dict):
-            exit_code = exit_code_from_details(nested_value, depth=depth + 1)
-            if exit_code is not None:
-                return exit_code
-    return None
-
-
-def bash_execution_parent_record_ids(
-    valid_records: list[tuple[int, dict[str, Any]]],
-) -> set[str]:
-    parent_ids: set[str] = set()
-    for _, record in valid_records:
-        message_payload = dict_value(record.get("message"))
-        if string_value(message_payload.get("role")) != "bashExecution":
-            continue
-        parent_id = string_value(record.get("parentId"))
-        if parent_id is not None:
-            parent_ids.add(parent_id)
-    return parent_ids
-
-
-def cost_from_usage(usage: dict[str, Any]) -> Decimal | None:
-    cost = usage.get("cost")
-    if isinstance(cost, dict):
-        cost = cost.get("total")
-    return decimal_value(cost)
-
-
-def decimal_value(value: object) -> Decimal | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, Decimal):
-        return value
-    if isinstance(value, int | float | str):
-        try:
-            return Decimal(str(value))
-        except InvalidOperation:
-            return None
-    return None
-
-
-def content_blocks(content: object) -> list[dict[str, Any]]:
-    if not isinstance(content, list):
-        return []
-    return [dict_value(block) for block in content if isinstance(block, dict)]
-
-
-def file_content_payload(tool_name: str | None, arguments: dict[str, Any]) -> str | None:
-    if tool_name == "write":
-        return string_value(arguments.get("content"))
-    if tool_name != "edit":
-        return None
-    top_level_old_text = string_value(arguments.get("oldText"))
-    top_level_new_text = string_value(arguments.get("newText"))
-    if top_level_old_text is not None or top_level_new_text is not None:
-        return json.dumps(
-            [
-                {
-                    "old_length": text_length(top_level_old_text),
-                    "new_length": text_length(top_level_new_text),
-                }
-            ],
-            sort_keys=True,
-        )
-    edits = arguments.get("edits")
-    if not isinstance(edits, list):
-        return None
-    safe_edits = []
-    for edit in edits:
-        if not isinstance(edit, dict):
-            continue
-        edit_payload = dict_value(edit)
-        safe_edits.append(
-            {
-                "old_length": text_length(string_value(edit_payload.get("old_string"))),
-                "new_length": text_length(string_value(edit_payload.get("new_string"))),
-            }
-        )
-    return json.dumps(safe_edits, sort_keys=True) if safe_edits else None
-
-
 def normalize_pi_role(role: str | None) -> NormalizedRole:
     if role == "user":
         return NormalizedRole.USER
@@ -976,44 +375,6 @@ def normalize_pi_role(role: str | None) -> NormalizedRole:
     if role == "bashExecution":
         return NormalizedRole.TOOL
     return NormalizedRole.UNKNOWN
-
-
-def warning_for_record(
-    source: SessionSource,
-    record_index: int,
-    code: str,
-    message: str,
-    metadata: dict[str, Any] | None = None,
-) -> ParseWarning:
-    return ParseWarning(
-        warning_id=stable_id("warning", source.source_id, record_index, code),
-        source_id=source.source_id,
-        record_index=record_index,
-        message=message,
-        metadata={"code": code, **(metadata or {})},
-    )
-
-
-def warning_for_source(
-    source: SessionSource,
-    code: str,
-    message: str,
-    metadata: dict[str, Any] | None = None,
-) -> ParseWarning:
-    return ParseWarning(
-        warning_id=stable_id("warning", source.source_id, code),
-        source_id=source.source_id,
-        message=message,
-        metadata={"code": code, **(metadata or {})},
-    )
-
-
-def increment_count(counts: dict[str, int], key: str) -> None:
-    counts[key] = counts.get(key, 0) + 1
-
-
-def hash_json(value: object) -> str:
-    return hash_text(json.dumps(value, sort_keys=True, default=str, separators=(",", ":")))
 
 
 def has_usable_session_record(records: list[tuple[int, dict[str, Any]]]) -> bool:
@@ -1030,34 +391,9 @@ def session_id_from_filename(path: Path) -> str | None:
     return stem.rsplit("_", maxsplit=1)[-1]
 
 
-def cwd_from_source_path(path: Path) -> str | None:
+def project_hint_from_source_path(path: Path) -> str | None:
     parent_name = path.parent.name
     if not parent_name.startswith("--") or not parent_name.endswith("--"):
         return None
     candidate = parent_name.removeprefix("--").removesuffix("--").replace("-", "/")
     return f"/{candidate.strip('/')}" if candidate else None
-
-
-def parse_timestamp(value: str | None) -> datetime | None:
-    if value is None:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
-def string_value(value: object) -> str | None:
-    return value if isinstance(value, str) else None
-
-
-def int_value(value: object) -> int | None:
-    return value if isinstance(value, int) else None
-
-
-def bool_value(value: object) -> bool | None:
-    return value if isinstance(value, bool) else None
-
-
-def dict_value(value: object) -> dict[str, Any]:
-    return cast("dict[str, Any]", value) if isinstance(value, dict) else {}
