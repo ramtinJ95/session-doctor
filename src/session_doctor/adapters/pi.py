@@ -73,8 +73,9 @@ class PiAdapter(BaseAdapter):
         metadata_only_counts: dict[str, int] = {}
         tool_call_arguments_by_id: dict[str, dict[str, Any]] = {}
         tool_call_id_by_tool_result_id: dict[str, str] = {}
+        bash_execution_parent_ids = bash_execution_parent_record_ids(valid_records)
 
-        for valid_record_position, (record_index, record) in enumerate(valid_records):
+        for record_index, record in valid_records:
             record_type = string_value(record.get("type"))
             event = raw_event_for_record(source, session_metadata.session_id, record_index, record)
             bundle.raw_events.append(event)
@@ -104,6 +105,7 @@ class PiAdapter(BaseAdapter):
                             session_metadata.session_id,
                             event,
                             block,
+                            block_index,
                         )
                         bundle.tool_calls.append(tool_call)
                         if tool_call.native_tool_call_id:
@@ -129,11 +131,7 @@ class PiAdapter(BaseAdapter):
                     bundle.tool_results.append(
                         tool_result_from_message(session_metadata.session_id, event, record)
                     )
-                    if not next_record_is_linked_bash_execution(
-                        valid_records,
-                        valid_record_position,
-                        record,
-                    ):
+                    if native_tool_result_id not in bash_execution_parent_ids:
                         command_run = command_run_from_tool_result(
                             session_metadata.session_id,
                             event,
@@ -345,6 +343,7 @@ def tool_call_from_block(
     session_id: str,
     event: RawEvent,
     block: dict[str, Any],
+    block_index: int,
 ) -> ToolCall:
     call_id = string_value(block.get("id"))
     arguments = arguments_from_tool_call_block(block)
@@ -355,8 +354,13 @@ def tool_call_from_block(
         if arguments_payload is not None
         else None
     )
+    tool_call_id = (
+        stable_id("tool_call", session_id, call_id)
+        if call_id is not None
+        else stable_id("tool_call", session_id, event.event_id, block_index)
+    )
     return ToolCall(
-        tool_call_id=stable_id("tool_call", session_id, call_id or event.event_id),
+        tool_call_id=tool_call_id,
         session_id=session_id,
         source_event_id=event.event_id,
         native_tool_call_id=call_id,
@@ -407,13 +411,15 @@ def command_run_from_tool_result(
     tool_call_arguments_by_id: dict[str, dict[str, Any]],
 ) -> CommandRun | None:
     message_payload = dict_value(record.get("message"))
-    if string_value(message_payload.get("toolName")) != "bash":
+    tool_name = string_value(message_payload.get("toolName"))
+    if tool_name not in {"bash", "exec_command"}:
         return None
     call_id = string_value(message_payload.get("toolCallId"))
     arguments = tool_call_arguments_by_id.get(call_id or "", {})
-    command = string_value(arguments.get("command"))
+    command = command_from_tool_arguments(tool_name, arguments)
     if command is None:
         return None
+    cwd = string_value(arguments.get("workdir")) or string_value(arguments.get("cwd"))
     output = tool_result_output(message_payload) or ""
     return CommandRun(
         command_run_id=stable_id("command_run", session_id, event.event_id),
@@ -421,16 +427,23 @@ def command_run_from_tool_result(
         source_event_id=event.event_id,
         tool_call_id=stable_id("tool_call", session_id, call_id) if call_id else None,
         command=command,
+        cwd=cwd,
         ended_at=event.timestamp,
         exit_code=exit_code_from_tool_result(message_payload),
         stdout_hash=hash_text(output) if output else None,
         output_length=len(output),
         metadata={
             "source": "toolResult",
-            "tool_name": "bash",
+            "tool_name": tool_name,
             "is_error": bool_value(message_payload.get("isError")),
         },
     )
+
+
+def command_from_tool_arguments(tool_name: str | None, arguments: dict[str, Any]) -> str | None:
+    if tool_name == "exec_command":
+        return string_value(arguments.get("cmd")) or string_value(arguments.get("command"))
+    return string_value(arguments.get("command"))
 
 
 def command_run_from_bash_execution(
@@ -469,9 +482,17 @@ def file_activities_from_tool_call(
     block_index: int,
 ) -> list[FileActivity]:
     tool_name = string_value(block.get("name"))
-    if tool_name not in {"edit", "read", "write"}:
+    if tool_name not in {"apply_patch", "edit", "read", "write"}:
         return []
     arguments = arguments_from_tool_call_block(block)
+    if tool_name == "apply_patch":
+        return file_activities_from_apply_patch(
+            session_id,
+            event,
+            block,
+            block_index,
+            arguments,
+        )
     path = string_value(arguments.get("path"))
     if path is None:
         return []
@@ -506,6 +527,105 @@ def file_activity_operation(tool_name: str) -> str:
     if tool_name == "edit":
         return "update"
     return tool_name
+
+
+def file_activities_from_apply_patch(
+    session_id: str,
+    event: RawEvent,
+    block: dict[str, Any],
+    block_index: int,
+    arguments: dict[str, Any],
+) -> list[FileActivity]:
+    patch_text = string_value(arguments.get("input")) or string_value(arguments.get("patch"))
+    if patch_text is None:
+        return []
+    changes = apply_patch_file_changes(patch_text)
+    activities: list[FileActivity] = []
+    for change_index, change in enumerate(changes):
+        path = str(change["path"])
+        operation = str(change["operation"])
+        added_lines = int(change["added_lines"])
+        removed_lines = int(change["removed_lines"])
+        content_payload = json.dumps(
+            {
+                "added_lines": added_lines,
+                "operation": operation,
+                "removed_lines": removed_lines,
+            },
+            sort_keys=True,
+        )
+        activities.append(
+            FileActivity(
+                file_activity_id=stable_id(
+                    "file_activity",
+                    session_id,
+                    event.event_id,
+                    string_value(block.get("id")) or block_index,
+                    "apply_patch",
+                    path,
+                    change_index,
+                ),
+                session_id=session_id,
+                source_event_id=event.event_id,
+                path=path,
+                operation=operation,
+                timestamp=event.timestamp,
+                content_hash=hash_text(content_payload),
+                metadata={
+                    "tool_call_id": string_value(block.get("id")),
+                    "argument_keys": sorted(arguments.keys()),
+                    "content_length": text_length(content_payload),
+                    "patch_added_lines": added_lines,
+                    "patch_removed_lines": removed_lines,
+                },
+            )
+        )
+    return activities
+
+
+def apply_patch_file_changes(patch_text: str) -> list[dict[str, int | str]]:
+    changes: list[dict[str, int | str]] = []
+    current_change: dict[str, int | str] | None = None
+    for line in patch_text.splitlines():
+        path, operation = apply_patch_header(line)
+        if path and operation:
+            current_change = {
+                "path": path,
+                "operation": operation,
+                "added_lines": 0,
+                "removed_lines": 0,
+            }
+            changes.append(current_change)
+            continue
+        if current_change is None:
+            continue
+        if line.startswith("+") and not line.startswith("+++"):
+            current_change["added_lines"] = int(current_change["added_lines"]) + 1
+        elif line.startswith("-") and not line.startswith("---"):
+            current_change["removed_lines"] = int(current_change["removed_lines"]) + 1
+    return changes
+
+
+def apply_patch_header(line: str) -> tuple[str | None, str | None]:
+    header_prefixes = {
+        "*** Add File: ": "write",
+        "*** Delete File: ": "delete",
+        "*** Update File: ": "update",
+    }
+    for prefix, operation in header_prefixes.items():
+        if line.startswith(prefix):
+            return line.removeprefix(prefix).strip(), operation
+    if line.startswith("diff --git "):
+        parts = line.split()
+        if len(parts) >= 4:
+            return strip_diff_prefix(parts[3]), "update"
+    return None, None
+
+
+def strip_diff_prefix(path: str) -> str:
+    if path.startswith("a/") or path.startswith("b/"):
+        return path[2:]
+    return path
 
 
 def model_usage_from_message(
@@ -620,11 +740,16 @@ def tool_result_output(message_payload: dict[str, Any]) -> str | None:
 
 
 DETAIL_TEXT_KEYS = {
+    "aggregated_output",
     "content",
+    "diff",
     "error",
     "errorMessage",
+    "formatted_output",
     "message",
     "output",
+    "patch",
+    "result",
     "stderr",
     "stdout",
     "text",
@@ -656,10 +781,9 @@ def collect_detail_text(value: object, texts: list[str], *, depth: int) -> None:
 
 def exit_code_from_tool_result(message_payload: dict[str, Any]) -> int | None:
     details = dict_value(message_payload.get("details"))
-    for key in ("exitCode", "exit_code"):
-        exit_code = int_value(details.get(key))
-        if exit_code is not None:
-            return exit_code
+    exit_code = exit_code_from_details(details)
+    if exit_code is not None:
+        return exit_code
     is_error = bool_value(message_payload.get("isError"))
     if is_error is True:
         return 1
@@ -668,18 +792,36 @@ def exit_code_from_tool_result(message_payload: dict[str, Any]) -> int | None:
     return None
 
 
-def next_record_is_linked_bash_execution(
+def exit_code_from_details(value: object, *, depth: int = 0) -> int | None:
+    if depth > 2:
+        return None
+    if not isinstance(value, dict):
+        return None
+    payload = dict_value(value)
+    for key in ("exitCode", "exit_code"):
+        exit_code = int_value(payload.get(key))
+        if exit_code is not None:
+            return exit_code
+    for nested_value in payload.values():
+        if isinstance(nested_value, dict):
+            exit_code = exit_code_from_details(nested_value, depth=depth + 1)
+            if exit_code is not None:
+                return exit_code
+    return None
+
+
+def bash_execution_parent_record_ids(
     valid_records: list[tuple[int, dict[str, Any]]],
-    current_position: int,
-    record: dict[str, Any],
-) -> bool:
-    if current_position + 1 >= len(valid_records):
-        return False
-    next_record = valid_records[current_position + 1][1]
-    if string_value(next_record.get("parentId")) != string_value(record.get("id")):
-        return False
-    next_message_payload = dict_value(next_record.get("message"))
-    return string_value(next_message_payload.get("role")) == "bashExecution"
+) -> set[str]:
+    parent_ids: set[str] = set()
+    for _, record in valid_records:
+        message_payload = dict_value(record.get("message"))
+        if string_value(message_payload.get("role")) != "bashExecution":
+            continue
+        parent_id = string_value(record.get("parentId"))
+        if parent_id is not None:
+            parent_ids.add(parent_id)
+    return parent_ids
 
 
 def cost_from_usage(usage: dict[str, Any]) -> Decimal | None:
