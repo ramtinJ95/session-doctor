@@ -215,7 +215,7 @@ def marker_features(
                         message=message,
                         feature_name=feature_name,
                         feature_value=marker_family,
-                        evidence={"matched_markers": matched_markers},
+                        evidence={"matched_markers": sorted(matched_markers)},
                     )
                 )
     return features
