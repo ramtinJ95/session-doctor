@@ -146,6 +146,15 @@ def test_analyze_features_detects_message_and_session_signals() -> None:
     assert session_features["same_file_edited_repeatedly_count"].feature_value == "1"
     assert session_features["max_edits_to_single_file"].feature_value == "2"
     assert session_features["unresolved_ending_signal"].feature_value == "true"
+    repeat_request = next(
+        feature
+        for feature in result.message_features
+        if feature.feature_name == "repeat_request_similarity"
+    )
+    assert repeat_request.evidence["matched_message_id"] == "message-1"
+    assert repeat_request.evidence["matched_source_event_id"] == "event-1"
+    assert repeat_request.evidence["threshold"] == REPEAT_REQUEST_SIMILARITY_THRESHOLD
+    assert isinstance(repeat_request.evidence["similarity_score"], float)
     repeated_failure_groups = session_features["repeated_failure_count"].evidence["groups"]
     assert {
         group["group_type"] for group in repeated_failure_groups if isinstance(group, dict)
@@ -214,18 +223,21 @@ def test_file_edit_features_ignore_repeated_reads_and_count_patches() -> None:
             FileActivity(
                 file_activity_id="write-1",
                 session_id=session.session_id,
+                source_event_id="event-1",
                 path="scratch/output.txt",
                 operation="write",
             ),
             FileActivity(
                 file_activity_id="patch-1",
                 session_id=session.session_id,
+                source_event_id="event-2",
                 path="README.md",
                 operation="patch",
             ),
             FileActivity(
                 file_activity_id="patch-2",
                 session_id=session.session_id,
+                source_event_id="event-3",
                 path="README.md",
                 operation="patch",
             ),
@@ -238,6 +250,11 @@ def test_file_edit_features_ignore_repeated_reads_and_count_patches() -> None:
     assert session_features["edited_file_count"].feature_value == "2"
     assert session_features["same_file_edited_repeatedly_count"].feature_value == "1"
     assert session_features["max_edits_to_single_file"].feature_value == "2"
+    assert session_features["same_file_edited_repeatedly_count"].evidence == {
+        "paths": {"README.md": 2},
+        "source_event_ids": ["event-2", "event-3"],
+        "source_event_ids_by_path": {"README.md": ["event-2", "event-3"]},
+    }
 
 
 def test_scope_boundary_phrase_does_not_count_as_correction() -> None:
