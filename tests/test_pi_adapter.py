@@ -362,7 +362,45 @@ def test_pi_parse_source_marks_tool_result_failed_from_structured_status(tmp_pat
                 "role": "toolResult",
                 "toolCallId": "call-1",
                 "toolName": "webfetch",
+                "isError": False,
                 "details": {"metadata": {"status": "failed"}, "output": "request failed"},
+            },
+        },
+    ]
+    write_jsonl(session_path, records)
+
+    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+
+    assert bundle.tool_results[0].is_error is True
+
+
+@pytest.mark.parametrize(
+    ("details", "case_id"),
+    [
+        ({"metadata": {"outcome": "Failure"}}, "outcome"),
+        ({"metadata": {"state": "timed-out"}}, "state"),
+        ({"metadata": {"success": False}}, "success-false"),
+        ({"metadata": {"errorMessage": "request failed"}}, "error-message"),
+        ({"events": [{"status": "cancelled"}]}, "list-status"),
+    ],
+)
+def test_pi_parse_source_marks_tool_result_failed_from_recursive_details(
+    tmp_path,
+    details: dict[str, object],
+    case_id: str,
+) -> None:
+    session_path = tmp_path / f"pi-tool-result-{case_id}.jsonl"
+    records = [
+        session_record(f"pi-session-tool-{case_id}"),
+        {
+            "type": "message",
+            "id": "tool-result-1",
+            "timestamp": "2026-05-07T10:00:01.000Z",
+            "message": {
+                "role": "toolResult",
+                "toolCallId": "call-1",
+                "toolName": "webfetch",
+                "details": {"output": "request failed", **details},
             },
         },
     ]
