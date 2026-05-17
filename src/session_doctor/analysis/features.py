@@ -180,6 +180,7 @@ def repeated_request_features(
                     evidence={
                         "matched_message_id": matched_message.message_id,
                         "matched_source_event_id": matched_message.source_event_id,
+                        "similarity_score": round(score, 3),
                         "threshold": REPEAT_REQUEST_SIMILARITY_THRESHOLD,
                     },
                 )
@@ -243,6 +244,7 @@ def session_count_features(
         if activity.operation in MUTATING_FILE_OPERATIONS
     )
     repeated_file_edits = {path: count for path, count in file_edit_counts.items() if count > 1}
+    repeated_file_edit_events = repeated_file_edit_source_events(bundle)
     unresolved_evidence = unresolved_ending_evidence(bundle, message_features)
 
     return [
@@ -362,7 +364,17 @@ def session_count_features(
             session_id,
             "same_file_edited_repeatedly_count",
             len(repeated_file_edits),
-            evidence={"paths": repeated_file_edits},
+            evidence={
+                "paths": repeated_file_edits,
+                "source_event_ids_by_path": repeated_file_edit_events,
+                "source_event_ids": sorted(
+                    {
+                        source_event_id
+                        for source_event_ids in repeated_file_edit_events.values()
+                        for source_event_id in source_event_ids
+                    }
+                ),
+            },
         ),
         session_feature(
             analysis_run_id,
@@ -434,6 +446,22 @@ def repeated_command_loop_failure_groups(
         if isinstance(group.get("group_type"), str)
         and str(group["group_type"]) in command_loop_group_types
     ]
+
+
+def repeated_file_edit_source_events(bundle: ParsedSessionBundle) -> dict[str, list[str]]:
+    source_events_by_path: defaultdict[str, list[str]] = defaultdict(list)
+    edit_counts_by_path: Counter[str] = Counter()
+    for activity in bundle.file_activities:
+        if activity.operation not in MUTATING_FILE_OPERATIONS:
+            continue
+        edit_counts_by_path[activity.path] += 1
+        if activity.source_event_id:
+            source_events_by_path[activity.path].append(activity.source_event_id)
+    return {
+        path: sorted(source_events_by_path[path])
+        for path, count in edit_counts_by_path.items()
+        if count > 1
+    }
 
 
 def repeated_failure_source_event_ids(groups: list[dict[str, object]]) -> list[str]:
