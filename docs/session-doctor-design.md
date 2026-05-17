@@ -65,12 +65,12 @@ implementation slice.
 
 ## Current Repository State
 
-Phase 1, Phase 2, and Phase 3 have been implemented. The repository now has a
-working Python package, Typer CLI entry point, Pydantic schema foundations,
-DuckDB storage, privacy and stable-ID helpers, adapter discovery for Codex,
-Claude Code, and Pi, Codex parsing, Codex ingestion, session listing,
-deterministic Codex analysis, derived analysis rows, JSON analysis artifacts,
-and quality tooling.
+Phase 1, Phase 2, Phase 3, and Phase 4 have been implemented. The repository
+now has a working Python package, Typer CLI entry point, Pydantic schema
+foundations, DuckDB storage, privacy and stable-ID helpers, adapter discovery
+for Codex, Claude Code, and Pi, Codex and Pi parsing, Codex and Pi ingestion,
+session listing, deterministic analysis over normalized Codex and Pi records,
+derived analysis rows, JSON analysis artifacts, and quality tooling.
 
 Implemented commands:
 
@@ -83,6 +83,7 @@ session-doctor adapters list --scan
 session-doctor db init
 session-doctor db info
 session-doctor ingest --agent codex
+session-doctor ingest --agent pi
 session-doctor sessions list
 session-doctor analyze <session-id>
 ```
@@ -138,12 +139,11 @@ Codex JSONL source -> Codex adapter -> normalized records -> DuckDB -> sessions 
 DuckDB normalized records -> deterministic analysis -> derived rows -> analyze output -> JSON artifact
 ```
 
-Reports, graph projection, Pi parsing, and Claude Code parsing remain
-unimplemented.
+Reports, graph projection, and Claude Code parsing remain unimplemented.
 
-This means the next useful implementation slice is Phase 4: a second native
-adapter. The first report should follow after there is at least one non-Codex
-adapter validating the normalized model.
+This means the next useful implementation slice can be the first report surface
+or graph-oriented projection work, now that a non-Codex adapter validates the
+normalized model.
 
 ## Local Session Inspection Findings
 
@@ -1622,20 +1622,19 @@ Status: complete.
 
 Detailed plan: `docs/phase-3-plan.md`.
 
-### Phase 4: Second Adapter
+### Phase 4: Pi Adapter
 
-Implement the next native adapter after Codex. Recommended order:
+Implemented Pi as the second native adapter after Codex:
 
-1. Pi
-2. Claude Code
-
-Pi is the recommended second adapter because its event IDs, parent IDs, session
-rows, and tool-call/result linkage provide a good validation source for graph
-projection. Claude Code remains first-class, but its discovery and persisted
-tool-output layout are more complex.
-
-Each adapter should have synthetic fixtures, parser tests, ingest tests, and at
-least one manual smoke-test path against a copied local session file.
+- parse Pi JSONL session files
+- normalize Pi session, raw event, message, tool call, tool result, command
+  run, file activity, model usage, and parse warning records
+- support `session-doctor ingest --agent pi`
+- support Pi session listing through `session-doctor sessions list`
+- support deterministic analysis over ingested Pi sessions through the existing
+  `session-doctor analyze <session-id>` command
+- keep Claude Code parsing, graph projection, and report generation out of
+  scope
 
 Detailed plan: `docs/phase-4-plan.md`.
 
