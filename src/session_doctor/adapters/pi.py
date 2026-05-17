@@ -70,6 +70,15 @@ class PiAdapter(BaseAdapter):
             session=session_metadata.session,
             parse_warnings=malformed_warnings,
         )
+        if not has_usable_session_record(valid_records):
+            bundle.parse_warnings.append(
+                warning_for_source(
+                    source,
+                    "missing_session_record",
+                    "Pi source is missing a usable session record",
+                    {"source_path": str(source_path)},
+                )
+            )
         metadata_only_counts: dict[str, int] = {}
         tool_call_arguments_by_id: dict[str, dict[str, Any]] = {}
         tool_call_id_by_tool_result_id: dict[str, str] = {}
@@ -185,43 +194,33 @@ def read_pi_jsonl(
 ) -> tuple[list[tuple[int, dict[str, Any]]], list[ParseWarning]]:
     records: list[tuple[int, dict[str, Any]]] = []
     warnings: list[ParseWarning] = []
-    try:
-        with source_path.open(encoding="utf-8") as file:
-            for record_index, line in enumerate(file):
-                try:
-                    parsed = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    warnings.append(
-                        warning_for_record(
-                            source,
-                            record_index,
-                            "malformed_json",
-                            f"Malformed JSONL record: {exc.msg}",
-                            {"line": exc.lineno, "column": exc.colno},
-                        )
+    with source_path.open(encoding="utf-8") as file:
+        for record_index, line in enumerate(file):
+            try:
+                parsed = json.loads(line)
+            except json.JSONDecodeError as exc:
+                warnings.append(
+                    warning_for_record(
+                        source,
+                        record_index,
+                        "malformed_json",
+                        f"Malformed JSONL record: {exc.msg}",
+                        {"line": exc.lineno, "column": exc.colno},
                     )
-                    continue
-                if not isinstance(parsed, dict):
-                    warnings.append(
-                        warning_for_record(
-                            source,
-                            record_index,
-                            "non_object_record",
-                            "Pi record is not a JSON object",
-                            {"json_type": type(parsed).__name__},
-                        )
+                )
+                continue
+            if not isinstance(parsed, dict):
+                warnings.append(
+                    warning_for_record(
+                        source,
+                        record_index,
+                        "non_object_record",
+                        "Pi record is not a JSON object",
+                        {"json_type": type(parsed).__name__},
                     )
-                    continue
-                records.append((record_index, parsed))
-    except OSError as exc:
-        warnings.append(
-            ParseWarning(
-                warning_id=stable_id("warning", source.source_id, "source_open_error"),
-                source_id=source.source_id,
-                message=f"Unable to read Pi source: {exc}",
-                metadata={"source_path": str(source_path)},
-            )
-        )
+                )
+                continue
+            records.append((record_index, parsed))
     return records, warnings
 
 
@@ -309,8 +308,9 @@ def message_from_record(
     record: dict[str, Any],
 ) -> Message:
     message_payload = dict_value(record.get("message"))
-    text, content_block_types = text_and_block_types(message_payload.get("content"))
+    raw_text, content_block_types = text_and_block_types(message_payload.get("content"))
     role = normalize_pi_role(string_value(message_payload.get("role")))
+    text = raw_text if role in {NormalizedRole.USER, NormalizedRole.ASSISTANT} else None
     timestamp = string_value(message_payload.get("timestamp")) or string_value(
         record.get("timestamp")
     )
@@ -855,6 +855,18 @@ def file_content_payload(tool_name: str | None, arguments: dict[str, Any]) -> st
         return string_value(arguments.get("content"))
     if tool_name != "edit":
         return None
+    top_level_old_text = string_value(arguments.get("oldText"))
+    top_level_new_text = string_value(arguments.get("newText"))
+    if top_level_old_text is not None or top_level_new_text is not None:
+        return json.dumps(
+            [
+                {
+                    "old_length": text_length(top_level_old_text),
+                    "new_length": text_length(top_level_new_text),
+                }
+            ],
+            sort_keys=True,
+        )
     edits = arguments.get("edits")
     if not isinstance(edits, list):
         return None
@@ -900,12 +912,33 @@ def warning_for_record(
     )
 
 
+def warning_for_source(
+    source: SessionSource,
+    code: str,
+    message: str,
+    metadata: dict[str, Any] | None = None,
+) -> ParseWarning:
+    return ParseWarning(
+        warning_id=stable_id("warning", source.source_id, code),
+        source_id=source.source_id,
+        message=message,
+        metadata={"code": code, **(metadata or {})},
+    )
+
+
 def increment_count(counts: dict[str, int], key: str) -> None:
     counts[key] = counts.get(key, 0) + 1
 
 
 def hash_json(value: object) -> str:
     return hash_text(json.dumps(value, sort_keys=True, default=str, separators=(",", ":")))
+
+
+def has_usable_session_record(records: list[tuple[int, dict[str, Any]]]) -> bool:
+    return any(
+        string_value(record.get("type")) == "session" and string_value(record.get("id")) is not None
+        for _, record in records
+    )
 
 
 def session_id_from_filename(path: Path) -> str | None:

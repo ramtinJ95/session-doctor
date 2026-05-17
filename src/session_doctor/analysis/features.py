@@ -22,7 +22,7 @@ ENDING_WINDOW_MAX_EVENTS = 20
 ENDING_WINDOW_FRACTION = 0.20
 ENDING_WINDOW_MINUTES = 10
 MUTATING_FILE_OPERATIONS = frozenset(
-    {"create", "delete", "edit", "move", "rename", "update", "write"}
+    {"create", "delete", "edit", "move", "patch", "rename", "update", "write"}
 )
 
 STOPWORDS = {
