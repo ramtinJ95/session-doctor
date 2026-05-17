@@ -1,5 +1,7 @@
 # Phase 4 Plan: Pi Adapter
 
+Status: implemented.
+
 ## Goal
 
 Phase 4 should add Pi as the second native adapter after Codex.
@@ -639,6 +641,15 @@ Phase 4 is complete when:
 - no Claude parser, graph projection, privacy/redaction system, LLM call, ML
   dependency, or new analysis-label layer is introduced in Phase 4
 - the full quality gate passes
+
+Implementation notes:
+
+- synthetic Pi fixtures live under `tests/fixtures/pi/`
+- parser coverage lives in `tests/test_pi_adapter.py`
+- CLI ingest, repeated ingest replacement, and Pi analysis coverage live in
+  `tests/test_cli.py`
+- manual smoke testing can use either a copied local Pi session file or the
+  checked-in Pi fixtures
 
 ## Open Questions For Implementation Review
 

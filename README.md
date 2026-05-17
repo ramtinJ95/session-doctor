@@ -29,7 +29,7 @@ Phase 3 adds the first deterministic Codex analysis slice:
 - terminal summaries
 - default JSON analysis artifacts
 
-Phase 4 is planned to add Pi as the second native adapter:
+Phase 4 adds Pi as the second native adapter:
 
 - Pi JSONL parsing
 - `session-doctor ingest --agent pi`
@@ -80,6 +80,21 @@ If `--source` is omitted, Codex ingestion scans the default Codex session root:
 
 ```bash
 uv run session-doctor ingest --agent codex --db /tmp/session-doctor-test.duckdb
+```
+
+Ingest a Pi session file or directory:
+
+```bash
+uv run session-doctor ingest --agent pi \
+  --source tests/fixtures/pi/basic-session.jsonl \
+  --db /tmp/session-doctor-test.duckdb
+uv run session-doctor sessions list --db /tmp/session-doctor-test.duckdb
+```
+
+If `--source` is omitted, Pi ingestion scans the default Pi session root:
+
+```bash
+uv run session-doctor ingest --agent pi --db /tmp/session-doctor-test.duckdb
 ```
 
 Analyze an ingested session:
