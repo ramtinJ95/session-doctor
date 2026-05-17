@@ -72,10 +72,10 @@ straightforward, but they are not part of the first implementation slice.
 
 ## Current Repository State
 
-As of the Phase 4 follow-up refactor, the repository has a working local CLI
-for ingesting and analyzing Codex and Pi session logs. It has discovery support
-for Claude Code, but Claude parsing remains intentionally unimplemented. The
-implemented vertical slice is:
+As of the Phase 5 deterministic feature hardening work, the repository has a
+working local CLI for ingesting and analyzing Codex and Pi session logs. It has
+discovery support for Claude Code, but Claude parsing remains intentionally
+unimplemented. The implemented vertical slice is:
 
 ```text
 Codex/Pi JSONL source
@@ -242,10 +242,14 @@ session-scoped delete-and-replace: rerunning `analyze` for a session replaces
 that session's previous derived analysis rows.
 
 Current deterministic message features include repeated-request similarity and
-user text markers for correction, frustration, and scope boundaries. Current
-session features include message counts, command/tool failure counts and
-ratios, repeated failure groups, repeated command failure groups, edited file
-counts, same-file repeated edit counts, maximum edits to one file, and
+user text markers for correction, frustration, and scope boundaries. Marker
+features are deduplicated by marker family per message while preserving matched
+strings in evidence. Repeated-request features include matched prior message
+IDs, source event IDs, similarity score, and threshold evidence. Current session
+features include message counts, command/tool failure counts and ratios,
+repeated failure groups with group types and source event IDs, repeated command
+failure groups, edited file counts, same-file repeated edit counts with
+per-path source event IDs, maximum edits to one file, and conservative
 unresolved-ending evidence. Current classification labels are:
 
 - `user_stuck`
@@ -1801,21 +1805,26 @@ parsing, and patch parsing into focused modules while keeping behavior stable.
 
 Detailed plan: `docs/phase-4-plan.md`.
 
-### Phase 5: Broader Deterministic Features
+### Phase 5: Deterministic Feature Hardening
 
-Broaden deterministic feature extraction after the Phase 3 Codex Analysis MVP
-has proven the core model:
+Hardened the existing deterministic Codex and Pi analysis before adding
+aggregate summaries, project trends, reports, or graph views:
 
-- repeated request detection
-- correction markers
-- frustration markers
-- scope boundary markers
-- failed tool ratio
-- repeated error detection
-- same-file edit repetition
+- preserve raw-event ordering when loading analysis-relevant records from
+  DuckDB
+- normalize offset-aware timestamps before DuckDB writes
+- make unresolved-ending evidence conservative around later final answers and
+  short sessions with no final answer
+- preserve marker match evidence while avoiding duplicate marker-family feature
+  rows
+- add repeated-failure group types and source event IDs
+- let `agent_looping` use repeated failing command text or repeated command
+  stdout/stderr hashes while ignoring repeated non-command tool-output failures
+  by themselves
+- enrich same-file edit-loop and repeated-request evidence
+- keep existing `analyze` output shape while exposing richer JSON evidence
 
-Feature extraction should remain deterministic and explainable. Sentiment
-analysis remains optional future work and should not be the primary classifier.
+Status: complete.
 
 Detailed plan: `docs/phase-5-plan.md`.
 

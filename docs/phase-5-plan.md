@@ -1,6 +1,26 @@
 # Phase 5 Plan: Deterministic Feature Hardening
 
-Status: planned.
+Status: complete.
+
+Implemented scope:
+
+- DuckDB reload now preserves raw event order for analysis-relevant records.
+- Offset-aware timestamps are normalized to UTC-naive values before DuckDB
+  writes through the shared store conversion path.
+- Unresolved-ending evidence is conservative: later final answers clear earlier
+  late signals, and missing final answer alone is not enough evidence.
+- Marker evidence preserves matched strings without duplicate marker-family
+  feature rows.
+- Repeated-failure evidence carries source event IDs and group types that
+  distinguish failed command text, command stdout/stderr hashes, and
+  non-command tool-output hashes.
+- `agent_looping` can use repeated failing command text or repeated command
+  stdout/stderr hashes while ignoring repeated non-command tool-output failures
+  by themselves.
+- Same-file repeated edit evidence includes per-path and flattened source event
+  IDs.
+- Existing `analyze --format json` and artifact output expose the richer
+  evidence without adding new CLI commands.
 
 ## Goal
 
