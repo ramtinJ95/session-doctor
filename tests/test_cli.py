@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from shutil import copyfile
+from typing import Any, cast
 
 from typer.testing import CliRunner
 
@@ -261,11 +262,27 @@ def test_analyze_ingested_codex_session_writes_artifact_and_rows(tmp_path) -> No
     assert "Classifications" in result.stdout
     artifact_path = tmp_path / "artifacts" / f"{session_id}-analysis.json"
     assert artifact_path.exists()
-    payload = json.loads(artifact_path.read_text())
+    payload = cast("dict[str, Any]", json.loads(artifact_path.read_text()))
     assert payload["session"]["session_id"] == session_id
     assert "failed_command_ratio" in payload["summary_metrics"]
+    repeated_failure_evidence = payload_feature_evidence(
+        payload, "session_features", "repeated_failure_count"
+    )
+    repeated_failure_groups = repeated_failure_evidence["groups"]
+    assert isinstance(repeated_failure_groups, list)
+    assert repeated_failure_groups
+    assert all(
+        isinstance(group, dict) and "group_type" in group for group in repeated_failure_groups
+    )
+    assert repeated_failure_evidence["source_event_ids"]
     labels = {classification["label"] for classification in payload["classifications"]}
     assert {"user_stuck", "tooling_blocked", "agent_looping"}.issubset(labels)
+    agent_looping = next(
+        classification
+        for classification in payload["classifications"]
+        if classification["label"] == "agent_looping"
+    )
+    assert agent_looping["evidence_event_ids"]
     assert store.table_count("analysis_runs") == 1
     assert store.table_count("session_features") > 0
     assert store.table_count("session_classifications") > 0
@@ -297,10 +314,20 @@ def test_analyze_ingested_pi_session_writes_artifact_and_rows(tmp_path) -> None:
     assert "Classifications" in result.stdout
     artifact_path = tmp_path / "artifacts" / f"{session_id}-analysis.json"
     assert artifact_path.exists()
-    payload = json.loads(artifact_path.read_text())
+    payload = cast("dict[str, Any]", json.loads(artifact_path.read_text()))
     assert payload["session"]["session_id"] == session_id
     assert payload["session"]["agent_name"] == "pi"
     assert "failed_command_ratio" in payload["summary_metrics"]
+    repeated_failure_evidence = payload_feature_evidence(
+        payload, "session_features", "repeated_failure_count"
+    )
+    repeated_failure_groups = repeated_failure_evidence["groups"]
+    assert isinstance(repeated_failure_groups, list)
+    assert repeated_failure_groups
+    assert all(
+        isinstance(group, dict) and "group_type" in group for group in repeated_failure_groups
+    )
+    assert repeated_failure_evidence["source_event_ids"]
     labels = {classification["label"] for classification in payload["classifications"]}
     assert {"user_stuck", "tooling_blocked", "agent_looping"}.issubset(labels)
     assert store.table_count("analysis_runs") == 1
@@ -332,8 +359,10 @@ def test_analyze_json_format_still_writes_default_artifact(tmp_path) -> None:
     )
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
+    payload = cast("dict[str, Any]", json.loads(result.stdout))
     assert payload["session"]["session_id"] == session_id
+    assert "session_features" in payload
+    assert "classifications" in payload
     assert (tmp_path / "artifacts" / f"{session_id}-analysis.json").exists()
 
 
@@ -362,3 +391,27 @@ def test_analyze_no_artifact_skips_default_artifact(tmp_path) -> None:
 
     assert result.exit_code == 0
     assert not (tmp_path / "artifacts" / f"{session_id}-analysis.json").exists()
+
+
+def payload_feature(
+    payload: dict[str, Any],
+    collection_name: str,
+    feature_name: str,
+) -> dict[str, Any]:
+    collection = payload[collection_name]
+    assert isinstance(collection, list)
+    for raw_item in collection:
+        item = cast("dict[str, Any]", raw_item)
+        if item.get("feature_name") == feature_name:
+            return item
+    raise AssertionError(f"Missing {feature_name} in {collection_name}")
+
+
+def payload_feature_evidence(
+    payload: dict[str, Any],
+    collection_name: str,
+    feature_name: str,
+) -> dict[str, Any]:
+    evidence = payload_feature(payload, collection_name, feature_name)["evidence"]
+    assert isinstance(evidence, dict)
+    return cast("dict[str, Any]", evidence)
