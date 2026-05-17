@@ -9,13 +9,18 @@ from session_doctor.ids import source_id_for_path, stable_id
 from session_doctor.privacy import hash_text, text_length
 from session_doctor.schemas import (
     AgentName,
+    CommandRun,
+    FileActivity,
     Message,
+    ModelUsage,
     NormalizedRole,
     ParseWarning,
     RawEvent,
     Session,
     SessionSource,
     SourceKind,
+    ToolCall,
+    ToolResult,
 )
 
 from .base import BaseAdapter, ParsedSessionBundle
@@ -65,6 +70,7 @@ class PiAdapter(BaseAdapter):
             parse_warnings=malformed_warnings,
         )
         metadata_only_counts: dict[str, int] = {}
+        tool_call_arguments_by_id: dict[str, dict[str, Any]] = {}
 
         for record_index, record in valid_records:
             record_type = string_value(record.get("type"))
@@ -85,6 +91,47 @@ class PiAdapter(BaseAdapter):
                         )
                     )
                     continue
+                if role is NormalizedRole.ASSISTANT:
+                    for block in content_blocks(message_payload.get("content")):
+                        block_type = string_value(block.get("type"))
+                        if block_type != "toolCall":
+                            continue
+                        tool_call = tool_call_from_block(
+                            session_metadata.session_id,
+                            event,
+                            block,
+                        )
+                        bundle.tool_calls.append(tool_call)
+                        if tool_call.native_tool_call_id:
+                            tool_call_arguments_by_id[tool_call.native_tool_call_id] = dict_value(
+                                block.get("arguments")
+                            )
+                        bundle.file_activities.extend(
+                            file_activities_from_tool_call(
+                                session_metadata.session_id,
+                                event,
+                                block,
+                            )
+                        )
+                    usage = model_usage_from_message(session_metadata.session_id, event, record)
+                    if usage:
+                        bundle.model_usage.append(usage)
+                elif string_value(message_payload.get("role")) == "toolResult":
+                    bundle.tool_results.append(
+                        tool_result_from_message(session_metadata.session_id, event, record)
+                    )
+                    command_run = command_run_from_tool_result(
+                        session_metadata.session_id,
+                        event,
+                        record,
+                        tool_call_arguments_by_id,
+                    )
+                    if command_run:
+                        bundle.command_runs.append(command_run)
+                elif string_value(message_payload.get("role")) == "bashExecution":
+                    bundle.command_runs.append(
+                        command_run_from_bash_execution(session_metadata.session_id, event, record)
+                    )
                 bundle.messages.append(
                     message_from_record(session_metadata.session_id, event, record)
                 )
@@ -271,6 +318,181 @@ def message_from_record(
     )
 
 
+def tool_call_from_block(
+    session_id: str,
+    event: RawEvent,
+    block: dict[str, Any],
+) -> ToolCall:
+    call_id = string_value(block.get("id"))
+    arguments = dict_value(block.get("arguments"))
+    arguments_json = json.dumps(arguments, sort_keys=True, default=str) if arguments else None
+    return ToolCall(
+        tool_call_id=stable_id("tool_call", session_id, call_id or event.event_id),
+        session_id=session_id,
+        source_event_id=event.event_id,
+        native_tool_call_id=call_id,
+        name=string_value(block.get("name")) or "unknown",
+        timestamp=event.timestamp,
+        arguments_hash=hash_text(arguments_json) if arguments_json else None,
+        metadata={
+            "partial_json": string_value(block.get("partialJson")) is not None,
+            "argument_keys": sorted(arguments.keys()),
+            "path": string_value(arguments.get("path")),
+            "timeout": arguments.get("timeout"),
+        },
+    )
+
+
+def tool_result_from_message(
+    session_id: str,
+    event: RawEvent,
+    record: dict[str, Any],
+) -> ToolResult:
+    message_payload = dict_value(record.get("message"))
+    call_id = string_value(message_payload.get("toolCallId"))
+    output = text_from_content(message_payload.get("content"))
+    details = dict_value(message_payload.get("details"))
+    return ToolResult(
+        tool_result_id=stable_id("tool_result", session_id, call_id or event.event_id),
+        session_id=session_id,
+        tool_call_id=stable_id("tool_call", session_id, call_id) if call_id else None,
+        source_event_id=event.event_id,
+        native_tool_call_id=call_id,
+        timestamp=event.timestamp,
+        is_error=bool_value(message_payload.get("isError")),
+        output_hash=hash_text(output) if output is not None else None,
+        output_length=text_length(output),
+        metadata={
+            "tool_name": string_value(message_payload.get("toolName")),
+            "details_keys": sorted(details.keys()),
+            "truncation": details.get("truncation"),
+        },
+    )
+
+
+def command_run_from_tool_result(
+    session_id: str,
+    event: RawEvent,
+    record: dict[str, Any],
+    tool_call_arguments_by_id: dict[str, dict[str, Any]],
+) -> CommandRun | None:
+    message_payload = dict_value(record.get("message"))
+    if string_value(message_payload.get("toolName")) != "bash":
+        return None
+    call_id = string_value(message_payload.get("toolCallId"))
+    arguments = tool_call_arguments_by_id.get(call_id or "", {})
+    command = string_value(arguments.get("command"))
+    if command is None:
+        return None
+    output = text_from_content(message_payload.get("content")) or ""
+    return CommandRun(
+        command_run_id=stable_id("command_run", session_id, event.event_id),
+        session_id=session_id,
+        source_event_id=event.event_id,
+        tool_call_id=stable_id("tool_call", session_id, call_id) if call_id else None,
+        command=command,
+        ended_at=event.timestamp,
+        exit_code=1 if bool_value(message_payload.get("isError")) else 0,
+        stdout_hash=hash_text(output) if output else None,
+        output_length=len(output),
+        metadata={
+            "source": "toolResult",
+            "tool_name": "bash",
+            "is_error": bool_value(message_payload.get("isError")),
+        },
+    )
+
+
+def command_run_from_bash_execution(
+    session_id: str,
+    event: RawEvent,
+    record: dict[str, Any],
+) -> CommandRun:
+    message_payload = dict_value(record.get("message"))
+    output = string_value(message_payload.get("output")) or ""
+    return CommandRun(
+        command_run_id=stable_id("command_run", session_id, event.event_id),
+        session_id=session_id,
+        source_event_id=event.event_id,
+        command=string_value(message_payload.get("command")) or "",
+        ended_at=event.timestamp,
+        exit_code=int_value(message_payload.get("exitCode")),
+        stdout_hash=hash_text(output) if output else None,
+        output_length=len(output),
+        metadata={
+            "source": "bashExecution",
+            "cancelled": bool_value(message_payload.get("cancelled")),
+            "truncated": bool_value(message_payload.get("truncated")),
+            "exclude_from_context": bool_value(message_payload.get("excludeFromContext")),
+        },
+    )
+
+
+def file_activities_from_tool_call(
+    session_id: str,
+    event: RawEvent,
+    block: dict[str, Any],
+) -> list[FileActivity]:
+    tool_name = string_value(block.get("name"))
+    if tool_name not in {"edit", "read", "write"}:
+        return []
+    arguments = dict_value(block.get("arguments"))
+    path = string_value(arguments.get("path"))
+    if path is None:
+        return []
+    content_payload = file_content_payload(tool_name, arguments)
+    return [
+        FileActivity(
+            file_activity_id=stable_id(
+                "file_activity",
+                session_id,
+                event.event_id,
+                tool_name,
+                path,
+            ),
+            session_id=session_id,
+            source_event_id=event.event_id,
+            path=path,
+            operation=tool_name,
+            timestamp=event.timestamp,
+            content_hash=hash_text(content_payload) if content_payload else None,
+            metadata={
+                "tool_call_id": string_value(block.get("id")),
+                "argument_keys": sorted(arguments.keys()),
+                "content_length": text_length(content_payload),
+            },
+        )
+    ]
+
+
+def model_usage_from_message(
+    session_id: str,
+    event: RawEvent,
+    record: dict[str, Any],
+) -> ModelUsage | None:
+    message_payload = dict_value(record.get("message"))
+    usage = dict_value(message_payload.get("usage"))
+    if not usage:
+        return None
+    return ModelUsage(
+        model_usage_id=stable_id("model_usage", session_id, event.event_id),
+        session_id=session_id,
+        source_event_id=event.event_id,
+        timestamp=event.timestamp,
+        provider=string_value(message_payload.get("provider")),
+        model=string_value(message_payload.get("model")),
+        input_tokens=int_value(usage.get("input")),
+        output_tokens=int_value(usage.get("output")),
+        cache_read_tokens=int_value(usage.get("cacheRead")),
+        cache_write_tokens=int_value(usage.get("cacheWrite")),
+        total_tokens=int_value(usage.get("totalTokens")),
+        metadata={
+            "cost": usage.get("cost"),
+            "stop_reason": string_value(message_payload.get("stopReason")),
+        },
+    )
+
+
 def text_and_block_types(content: object) -> tuple[str | None, list[str]]:
     if isinstance(content, str):
         return content, ["text"]
@@ -292,6 +514,39 @@ def text_and_block_types(content: object) -> tuple[str | None, list[str]]:
                 texts.append(block_text)
 
     return "\n".join(texts) if texts else None, block_types
+
+
+def text_from_content(content: object) -> str | None:
+    text, _ = text_and_block_types(content)
+    return text
+
+
+def content_blocks(content: object) -> list[dict[str, Any]]:
+    if not isinstance(content, list):
+        return []
+    return [dict_value(block) for block in content if isinstance(block, dict)]
+
+
+def file_content_payload(tool_name: str | None, arguments: dict[str, Any]) -> str | None:
+    if tool_name == "write":
+        return string_value(arguments.get("content"))
+    if tool_name != "edit":
+        return None
+    edits = arguments.get("edits")
+    if not isinstance(edits, list):
+        return None
+    safe_edits = []
+    for edit in edits:
+        if not isinstance(edit, dict):
+            continue
+        edit_payload = dict_value(edit)
+        safe_edits.append(
+            {
+                "old_length": text_length(string_value(edit_payload.get("old_string"))),
+                "new_length": text_length(string_value(edit_payload.get("new_string"))),
+            }
+        )
+    return json.dumps(safe_edits, sort_keys=True) if safe_edits else None
 
 
 def normalize_pi_role(role: str | None) -> NormalizedRole:
@@ -356,6 +611,14 @@ def parse_timestamp(value: str | None) -> datetime | None:
 
 def string_value(value: object) -> str | None:
     return value if isinstance(value, str) else None
+
+
+def int_value(value: object) -> int | None:
+    return value if isinstance(value, int) else None
+
+
+def bool_value(value: object) -> bool | None:
+    return value if isinstance(value, bool) else None
 
 
 def dict_value(value: object) -> dict[str, Any]:
