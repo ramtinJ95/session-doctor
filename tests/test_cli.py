@@ -262,6 +262,43 @@ def test_analyze_ingested_codex_session_writes_artifact_and_rows(tmp_path) -> No
     assert store.table_count("session_classifications") > 0
 
 
+def test_analyze_ingested_pi_session_writes_artifact_and_rows(tmp_path) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    fixture_path = PI_FIXTURE_DIR / "repeated-failure-session.jsonl"
+    ingest_result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "pi",
+            "--source",
+            str(fixture_path),
+            "--db",
+            str(database_path),
+        ],
+    )
+    assert ingest_result.exit_code == 0
+    store = DuckDBStore(database_path)
+    session_id = store.list_session_summaries()[0].session_id
+
+    result = runner.invoke(app, ["analyze", session_id, "--db", str(database_path)])
+
+    assert result.exit_code == 0
+    assert "Session analysis" in result.stdout
+    assert "Classifications" in result.stdout
+    artifact_path = tmp_path / "artifacts" / f"{session_id}-analysis.json"
+    assert artifact_path.exists()
+    payload = json.loads(artifact_path.read_text())
+    assert payload["session"]["session_id"] == session_id
+    assert payload["session"]["agent_name"] == "pi"
+    assert "failed_command_ratio" in payload["summary_metrics"]
+    labels = {classification["label"] for classification in payload["classifications"]}
+    assert {"user_stuck", "tooling_blocked", "agent_looping"}.issubset(labels)
+    assert store.table_count("analysis_runs") == 1
+    assert store.table_count("session_features") > 0
+    assert store.table_count("session_classifications") > 0
+
+
 def test_analyze_json_format_still_writes_default_artifact(tmp_path) -> None:
     database_path = tmp_path / "session-doctor.duckdb"
     fixture_path = CODEX_FIXTURE_DIR / "basic-session.jsonl"
