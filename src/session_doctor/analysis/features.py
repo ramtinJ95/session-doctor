@@ -21,6 +21,9 @@ ENDING_WINDOW_MIN_EVENTS = 5
 ENDING_WINDOW_MAX_EVENTS = 20
 ENDING_WINDOW_FRACTION = 0.20
 ENDING_WINDOW_MINUTES = 10
+MUTATING_FILE_OPERATIONS = frozenset(
+    {"create", "delete", "edit", "move", "rename", "update", "write"}
+)
 
 STOPWORDS = {
     "a",
@@ -237,7 +240,11 @@ def session_count_features(
         repeated_failures,
         "failed_command:",
     )
-    file_edit_counts = Counter(activity.path for activity in bundle.file_activities)
+    file_edit_counts = Counter(
+        activity.path
+        for activity in bundle.file_activities
+        if activity.operation in MUTATING_FILE_OPERATIONS
+    )
     repeated_file_edits = {path: count for path, count in file_edit_counts.items() if count > 1}
     unresolved_evidence = unresolved_ending_evidence(bundle, message_features)
 

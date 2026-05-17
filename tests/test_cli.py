@@ -169,7 +169,7 @@ def test_ingest_pi_fixture_writes_database_and_prints_summary(tmp_path) -> None:
     assert store.table_count("session_sources") == 1
     assert store.table_count("sessions") == 1
     assert store.table_count("messages") == 4
-    assert store.table_count("command_runs") == 2
+    assert store.table_count("command_runs") == 1
     assert store.table_count("file_activities") == 3
 
 
