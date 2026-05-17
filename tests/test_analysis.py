@@ -329,6 +329,51 @@ def test_unresolved_ending_ignores_failed_commands_resolved_by_final_answer() ->
     assert "user_stuck" not in {classification.label for classification in classifications}
 
 
+def test_unresolved_ending_ignores_short_session_missing_final_answer_only() -> None:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    bundle = ParsedSessionBundle(
+        session=session,
+        raw_events=[
+            RawEvent(
+                event_id="event-1",
+                source_id="source-1",
+                agent_name=AgentName.CODEX,
+                record_index=1,
+            ),
+            RawEvent(
+                event_id="event-2",
+                source_id="source-1",
+                agent_name=AgentName.CODEX,
+                record_index=2,
+            ),
+        ],
+        messages=[
+            message(
+                "message-1",
+                NormalizedRole.USER,
+                "Can you inspect the current repository state?",
+                "event-1",
+            ),
+            message(
+                "message-2",
+                NormalizedRole.ASSISTANT,
+                "I will inspect the files.",
+                "event-2",
+            ),
+        ],
+    )
+
+    result = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    session_features = {feature.feature_name: feature for feature in result.session_features}
+    assert session_features["unresolved_ending_signal"].feature_value == "false"
+    assert session_features["unresolved_ending_signal"].evidence == {}
+
+
 def test_ending_signal_unions_timestamp_window_with_event_count_window() -> None:
     bundle = bursty_timestamp_window_bundle()
 

@@ -454,7 +454,6 @@ def unresolved_ending_evidence(
         and message.metadata.get("phase") == "final_answer"
         and message.source_event_id in event_indexes
     ]
-    final_answer_index = max(final_answer_indexes, default=None)
     late_message_event_indexes = {
         message.message_id: event_indexes.get(message.source_event_id)
         for message in bundle.messages
@@ -470,9 +469,9 @@ def unresolved_ending_evidence(
             "frustration_marker",
             "repeat_request_similarity",
         }
-        and unresolved_after_final_answer(
+        and not has_later_final_answer(
             late_message_event_indexes[feature.message_id],
-            final_answer_index,
+            final_answer_indexes,
         )
     }
     late_failed_command_ids = [
@@ -481,9 +480,9 @@ def unresolved_ending_evidence(
         if command.source_event_id in late_event_ids
         and command.exit_code is not None
         and command.exit_code != 0
-        and unresolved_after_final_answer(
+        and not has_later_final_answer(
             event_indexes.get(command.source_event_id),
-            final_answer_index,
+            final_answer_indexes,
         )
     ]
     late_warning_ids = [
@@ -491,6 +490,7 @@ def unresolved_ending_evidence(
         for warning in bundle.parse_warnings
         if warning.record_index is not None
         and warning.record_index >= ending_record_index_start(bundle)
+        and not has_later_final_answer(warning.record_index, final_answer_indexes)
     ]
     evidence: dict[str, object] = {}
     if late_feature_names:
@@ -499,16 +499,19 @@ def unresolved_ending_evidence(
         evidence["late_failed_command_ids"] = late_failed_command_ids
     if late_warning_ids:
         evidence["late_parse_warning_ids"] = late_warning_ids
-    if final_answer_index is None:
+    has_late_unresolved_signal = bool(evidence)
+    if not final_answer_indexes and has_late_unresolved_signal:
         evidence["missing_final_answer"] = True
     return evidence
 
 
-def unresolved_after_final_answer(
+def has_later_final_answer(
     record_index: int | None,
-    final_answer_index: int | None,
+    final_answer_indexes: list[int],
 ) -> bool:
-    return final_answer_index is None or record_index is None or record_index > final_answer_index
+    if record_index is None:
+        return False
+    return any(final_answer_index > record_index for final_answer_index in final_answer_indexes)
 
 
 def ending_source_event_ids(bundle: ParsedSessionBundle) -> set[str]:

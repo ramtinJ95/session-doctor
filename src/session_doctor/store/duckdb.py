@@ -506,17 +506,18 @@ class DuckDBStore:
         rows = connection.execute(
             """
             SELECT
-                tool_call_id,
-                session_id,
-                source_event_id,
-                native_tool_call_id,
-                name,
-                timestamp,
-                arguments_hash,
-                metadata_json
-            FROM tool_calls
-            WHERE session_id = ?
-            ORDER BY timestamp NULLS LAST, tool_call_id
+                t.tool_call_id,
+                t.session_id,
+                t.source_event_id,
+                t.native_tool_call_id,
+                t.name,
+                t.timestamp,
+                t.arguments_hash,
+                t.metadata_json
+            FROM tool_calls AS t
+            LEFT JOIN raw_events AS e ON e.event_id = t.source_event_id
+            WHERE t.session_id = ?
+            ORDER BY e.record_index NULLS LAST, t.timestamp NULLS LAST, t.tool_call_id
             """,
             [session_id],
         ).fetchall()
@@ -542,19 +543,20 @@ class DuckDBStore:
         rows = connection.execute(
             """
             SELECT
-                tool_result_id,
-                session_id,
-                tool_call_id,
-                source_event_id,
-                native_tool_call_id,
-                timestamp,
-                is_error,
-                output_hash,
-                output_length,
-                metadata_json
-            FROM tool_results
-            WHERE session_id = ?
-            ORDER BY timestamp NULLS LAST, tool_result_id
+                t.tool_result_id,
+                t.session_id,
+                t.tool_call_id,
+                t.source_event_id,
+                t.native_tool_call_id,
+                t.timestamp,
+                t.is_error,
+                t.output_hash,
+                t.output_length,
+                t.metadata_json
+            FROM tool_results AS t
+            LEFT JOIN raw_events AS e ON e.event_id = t.source_event_id
+            WHERE t.session_id = ?
+            ORDER BY e.record_index NULLS LAST, t.timestamp NULLS LAST, t.tool_result_id
             """,
             [session_id],
         ).fetchall()
@@ -582,22 +584,26 @@ class DuckDBStore:
         rows = connection.execute(
             """
             SELECT
-                command_run_id,
-                session_id,
-                source_event_id,
-                tool_call_id,
-                command,
-                cwd,
-                started_at,
-                ended_at,
-                exit_code,
-                stdout_hash,
-                stderr_hash,
-                output_length,
-                metadata_json
-            FROM command_runs
-            WHERE session_id = ?
-            ORDER BY ended_at NULLS LAST, started_at NULLS LAST, command_run_id
+                c.command_run_id,
+                c.session_id,
+                c.source_event_id,
+                c.tool_call_id,
+                c.command,
+                c.cwd,
+                c.started_at,
+                c.ended_at,
+                c.exit_code,
+                c.stdout_hash,
+                c.stderr_hash,
+                c.output_length,
+                c.metadata_json
+            FROM command_runs AS c
+            LEFT JOIN raw_events AS e ON e.event_id = c.source_event_id
+            WHERE c.session_id = ?
+            ORDER BY e.record_index NULLS LAST,
+                c.ended_at NULLS LAST,
+                c.started_at NULLS LAST,
+                c.command_run_id
             """,
             [session_id],
         ).fetchall()
@@ -628,17 +634,18 @@ class DuckDBStore:
         rows = connection.execute(
             """
             SELECT
-                file_activity_id,
-                session_id,
-                source_event_id,
-                path,
-                operation,
-                timestamp,
-                content_hash,
-                metadata_json
-            FROM file_activities
-            WHERE session_id = ?
-            ORDER BY timestamp NULLS LAST, file_activity_id
+                f.file_activity_id,
+                f.session_id,
+                f.source_event_id,
+                f.path,
+                f.operation,
+                f.timestamp,
+                f.content_hash,
+                f.metadata_json
+            FROM file_activities AS f
+            LEFT JOIN raw_events AS e ON e.event_id = f.source_event_id
+            WHERE f.session_id = ?
+            ORDER BY e.record_index NULLS LAST, f.timestamp NULLS LAST, f.file_activity_id
             """,
             [session_id],
         ).fetchall()
@@ -664,22 +671,23 @@ class DuckDBStore:
         rows = connection.execute(
             """
             SELECT
-                model_usage_id,
-                session_id,
-                source_event_id,
-                timestamp,
-                provider,
-                model,
-                input_tokens,
-                output_tokens,
-                cache_read_tokens,
-                cache_write_tokens,
-                total_tokens,
-                cost,
-                metadata_json
-            FROM model_usage
-            WHERE session_id = ?
-            ORDER BY timestamp NULLS LAST, model_usage_id
+                u.model_usage_id,
+                u.session_id,
+                u.source_event_id,
+                u.timestamp,
+                u.provider,
+                u.model,
+                u.input_tokens,
+                u.output_tokens,
+                u.cache_read_tokens,
+                u.cache_write_tokens,
+                u.total_tokens,
+                u.cost,
+                u.metadata_json
+            FROM model_usage AS u
+            LEFT JOIN raw_events AS e ON e.event_id = u.source_event_id
+            WHERE u.session_id = ?
+            ORDER BY e.record_index NULLS LAST, u.timestamp NULLS LAST, u.model_usage_id
             """,
             [session_id],
         ).fetchall()
