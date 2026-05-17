@@ -14,7 +14,7 @@ from rich.console import Console
 from rich.table import Table
 
 from . import __version__
-from .adapters import BaseAdapter, CodexAdapter, built_in_adapters
+from .adapters import BaseAdapter, built_in_adapters
 from .adapters.codex import (
     CODEX_MESSAGE_SOURCE_EVENT_MSG_FALLBACK,
     CODEX_MESSAGE_SOURCE_RESPONSE_ITEM,
@@ -44,6 +44,7 @@ sessions_app = typer.Typer(help="Inspect ingested sessions.")
 
 @dataclass
 class IngestSummary:
+    agent_display_name: str = ""
     source_count: int = 0
     skipped_source_count: int = 0
     session_count: int = 0
@@ -305,14 +306,14 @@ def ingest(
         str,
         typer.Option(
             "--agent",
-            help="Agent adapter to ingest. Phase 2 supports codex.",
+            help="Agent adapter to ingest. Supported values: codex, pi.",
         ),
     ],
     source: Annotated[
         Path | None,
         typer.Option(
             "--source",
-            help="Codex JSONL file or directory. Defaults to the Codex session root.",
+            help="Session JSONL file or directory. Defaults to the adapter session root.",
         ),
     ] = None,
     db: Annotated[
@@ -324,16 +325,13 @@ def ingest(
     ] = None,
 ) -> None:
     """Parse and store local session records."""
-    if agent != AgentName.CODEX.value:
-        console.print("[red]Only --agent codex is implemented in Phase 2.[/red]")
-        raise typer.Exit(2)
+    adapter = adapter_for_ingest(agent)
 
     database_path = database_path_from_option(db)
     require_valid_database_path(database_path)
-    adapter = CodexAdapter()
-    sources = codex_sources_for_ingest(adapter, source)
+    sources = sources_for_ingest(adapter, source)
     store = DuckDBStore(database_path)
-    summary = IngestSummary(source_count=len(sources))
+    summary = IngestSummary(agent_display_name=adapter.display_name, source_count=len(sources))
 
     for session_source in sources:
         try:
@@ -484,7 +482,19 @@ def not_implemented(command_name: str) -> None:
     raise typer.Exit(2)
 
 
-def codex_sources_for_ingest(adapter: CodexAdapter, source: Path | None) -> list[SessionSource]:
+def adapter_for_ingest(agent: str) -> BaseAdapter:
+    adapters_by_name = {adapter.name.value: adapter for adapter in built_in_adapters()}
+    adapter = adapters_by_name.get(agent)
+    if adapter is None:
+        console.print(f"[red]Unsupported --agent:[/red] {agent}")
+        raise typer.Exit(2)
+    if adapter.name not in {AgentName.CODEX, AgentName.PI}:
+        console.print(f"[red]--agent {agent} is discovered but parsing is not implemented.[/red]")
+        raise typer.Exit(2)
+    return adapter
+
+
+def sources_for_ingest(adapter: BaseAdapter, source: Path | None) -> list[SessionSource]:
     if source is None:
         return adapter.discover()
 
@@ -499,8 +509,8 @@ def codex_sources_for_ingest(adapter: CodexAdapter, source: Path | None) -> list
     if resolved_source.is_file():
         return [
             SessionSource(
-                source_id=source_id_for_path(AgentName.CODEX, resolved_source),
-                agent_name=AgentName.CODEX,
+                source_id=source_id_for_path(adapter.name, resolved_source),
+                agent_name=adapter.name,
                 source_path=str(resolved_source),
                 source_kind=SourceKind.ROOT_SESSION,
             )
@@ -511,7 +521,7 @@ def codex_sources_for_ingest(adapter: CodexAdapter, source: Path | None) -> list
 
 
 def render_ingest_summary(summary: IngestSummary, database_path: Path) -> None:
-    table = Table(title="Codex ingest")
+    table = Table(title=f"{summary.agent_display_name} ingest")
     table.add_column("Metric")
     table.add_column("Value")
     table.add_row("Database", str(database_path))
