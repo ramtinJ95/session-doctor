@@ -1,0 +1,16 @@
+{"type":"session","id":"pi-session-1","timestamp":"2026-05-07T10:00:00.000Z","cwd":"/tmp/session-doctor","version":"0.2.0"}
+{"type":"thinking_level_change","id":"thinking-level-1","parentId":"pi-session-1","timestamp":"2026-05-07T10:00:01.000Z","thinkingLevel":"high"}
+{"type":"model_change","id":"model-change-1","parentId":"pi-session-1","timestamp":"2026-05-07T10:00:02.000Z","provider":"openai-codex","modelId":"gpt-5.4"}
+{"type":"message","id":"user-message-1","parentId":"pi-session-1","timestamp":"2026-05-07T10:00:03.000Z","message":{"role":"user","timestamp":"2026-05-07T10:00:03.000Z","content":[{"type":"text","text":"Please fix the failing pytest in tests/test_cli.py"}]}}
+{"type":"message","id":"assistant-message-1","parentId":"user-message-1","timestamp":"2026-05-07T10:00:04.000Z","message":{"role":"assistant","timestamp":"2026-05-07T10:00:04.000Z","provider":"openai-codex","model":"gpt-5.4","stopReason":"tool_use","usage":{"input":100,"output":20,"cacheRead":5,"cacheWrite":0,"totalTokens":125,"cost":0.01},"content":[{"type":"thinking","thinking":"I need to inspect the test failure."},{"type":"text","text":"I will inspect the failing test."},{"type":"toolCall","id":"call-bash-1","name":"bash","arguments":{"command":"pytest tests/test_cli.py -q","timeout":120000}}]}}
+{"type":"message","id":"tool-result-1","parentId":"assistant-message-1","timestamp":"2026-05-07T10:00:05.000Z","message":{"role":"toolResult","timestamp":"2026-05-07T10:00:05.000Z","toolCallId":"call-bash-1","toolName":"bash","isError":true,"content":[{"type":"text","text":"failed"}]}}
+{"type":"message","id":"bash-execution-1","parentId":"tool-result-1","timestamp":"2026-05-07T10:00:06.000Z","message":{"role":"bashExecution","timestamp":"2026-05-07T10:00:06.000Z","command":"pytest tests/test_cli.py -q","exitCode":1,"cancelled":false,"truncated":false,"excludeFromContext":false,"output":"failed"}}
+{"type":"compaction","id":"compaction-1","parentId":"bash-execution-1","timestamp":"2026-05-07T10:00:07.000Z","summary":"Compacted context.","tokensBefore":12000,"firstKeptEntryId":"assistant-message-1"}
+{"type":"custom","id":"custom-1","parentId":"compaction-1","timestamp":"2026-05-07T10:00:08.000Z","customType":"note","data":{"kind":"fixture"}}
+{"type":"branch_summary","id":"branch-summary-1","parentId":"custom-1","timestamp":"2026-05-07T10:00:09.000Z","summary":"Branch summary.","details":{"branch":"main"}}
+{"type":"session_info","id":"session-info-1","parentId":"branch-summary-1","timestamp":"2026-05-07T10:00:10.000Z","data":{"source":"fixture"}}
+{"type":"custom_message","id":"custom-message-1","parentId":"session-info-1","timestamp":"2026-05-07T10:00:11.000Z","data":{"message":"metadata only"}}
+{"type":"label","id":"label-1","parentId":"custom-message-1","timestamp":"2026-05-07T10:00:12.000Z","name":"fixture"}
+{"type":"future_record","id":"future-1","timestamp":"2026-05-07T10:00:13.000Z"}
+{"type":"message","id":"future-role-1","parentId":"future-1","timestamp":"2026-05-07T10:00:14.000Z","message":{"role":"futureRole","timestamp":"2026-05-07T10:00:14.000Z","content":[{"type":"text","text":"future role text"}]}}
+not-json
