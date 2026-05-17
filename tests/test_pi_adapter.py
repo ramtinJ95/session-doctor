@@ -4,6 +4,8 @@ import json
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from session_doctor.adapters.pi import PiAdapter
 from session_doctor.ids import source_id_for_path
 from session_doctor.schemas import AgentName, NormalizedRole, SessionSource
@@ -32,7 +34,7 @@ def test_pi_parse_source_normalizes_session_raw_events_and_messages() -> None:
     assert [(message.role, message.text) for message in bundle.messages] == [
         (NormalizedRole.USER, "Please fix the failing pytest in tests/test_cli.py"),
         (NormalizedRole.ASSISTANT, "I will inspect the failing test."),
-        (NormalizedRole.TOOL, "failed"),
+        (NormalizedRole.TOOL, None),
         (NormalizedRole.TOOL, None),
     ]
 
@@ -59,6 +61,36 @@ def test_pi_parse_source_preserves_message_metadata_and_block_types() -> None:
     ]
     assert assistant_message.metadata["pi_message_role"] == "assistant"
     assert assistant_message.metadata["stop_reason"] == "tool_use"
+
+
+def test_pi_parse_source_raises_for_unreadable_source(tmp_path) -> None:
+    missing_path = tmp_path / "missing.jsonl"
+
+    with pytest.raises(OSError):
+        PiAdapter().parse_source(source_for_fixture(missing_path))
+
+
+def test_pi_parse_source_warns_when_session_record_is_missing(tmp_path) -> None:
+    session_path = tmp_path / "2026-05-07T10-00-00-000Z_filename-session.jsonl"
+    records = [
+        {
+            "type": "message",
+            "id": "user-message-1",
+            "timestamp": "2026-05-07T10:00:00.000Z",
+            "message": {
+                "role": "user",
+                "content": [{"type": "text", "text": "Hello"}],
+            },
+        }
+    ]
+    session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+
+    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+
+    assert bundle.session is not None
+    assert bundle.session.native_session_id == "filename-session"
+    warning_codes = {warning.metadata["code"] for warning in bundle.parse_warnings}
+    assert "missing_session_record" in warning_codes
 
 
 def test_pi_parse_source_normalizes_tools_commands_files_and_usage() -> None:
@@ -452,6 +484,46 @@ def test_pi_parse_source_normalizes_apply_patch_file_activity_and_result_hash(
     assert bundle.tool_results[0].output_hash is not None
     assert bundle.tool_results[0].output_length is not None
     assert bundle.tool_results[0].output_length > len("Success.")
+
+
+def test_pi_parse_source_hashes_top_level_edit_text_lengths(tmp_path) -> None:
+    session_path = tmp_path / "pi-edit-old-new-text.jsonl"
+    records = [
+        {
+            "type": "session",
+            "id": "pi-session-edit-old-new-text",
+            "timestamp": "2026-05-07T10:00:00.000Z",
+        },
+        {
+            "type": "message",
+            "id": "assistant-message-1",
+            "timestamp": "2026-05-07T10:00:01.000Z",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "toolCall",
+                        "id": "call-edit-1",
+                        "name": "edit",
+                        "arguments": {
+                            "path": "src/example.py",
+                            "oldText": "old text",
+                            "newText": "new text with more content",
+                        },
+                    }
+                ],
+            },
+        },
+    ]
+    session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+
+    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+
+    assert [(activity.path, activity.operation) for activity in bundle.file_activities] == [
+        ("src/example.py", "update")
+    ]
+    assert bundle.file_activities[0].content_hash is not None
+    assert bundle.file_activities[0].metadata["content_length"] > 0
 
 
 def test_pi_parse_source_allows_repeated_file_activity_in_one_message(tmp_path) -> None:
