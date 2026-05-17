@@ -87,7 +87,7 @@ def test_pi_parse_source_normalizes_tools_commands_files_and_usage() -> None:
 
     assert [(activity.path, activity.operation) for activity in bundle.file_activities] == [
         ("tests/test_cli.py", "read"),
-        ("tests/test_cli.py", "edit"),
+        ("tests/test_cli.py", "update"),
         ("scratch/output.txt", "write"),
     ]
     assert bundle.file_activities[1].content_hash is not None
@@ -181,6 +181,70 @@ def test_pi_parse_source_preserves_phase_partial_json_details_and_event_result_i
     assert all(result.output_hash is not None for result in bundle.tool_results)
     assert [result.output_length for result in bundle.tool_results] == [12, 13]
     assert bundle.model_usage[0].cost == Decimal("0.02")
+
+
+def test_pi_parse_source_preserves_observed_non_file_tool_calls(tmp_path) -> None:
+    tool_names = [
+        "webfetch",
+        "websearch",
+        "todo",
+        "subagent",
+        "deep_research",
+        "deep_research_lite",
+    ]
+    session_path = tmp_path / "pi-observed-tools.jsonl"
+    records = [
+        {
+            "type": "session",
+            "id": "pi-session-observed-tools",
+            "timestamp": "2026-05-07T10:00:00.000Z",
+        },
+        {
+            "type": "message",
+            "id": "assistant-message-1",
+            "timestamp": "2026-05-07T10:00:01.000Z",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "toolCall",
+                        "id": f"call-{tool_name}",
+                        "name": tool_name,
+                        "arguments": {"query": f"{tool_name} evidence"},
+                    }
+                    for tool_name in tool_names
+                ],
+            },
+        },
+        *[
+            {
+                "type": "message",
+                "id": f"tool-result-{tool_name}",
+                "parentId": "assistant-message-1",
+                "timestamp": "2026-05-07T10:00:02.000Z",
+                "message": {
+                    "role": "toolResult",
+                    "toolCallId": f"call-{tool_name}",
+                    "toolName": tool_name,
+                    "content": [{"type": "text", "text": f"{tool_name} result"}],
+                },
+            }
+            for tool_name in tool_names
+        ],
+    ]
+    session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+
+    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+
+    assert [tool_call.name for tool_call in bundle.tool_calls] == tool_names
+    assert all(tool_call.arguments_hash is not None for tool_call in bundle.tool_calls)
+    assert len(bundle.tool_results) == len(tool_names)
+    assert [result.tool_call_id for result in bundle.tool_results] == [
+        tool_call.tool_call_id for tool_call in bundle.tool_calls
+    ]
+    assert all(result.output_hash is not None for result in bundle.tool_results)
+    assert bundle.command_runs == []
+    assert bundle.file_activities == []
 
 
 def test_pi_parse_source_allows_repeated_file_activity_in_one_message(tmp_path) -> None:

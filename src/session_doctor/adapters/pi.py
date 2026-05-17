@@ -475,6 +475,7 @@ def file_activities_from_tool_call(
     path = string_value(arguments.get("path"))
     if path is None:
         return []
+    operation = file_activity_operation(tool_name)
     content_payload = file_content_payload(tool_name, arguments)
     return [
         FileActivity(
@@ -489,7 +490,7 @@ def file_activities_from_tool_call(
             session_id=session_id,
             source_event_id=event.event_id,
             path=path,
-            operation=tool_name,
+            operation=operation,
             timestamp=event.timestamp,
             content_hash=hash_text(content_payload) if content_payload else None,
             metadata={
@@ -499,6 +500,12 @@ def file_activities_from_tool_call(
             },
         )
     ]
+
+
+def file_activity_operation(tool_name: str) -> str:
+    if tool_name == "edit":
+        return "update"
+    return tool_name
 
 
 def model_usage_from_message(
