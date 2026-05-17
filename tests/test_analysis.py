@@ -142,10 +142,14 @@ def test_analyze_features_detects_message_and_session_signals() -> None:
     assert session_features["failed_command_ratio"].feature_value == "1.0"
     assert session_features["failed_tool_result_count"].feature_value == "1"
     assert session_features["repeated_failure_count"].feature_value == "2"
-    assert session_features["repeated_command_failure_count"].feature_value == "1"
+    assert session_features["repeated_command_failure_count"].feature_value == "2"
     assert session_features["same_file_edited_repeatedly_count"].feature_value == "1"
     assert session_features["max_edits_to_single_file"].feature_value == "2"
     assert session_features["unresolved_ending_signal"].feature_value == "true"
+    repeated_failure_groups = session_features["repeated_failure_count"].evidence["groups"]
+    assert {
+        group["group_type"] for group in repeated_failure_groups if isinstance(group, dict)
+    } == {"command_stdout_hash", "failed_command_text"}
 
 
 def test_marker_features_deduplicate_same_family_per_message() -> None:
@@ -411,22 +415,46 @@ def test_agent_looping_repeated_failure_evidence_includes_event_ids() -> None:
 
 
 def test_agent_looping_ignores_non_command_repeated_failures() -> None:
-    for bundle in (
-        repeated_tool_result_failure_bundle(),
-        shared_stderr_distinct_command_failure_bundle(),
-    ):
-        features = analyze_features(bundle, analysis_run_id="analysis-1")
+    bundle = repeated_tool_result_failure_bundle()
+    features = analyze_features(bundle, analysis_run_id="analysis-1")
 
-        classifications = classify_session(
-            bundle,
-            analysis_run_id="analysis-1",
-            message_features=features.message_features,
-            session_features=features.session_features,
-        )
+    classifications = classify_session(
+        bundle,
+        analysis_run_id="analysis-1",
+        message_features=features.message_features,
+        session_features=features.session_features,
+    )
 
-        labels = {classification.label for classification in classifications}
-        assert "tooling_blocked" in labels
-        assert "agent_looping" not in labels
+    labels = {classification.label for classification in classifications}
+    assert "tooling_blocked" in labels
+    assert "agent_looping" not in labels
+
+
+def test_agent_looping_detects_repeated_command_stderr_hashes() -> None:
+    bundle = shared_stderr_distinct_command_failure_bundle()
+    features = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    classifications = classify_session(
+        bundle,
+        analysis_run_id="analysis-1",
+        message_features=features.message_features,
+        session_features=features.session_features,
+    )
+
+    labels = {classification.label for classification in classifications}
+    assert "tooling_blocked" in labels
+    assert "agent_looping" in labels
+    session_features = {feature.feature_name: feature for feature in features.session_features}
+    repeated_command_failure = session_features["repeated_command_failure_count"]
+    assert repeated_command_failure.feature_value == "2"
+    assert repeated_command_failure.evidence["source_event_ids"] == [
+        "event-1",
+        "event-2",
+        "event-3",
+    ]
+    groups = repeated_command_failure.evidence["groups"]
+    assert len(groups) == 1
+    assert groups[0]["group_type"] == "command_stderr_hash"
 
 
 def analysis_fixture_bundle() -> ParsedSessionBundle:

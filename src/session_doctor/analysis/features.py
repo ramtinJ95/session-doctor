@@ -236,10 +236,7 @@ def session_count_features(
     ]
     failed_tool_results = [result for result in bundle.tool_results if result.is_error is True]
     repeated_failures = repeated_failure_groups(bundle)
-    repeated_command_failures = repeated_failure_groups_with_prefix(
-        repeated_failures,
-        "failed_command:",
-    )
+    repeated_command_failures = repeated_command_loop_failure_groups(repeated_failures)
     file_edit_counts = Counter(
         activity.path
         for activity in bundle.file_activities
@@ -317,7 +314,14 @@ def session_count_features(
             session_id,
             "failed_tool_result_count",
             len(failed_tool_results),
-            evidence={"tool_result_ids": [result.tool_result_id for result in failed_tool_results]},
+            evidence={
+                "tool_result_ids": [result.tool_result_id for result in failed_tool_results],
+                "source_event_ids": [
+                    result.source_event_id
+                    for result in failed_tool_results
+                    if result.source_event_id
+                ],
+            },
         ),
         session_feature(
             analysis_run_id,
@@ -378,51 +382,57 @@ def session_count_features(
 
 
 def repeated_failure_groups(bundle: ParsedSessionBundle) -> list[dict[str, object]]:
-    group_values: defaultdict[str, list[tuple[str, str | None]]] = defaultdict(list)
+    group_values: defaultdict[tuple[str, str], list[tuple[str, str | None]]] = defaultdict(list)
     for command in bundle.command_runs:
         if command.exit_code is None or command.exit_code == 0:
             continue
         if command.stderr_hash:
-            group_values[f"stderr_hash:{command.stderr_hash}"].append(
-                (command.command_run_id, command.source_event_id)
+            group_values[("command_stderr_hash", f"stderr_hash:{command.stderr_hash}")].append(
+                (command.command_run_id, command.source_event_id),
             )
         if command.stdout_hash:
-            group_values[f"stdout_hash:{command.stdout_hash}"].append(
-                (command.command_run_id, command.source_event_id)
+            group_values[("command_stdout_hash", f"stdout_hash:{command.stdout_hash}")].append(
+                (command.command_run_id, command.source_event_id),
             )
-        group_values[f"failed_command:{command.command}"].append(
+        group_values[("failed_command_text", f"failed_command:{command.command}")].append(
             (command.command_run_id, command.source_event_id),
         )
 
     for result in bundle.tool_results:
         if result.is_error is not True or not result.output_hash:
             continue
-        group_values[f"tool_output_hash:{result.output_hash}"].append(
-            (result.tool_result_id, result.source_event_id),
+        group_values[("tool_output_hash", f"tool_output_hash:{result.output_hash}")].append(
+            (result.tool_result_id, result.source_event_id)
         )
 
     return [
         {
             "key": key,
+            "group_type": group_type,
             "record_ids": sorted(record_id for record_id, _ in records),
             "source_event_ids": sorted(
                 {source_event_id for _, source_event_id in records if source_event_id}
             ),
             "repeat_count": len(records) - 1,
         }
-        for key, records in sorted(group_values.items())
+        for (group_type, key), records in sorted(group_values.items())
         if len(records) > 1
     ]
 
 
-def repeated_failure_groups_with_prefix(
+def repeated_command_loop_failure_groups(
     groups: list[dict[str, object]],
-    key_prefix: str,
 ) -> list[dict[str, object]]:
+    command_loop_group_types = {
+        "failed_command_text",
+        "command_stdout_hash",
+        "command_stderr_hash",
+    }
     return [
         group
         for group in groups
-        if isinstance(group.get("key"), str) and str(group["key"]).startswith(key_prefix)
+        if isinstance(group.get("group_type"), str)
+        and str(group["group_type"]) in command_loop_group_types
     ]
 
 
