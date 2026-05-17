@@ -175,6 +175,12 @@ def test_marker_features_deduplicate_same_family_per_message() -> None:
     ]
     assert marker_pairs.count(("frustration_marker", "high_stakes")) == 1
     assert marker_pairs.count(("scope_boundary_marker", "do_not")) == 1
+    high_stakes_feature = next(
+        feature
+        for feature in result.message_features
+        if feature.feature_name == "frustration_marker" and feature.feature_value == "high_stakes"
+    )
+    assert high_stakes_feature.evidence == {"matched_markers": ["be thorough", "very important"]}
     assert len({feature.message_feature_id for feature in result.message_features}) == len(
         result.message_features
     )
