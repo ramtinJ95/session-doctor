@@ -92,7 +92,9 @@ class PiAdapter(BaseAdapter):
                     )
                     continue
                 if role is NormalizedRole.ASSISTANT:
-                    for block in content_blocks(message_payload.get("content")):
+                    for block_index, block in enumerate(
+                        content_blocks(message_payload.get("content"))
+                    ):
                         block_type = string_value(block.get("type"))
                         if block_type != "toolCall":
                             continue
@@ -111,6 +113,7 @@ class PiAdapter(BaseAdapter):
                                 session_metadata.session_id,
                                 event,
                                 block,
+                                block_index,
                             )
                         )
                     usage = model_usage_from_message(session_metadata.session_id, event, record)
@@ -432,6 +435,7 @@ def file_activities_from_tool_call(
     session_id: str,
     event: RawEvent,
     block: dict[str, Any],
+    block_index: int,
 ) -> list[FileActivity]:
     tool_name = string_value(block.get("name"))
     if tool_name not in {"edit", "read", "write"}:
@@ -447,6 +451,7 @@ def file_activities_from_tool_call(
                 "file_activity",
                 session_id,
                 event.event_id,
+                string_value(block.get("id")) or block_index,
                 tool_name,
                 path,
             ),

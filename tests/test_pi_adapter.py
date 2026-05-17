@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from session_doctor.adapters.pi import PiAdapter
@@ -104,6 +105,48 @@ def test_pi_parse_source_normalizes_tools_commands_files_and_usage() -> None:
     assert usage.cache_read_tokens == 5
     assert usage.cache_write_tokens == 0
     assert usage.total_tokens == 125
+
+
+def test_pi_parse_source_allows_repeated_file_activity_in_one_message(tmp_path) -> None:
+    session_path = tmp_path / "repeated-file-activity.jsonl"
+    records = [
+        {
+            "type": "session",
+            "id": "pi-session-repeated-file",
+            "timestamp": "2026-05-07T10:00:00.000Z",
+            "cwd": "/tmp/session-doctor",
+        },
+        {
+            "type": "message",
+            "id": "assistant-message-1",
+            "parentId": "pi-session-repeated-file",
+            "timestamp": "2026-05-07T10:00:01.000Z",
+            "message": {
+                "role": "assistant",
+                "timestamp": "2026-05-07T10:00:01.000Z",
+                "content": [
+                    {
+                        "type": "toolCall",
+                        "id": "call-read-1",
+                        "name": "read",
+                        "arguments": {"path": "README.md"},
+                    },
+                    {
+                        "type": "toolCall",
+                        "id": "call-read-2",
+                        "name": "read",
+                        "arguments": {"path": "README.md"},
+                    },
+                ],
+            },
+        },
+    ]
+    session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+
+    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+
+    assert len(bundle.file_activities) == 2
+    assert len({activity.file_activity_id for activity in bundle.file_activities}) == 2
 
 
 def test_pi_parse_source_counts_metadata_only_rows_without_warnings() -> None:
