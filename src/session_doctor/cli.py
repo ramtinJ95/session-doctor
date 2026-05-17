@@ -51,8 +51,11 @@ class IngestSummary:
     message_count: int = 0
     response_item_message_count: int = 0
     event_msg_fallback_count: int = 0
+    tool_call_count: int = 0
+    tool_result_count: int = 0
     command_count: int = 0
     file_activity_count: int = 0
+    model_usage_count: int = 0
     warning_count: int = 0
 
 
@@ -344,8 +347,11 @@ def ingest(
 
         summary.session_count += 1 if bundle.session else 0
         summary.message_count += len(bundle.messages)
+        summary.tool_call_count += len(bundle.tool_calls)
+        summary.tool_result_count += len(bundle.tool_results)
         summary.command_count += len(bundle.command_runs)
         summary.file_activity_count += len(bundle.file_activities)
+        summary.model_usage_count += len(bundle.model_usage)
         summary.warning_count += len(bundle.parse_warnings)
         source_counts = (
             bundle.session.metadata.get("codex_message_source_counts", {}) if bundle.session else {}
@@ -529,10 +535,14 @@ def render_ingest_summary(summary: IngestSummary, database_path: Path) -> None:
     table.add_row("Skipped sources", str(summary.skipped_source_count))
     table.add_row("Sessions", str(summary.session_count))
     table.add_row("Messages", str(summary.message_count))
-    table.add_row("Response item messages", str(summary.response_item_message_count))
-    table.add_row("Event message fallbacks", str(summary.event_msg_fallback_count))
+    if summary.response_item_message_count or summary.event_msg_fallback_count:
+        table.add_row("Response item messages", str(summary.response_item_message_count))
+        table.add_row("Event message fallbacks", str(summary.event_msg_fallback_count))
+    table.add_row("Tool calls", str(summary.tool_call_count))
+    table.add_row("Tool results", str(summary.tool_result_count))
     table.add_row("Commands", str(summary.command_count))
     table.add_row("File activities", str(summary.file_activity_count))
+    table.add_row("Model usage rows", str(summary.model_usage_count))
     table.add_row("Warnings", str(summary.warning_count))
     console.print(table)
 
