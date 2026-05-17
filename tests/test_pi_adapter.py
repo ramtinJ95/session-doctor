@@ -47,9 +47,63 @@ def test_pi_parse_source_preserves_message_metadata_and_block_types() -> None:
     assert assistant_message.parent_message_id == "user-message-1"
     assert assistant_message.text_hash is not None
     assert assistant_message.text_length == len("I will inspect the failing test.")
-    assert assistant_message.content_block_types == ["thinking", "text", "toolCall"]
+    assert assistant_message.content_block_types == [
+        "thinking",
+        "text",
+        "toolCall",
+        "toolCall",
+        "toolCall",
+        "toolCall",
+    ]
     assert assistant_message.metadata["pi_message_role"] == "assistant"
     assert assistant_message.metadata["stop_reason"] == "tool_use"
+
+
+def test_pi_parse_source_normalizes_tools_commands_files_and_usage() -> None:
+    fixture_path = FIXTURE_DIR / "basic-session.jsonl"
+    bundle = PiAdapter().parse_source(source_for_fixture(fixture_path))
+
+    assert [tool_call.name for tool_call in bundle.tool_calls] == [
+        "bash",
+        "read",
+        "edit",
+        "write",
+    ]
+    assert all(tool_call.arguments_hash is not None for tool_call in bundle.tool_calls)
+    assert bundle.tool_calls[1].metadata["path"] == "tests/test_cli.py"
+
+    assert len(bundle.tool_results) == 1
+    assert bundle.tool_results[0].tool_call_id == bundle.tool_calls[0].tool_call_id
+    assert bundle.tool_results[0].output_hash is not None
+    assert bundle.tool_results[0].output_length == len("failed")
+
+    assert [(command.command, command.exit_code) for command in bundle.command_runs] == [
+        ("pytest tests/test_cli.py -q", 1),
+        ("pytest tests/test_cli.py -q", 1),
+    ]
+    assert {command.metadata["source"] for command in bundle.command_runs} == {
+        "bashExecution",
+        "toolResult",
+    }
+
+    assert [(activity.path, activity.operation) for activity in bundle.file_activities] == [
+        ("tests/test_cli.py", "read"),
+        ("tests/test_cli.py", "edit"),
+        ("scratch/output.txt", "write"),
+    ]
+    assert bundle.file_activities[1].content_hash is not None
+    assert bundle.file_activities[1].metadata["content_length"] > 0
+    assert bundle.file_activities[2].content_hash is not None
+
+    assert len(bundle.model_usage) == 1
+    usage = bundle.model_usage[0]
+    assert usage.provider == "openai-codex"
+    assert usage.model == "gpt-5.4"
+    assert usage.input_tokens == 100
+    assert usage.output_tokens == 20
+    assert usage.cache_read_tokens == 5
+    assert usage.cache_write_tokens == 0
+    assert usage.total_tokens == 125
 
 
 def test_pi_parse_source_counts_metadata_only_rows_without_warnings() -> None:
