@@ -164,13 +164,21 @@ def test_ingest_pi_fixture_writes_database_and_prints_summary(tmp_path) -> None:
 
     assert result.exit_code == 0
     assert "Pi ingest" in result.stdout
+    assert "Response item messages" not in result.stdout
+    assert "Event message fallbacks" not in result.stdout
+    assert "Tool calls" in result.stdout
+    assert "Tool results" in result.stdout
     assert "File activities" in result.stdout
+    assert "Model usage rows" in result.stdout
     store = DuckDBStore(database_path)
     assert store.table_count("session_sources") == 1
     assert store.table_count("sessions") == 1
     assert store.table_count("messages") == 4
+    assert store.table_count("tool_calls") == 4
+    assert store.table_count("tool_results") == 1
     assert store.table_count("command_runs") == 1
     assert store.table_count("file_activities") == 3
+    assert store.table_count("model_usage") == 1
 
 
 def test_ingest_pi_fixture_replaces_existing_source_records(tmp_path) -> None:
