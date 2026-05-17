@@ -93,6 +93,27 @@ def test_pi_parse_source_warns_when_session_record_is_missing(tmp_path) -> None:
     assert "missing_session_record" in warning_codes
 
 
+def test_pi_parse_source_does_not_use_source_folder_as_session_cwd(tmp_path) -> None:
+    session_dir = tmp_path / "--Users-foo-workspace-my-project--"
+    session_dir.mkdir()
+    session_path = session_dir / "2026-05-07T10-00-00-000Z_filename-session.jsonl"
+    records = [
+        {
+            "type": "session",
+            "id": "pi-session-no-cwd",
+            "timestamp": "2026-05-07T10:00:00.000Z",
+        }
+    ]
+    session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+
+    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+
+    assert bundle.session is not None
+    assert bundle.session.cwd is None
+    assert bundle.session.project_path is None
+    assert bundle.session.metadata["source_path_project_hint"] == "/Users/foo/workspace/my/project"
+
+
 def test_pi_parse_source_normalizes_tools_commands_files_and_usage() -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
     bundle = PiAdapter().parse_source(source_for_fixture(fixture_path))
@@ -312,6 +333,7 @@ def test_pi_parse_source_normalizes_exec_command_tool_result(tmp_path) -> None:
                 "role": "toolResult",
                 "toolCallId": "call-exec-1",
                 "toolName": "exec_command",
+                "isError": False,
                 "details": {"exit_code": 1, "output": "failed"},
             },
         },
@@ -324,8 +346,36 @@ def test_pi_parse_source_normalizes_exec_command_tool_result(tmp_path) -> None:
         (command.command, command.cwd, command.exit_code) for command in bundle.command_runs
     ]
     assert command_values == [("pytest -q", "/tmp/project", 1)]
+    assert bundle.tool_results[0].is_error is True
     assert bundle.command_runs[0].stdout_hash is not None
     assert bundle.command_runs[0].output_length == len("failed")
+
+
+def test_pi_parse_source_marks_tool_result_failed_from_structured_status(tmp_path) -> None:
+    session_path = tmp_path / "pi-tool-result-status-failed.jsonl"
+    records = [
+        {
+            "type": "session",
+            "id": "pi-session-tool-status",
+            "timestamp": "2026-05-07T10:00:00.000Z",
+        },
+        {
+            "type": "message",
+            "id": "tool-result-1",
+            "timestamp": "2026-05-07T10:00:01.000Z",
+            "message": {
+                "role": "toolResult",
+                "toolCallId": "call-1",
+                "toolName": "webfetch",
+                "details": {"metadata": {"status": "failed"}, "output": "request failed"},
+            },
+        },
+    ]
+    session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+
+    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+
+    assert bundle.tool_results[0].is_error is True
 
 
 def test_pi_parse_source_dedupes_non_adjacent_bash_execution(tmp_path) -> None:

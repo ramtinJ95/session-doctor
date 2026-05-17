@@ -248,8 +248,9 @@ def extract_session_metadata(
         source_path
     )
     session_id = stable_id("session", AgentName.PI.value, source.source_path, native_session_id)
-    cwd = string_value(session_record.get("cwd")) or cwd_from_source_path(source_path)
+    cwd = string_value(session_record.get("cwd"))
     model = string_value(latest_model_change.get("modelId"))
+    source_path_project_hint = cwd_from_source_path(source_path)
 
     session = Session(
         session_id=session_id,
@@ -265,6 +266,7 @@ def extract_session_metadata(
         model=model,
         metadata={
             "source_path": source.source_path,
+            "source_path_project_hint": source_path_project_hint,
             "model_changes": [
                 {
                     "provider": string_value(record.get("provider")),
@@ -393,7 +395,7 @@ def tool_result_from_message(
         source_event_id=event.event_id,
         native_tool_call_id=call_id,
         timestamp=event.timestamp,
-        is_error=bool_value(message_payload.get("isError")),
+        is_error=tool_result_is_error(message_payload),
         output_hash=hash_text(output) if output is not None else None,
         output_length=text_length(output),
         metadata={
@@ -737,6 +739,86 @@ def tool_result_output(message_payload: dict[str, Any]) -> str | None:
     if details_text:
         parts.append(details_text)
     return "\n".join(parts) if parts else None
+
+
+def tool_result_is_error(message_payload: dict[str, Any]) -> bool | None:
+    message_is_error = bool_value(message_payload.get("isError"))
+    if message_is_error is True:
+        return True
+    if details_have_failure_signal(dict_value(message_payload.get("details"))):
+        return True
+    return message_is_error
+
+
+DETAIL_FAILURE_STATUS_VALUES = {
+    "cancelled",
+    "canceled",
+    "error",
+    "errored",
+    "failed",
+    "failure",
+    "timed_out",
+    "timeout",
+}
+
+DETAIL_FAILURE_BOOL_KEYS = {
+    "cancelled",
+    "canceled",
+    "error",
+    "failed",
+    "failure",
+    "isError",
+    "is_error",
+    "timedOut",
+    "timed_out",
+}
+
+DETAIL_FAILURE_TEXT_KEYS = {
+    "error",
+    "errorCode",
+    "error_code",
+    "errorMessage",
+    "error_message",
+}
+
+DETAIL_STATUS_KEYS = {"outcome", "state", "status"}
+DETAIL_SUCCESS_BOOL_KEYS = {"ok", "success"}
+
+
+def details_have_failure_signal(value: object, *, depth: int = 0) -> bool:
+    if depth > 2:
+        return False
+    if not isinstance(value, dict):
+        return False
+    payload = dict_value(value)
+    for key, nested_value in payload.items():
+        if key in ("exitCode", "exit_code"):
+            exit_code = int_value(nested_value)
+            if exit_code is not None and exit_code != 0:
+                return True
+        if key in DETAIL_FAILURE_BOOL_KEYS and bool_value(nested_value) is True:
+            return True
+        if key in DETAIL_SUCCESS_BOOL_KEYS and bool_value(nested_value) is False:
+            return True
+        if key in DETAIL_FAILURE_TEXT_KEYS and string_value(nested_value):
+            return True
+        if key in DETAIL_STATUS_KEYS:
+            status = string_value(nested_value)
+            if status and status.lower().replace("-", "_") in DETAIL_FAILURE_STATUS_VALUES:
+                return True
+        if isinstance(nested_value, dict) and details_have_failure_signal(
+            nested_value,
+            depth=depth + 1,
+        ):
+            return True
+        if isinstance(nested_value, list):
+            for item in nested_value:
+                if isinstance(item, dict) and details_have_failure_signal(
+                    item,
+                    depth=depth + 1,
+                ):
+                    return True
+    return False
 
 
 DETAIL_TEXT_KEYS = {
