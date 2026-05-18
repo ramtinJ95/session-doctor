@@ -276,13 +276,8 @@ def test_analyze_ingested_codex_session_writes_artifact_and_rows(tmp_path) -> No
     )
     assert repeated_failure_evidence["source_event_ids"]
     labels = {classification["label"] for classification in payload["classifications"]}
-    assert {"user_stuck", "tooling_blocked", "agent_looping"}.issubset(labels)
-    agent_looping = next(
-        classification
-        for classification in payload["classifications"]
-        if classification["label"] == "agent_looping"
-    )
-    assert agent_looping["evidence_event_ids"]
+    assert {"user_stuck", "tooling_blocked"}.issubset(labels)
+    assert "agent_looping" not in labels
     assert store.table_count("analysis_runs") == 1
     assert store.table_count("session_features") > 0
     assert store.table_count("session_classifications") > 0

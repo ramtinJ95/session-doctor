@@ -143,7 +143,7 @@ def test_analyze_features_detects_message_and_session_signals() -> None:
     assert session_features["failed_command_ratio"].feature_value == "1.0"
     assert session_features["failed_tool_result_count"].feature_value == "1"
     assert session_features["repeated_failure_count"].feature_value == "2"
-    assert session_features["repeated_command_failure_count"].feature_value == "2"
+    assert session_features["repeated_command_failure_count"].feature_value == "1"
     assert session_features["same_file_edited_repeatedly_count"].feature_value == "1"
     assert session_features["max_edits_to_single_file"].feature_value == "2"
     assert session_features["unresolved_ending_signal"].feature_value == "true"
@@ -302,7 +302,8 @@ def test_classify_session_emits_initial_deterministic_labels() -> None:
     )
 
     labels = {classification.label for classification in classifications}
-    assert {"user_stuck", "tooling_blocked", "agent_looping"}.issubset(labels)
+    assert {"user_stuck", "tooling_blocked"}.issubset(labels)
+    assert "agent_looping" not in labels
     assert "resolved_after_corrections" not in labels
     tooling_blocked = next(
         classification
@@ -424,6 +425,17 @@ def test_ending_signal_includes_parse_warnings_from_timestamp_window() -> None:
     assert unresolved_evidence["late_parse_warning_ids"] == ["warning-1"]
 
 
+def test_ending_signal_includes_malformed_final_record_parse_warning() -> None:
+    bundle = malformed_final_record_parse_warning_bundle()
+
+    result = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    session_features = {feature.feature_name: feature for feature in result.session_features}
+    unresolved_evidence = session_features["unresolved_ending_signal"].evidence
+    assert session_features["unresolved_ending_signal"].feature_value == "true"
+    assert unresolved_evidence["late_parse_warning_ids"] == ["warning-1"]
+
+
 def test_agent_looping_repeated_failure_evidence_includes_event_ids() -> None:
     bundle = repeated_command_failure_bundle()
     features = analyze_features(bundle, analysis_run_id="analysis-1")
@@ -503,6 +515,42 @@ def test_agent_looping_ignores_small_command_group_mixed_with_tool_output_group(
     session_features = {feature.feature_name: feature for feature in features.session_features}
     assert session_features["repeated_failure_count"].feature_value == "2"
     assert session_features["repeated_command_failure_count"].feature_value == "1"
+
+
+def test_same_file_edit_evidence_deduplicates_source_event_ids() -> None:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    bundle = ParsedSessionBundle(
+        session=session,
+        file_activities=[
+            FileActivity(
+                file_activity_id="file-1",
+                session_id=session.session_id,
+                source_event_id="event-1",
+                path="README.md",
+                operation="edit",
+            ),
+            FileActivity(
+                file_activity_id="file-2",
+                session_id=session.session_id,
+                source_event_id="event-1",
+                path="README.md",
+                operation="edit",
+            ),
+        ],
+    )
+
+    features = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    session_features = {feature.feature_name: feature for feature in features.session_features}
+    assert session_features["same_file_edited_repeatedly_count"].evidence == {
+        "paths": {"README.md": 2},
+        "source_event_ids": ["event-1"],
+        "source_event_ids_by_path": {"README.md": ["event-1"]},
+    }
 
 
 def analysis_fixture_bundle() -> ParsedSessionBundle:
@@ -728,6 +776,37 @@ def timestamp_window_parse_warning_bundle() -> ParsedSessionBundle:
             record_index=5,
             severity="warning",
             message="Unsupported late timestamp-window record shape.",
+        )
+    ]
+    return ParsedSessionBundle(
+        session=session,
+        raw_events=raw_events,
+        parse_warnings=parse_warnings,
+    )
+
+
+def malformed_final_record_parse_warning_bundle() -> ParsedSessionBundle:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    raw_events = [
+        RawEvent(
+            event_id=f"event-{index}",
+            source_id="source-1",
+            agent_name=AgentName.CODEX,
+            record_index=index,
+        )
+        for index in range(1, 30)
+    ]
+    parse_warnings = [
+        ParseWarning(
+            warning_id="warning-1",
+            source_id="source-1",
+            record_index=30,
+            severity="error",
+            message="Malformed final JSONL record.",
         )
     ]
     return ParsedSessionBundle(

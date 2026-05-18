@@ -238,6 +238,9 @@ def session_count_features(
     failed_tool_results = [result for result in bundle.tool_results if result.is_error is True]
     repeated_failures = repeated_failure_groups(bundle)
     repeated_command_failures = repeated_command_loop_failure_groups(repeated_failures)
+    repeated_command_failure_count = repeated_failure_max_repeat_count(
+        repeated_command_failures,
+    )
     file_edit_counts = Counter(
         activity.path
         for activity in bundle.file_activities
@@ -346,7 +349,7 @@ def session_count_features(
             analysis_run_id,
             session_id,
             "repeated_command_failure_count",
-            sum(group["repeat_count"] for group in repeated_command_failures),
+            repeated_command_failure_count,
             evidence={
                 "groups": repeated_command_failures,
                 "source_event_ids": repeated_failure_source_event_ids(repeated_command_failures),
@@ -448,15 +451,20 @@ def repeated_command_loop_failure_groups(
     ]
 
 
+def repeated_failure_max_repeat_count(groups: list[dict[str, object]]) -> int:
+    repeat_counts = [group.get("repeat_count") for group in groups]
+    return max((count for count in repeat_counts if isinstance(count, int)), default=0)
+
+
 def repeated_file_edit_source_events(bundle: ParsedSessionBundle) -> dict[str, list[str]]:
-    source_events_by_path: defaultdict[str, list[str]] = defaultdict(list)
+    source_events_by_path: defaultdict[str, set[str]] = defaultdict(set)
     edit_counts_by_path: Counter[str] = Counter()
     for activity in bundle.file_activities:
         if activity.operation not in MUTATING_FILE_OPERATIONS:
             continue
         edit_counts_by_path[activity.path] += 1
         if activity.source_event_id:
-            source_events_by_path[activity.path].append(activity.source_event_id)
+            source_events_by_path[activity.path].add(activity.source_event_id)
     return {
         path: sorted(source_events_by_path[path])
         for path, count in edit_counts_by_path.items()
@@ -530,7 +538,10 @@ def unresolved_ending_evidence(
         warning.warning_id
         for warning in bundle.parse_warnings
         if warning.record_index is not None
-        and warning.record_index in late_record_indexes
+        and (
+            warning.record_index in late_record_indexes
+            or warning.record_index >= ending_record_index_start(bundle)
+        )
         and not has_later_final_answer(warning.record_index, final_answer_indexes)
     ]
     evidence: dict[str, object] = {}
