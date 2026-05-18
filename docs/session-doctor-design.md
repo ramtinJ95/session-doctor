@@ -28,18 +28,24 @@ Skills, MCP servers, and agent integrations can wrap the CLI later. The CLI
 itself should remain usable directly by a person and by any agent that can run
 terminal commands.
 
-Example command shape:
+Current command shape:
 
 ```bash
-session-doctor ingest
+session-doctor version
+session-doctor doctor
+session-doctor adapters list [--scan]
+session-doctor db init
+session-doctor db info
+session-doctor ingest --agent codex [--source PATH] [--db PATH]
+session-doctor ingest --agent pi [--source PATH] [--db PATH]
 session-doctor sessions list
-session-doctor analyze <session-id>
+session-doctor analyze <session-id> [--format terminal|json] [--artifact PATH] [--no-artifact]
 session-doctor report <session-id>
-session-doctor explain <session-id>
 session-doctor graph <session-id>
-session-doctor export --format jsonl
-session-doctor export --format parquet
 ```
+
+`report` and `graph` are reserved placeholders today. `explain` and `export`
+remain design ideas but are not current CLI commands.
 
 The CLI should be local-only by default. It should not call an LLM or external
 API on its own unless an explicit future option enables that. LLM capability can
@@ -48,7 +54,7 @@ the structured output.
 
 ## Initial Scope
 
-The first iteration should support:
+The first complete product iteration should support:
 
 - Codex sessions
 - Claude Code sessions
@@ -59,43 +65,76 @@ The first iteration should support:
 - deterministic features and explainable scoring
 - a planned graph command and graph projection model
 
-OpenCode and other agents should be considered future adapters. The architecture
-should make adding them straightforward, but they are not part of the first
-implementation slice.
+The current implementation already parses Codex and Pi sessions. Claude Code is
+discoverable but not parseable yet. OpenCode and other agents should be
+considered future adapters. The architecture should make adding them
+straightforward, but they are not part of the first implementation slice.
 
 ## Current Repository State
 
-Phase 1, Phase 2, Phase 3, and Phase 4 have been implemented. The repository
-now has a working Python package, Typer CLI entry point, Pydantic schema
-foundations, DuckDB storage, privacy and stable-ID helpers, adapter discovery
-for Codex, Claude Code, and Pi, Codex and Pi parsing, Codex and Pi ingestion,
-session listing, deterministic analysis over normalized Codex and Pi records,
-derived analysis rows, JSON analysis artifacts, and quality tooling.
+As of the Phase 5 deterministic feature hardening work, the repository has a
+working local CLI for ingesting and analyzing Codex and Pi session logs. It has
+discovery support for Claude Code, but Claude parsing remains intentionally
+unimplemented. The implemented vertical slice is:
+
+```text
+Codex/Pi JSONL source
+  -> adapter-specific parser
+  -> normalized Pydantic bundle
+  -> DuckDB store
+  -> session listing
+  -> deterministic feature extraction
+  -> deterministic classification
+  -> persisted analysis rows + optional JSON artifact
+```
+
+### Implemented Capabilities
+
+The tool can currently:
+
+- inspect local prerequisites and adapter roots with `doctor`
+- discover built-in adapter roots for Codex, Claude Code, and Pi
+- count candidate source files by adapter/source kind with `adapters list --scan`
+- initialize and inspect a local DuckDB database
+- ingest Codex JSONL sessions from the default root, a directory, or one file
+- ingest Pi JSONL sessions from the default root, a directory, or one file
+- delete and replace normalized rows for a source when that source is re-ingested
+- list ingested sessions with agent, start time, message count, command count,
+  warning count, and source path
+- load an ingested session bundle back from DuckDB for analysis
+- extract deterministic message and session features
+- classify sessions with explainable rule-based labels
+- persist derived analysis runs, message features, session features, and session
+  classifications
+- write machine-readable JSON analysis artifacts by default, or print the same
+  payload with `analyze --format json`
 
 Implemented commands:
 
 ```bash
 session-doctor --help
 session-doctor version
-session-doctor doctor
-session-doctor adapters list
-session-doctor adapters list --scan
-session-doctor db init
-session-doctor db info
-session-doctor ingest --agent codex
-session-doctor ingest --agent pi
-session-doctor sessions list
-session-doctor analyze <session-id>
+session-doctor doctor [--db PATH]
+session-doctor adapters list [--scan]
+session-doctor db init [--db PATH]
+session-doctor db info [--db PATH]
+session-doctor ingest --agent codex [--source PATH] [--db PATH]
+session-doctor ingest --agent pi [--source PATH] [--db PATH]
+session-doctor sessions list [--db PATH]
+session-doctor analyze <session-id> [--db PATH] [--format terminal|json]
+session-doctor analyze <session-id> [--artifact PATH | --no-artifact]
 ```
 
-Reserved commands still exist as placeholders:
+Reserved commands that exist but exit as not implemented:
 
 ```bash
 session-doctor report <session-id>
 session-doctor graph <session-id>
 ```
 
-Current implemented package shape:
+Commands not currently present: `explain`, `export`.
+
+### Current Package Shape
 
 ```text
 src/session_doctor/
@@ -105,14 +144,21 @@ src/session_doctor/
   ids.py
   privacy.py
   analysis/
+    __init__.py
     classification.py
     features.py
   adapters/
+    __init__.py
     base.py
-    codex.py
     claude.py
+    codex.py
+    common.py
+    patches.py
     pi.py
+    pi_tools.py
   schemas/
+    __init__.py
+    analysis.py
     common.py
     events.py
     files.py
@@ -123,27 +169,123 @@ src/session_doctor/
     usage.py
     warnings.py
   store/
+    __init__.py
     duckdb.py
     migrations.py
 ```
 
-The repository also has synthetic tests for CLI behavior, schema validation,
-DuckDB initialization, adapter discovery, Codex parsing, DuckDB bundle
-persistence, ingest behavior, session listing, feature extraction,
-classification, analysis persistence, and analysis artifacts.
+### Adapter Coverage
 
-The implemented Codex vertical slices are:
+Codex parsing currently normalizes:
+
+- session metadata and turn context
+- raw events for every valid JSONL record
+- `response_item` user/assistant/developer messages
+- `event_msg` user/agent message fallback rows when no nearby response message
+  duplicates them
+- function/custom/web-search tool calls and tool results
+- command completions from `exec_command_end`
+- patch/file activity from `patch_apply_end`
+- token/model usage rows
+- compaction counts, expected ignored event counts, and parse warnings for errors
+  or unsupported shapes
+
+Pi parsing currently normalizes:
+
+- session records, including timestamps, cwd when present, model/provider from
+  model-change records, and source-path project hints only in metadata
+- raw events for every valid JSONL record
+- user, assistant, tool-result, and bash-execution messages
+- assistant `toolCall` blocks with stable fallback IDs for idless calls
+- structured tool results with hashed output and recursive failure-signal
+  detection
+- command runs from `exec_command`, `bash` tool results, and separate
+  `bashExecution` records while avoiding duplicate command rows
+- file activity for read, write, edit, multi-edit, move, delete, and
+  `apply_patch`-style operations
+- model usage/cost rows from assistant usage payloads
+- metadata-only record counts and parse warnings for unsupported roles/types
+
+Claude Code support currently includes discovery and source-kind classification
+for root sessions, subagent sessions, subagent metadata, persisted tool-result
+files, memory files, and auxiliary files. Claude parsing and ingestion are still
+rejected by `ingest` with a clear not-implemented error.
+
+### Storage And Analysis Coverage
+
+DuckDB schema version `2` creates these tables:
 
 ```text
-Codex JSONL source -> Codex adapter -> normalized records -> DuckDB -> sessions list
-DuckDB normalized records -> deterministic analysis -> derived rows -> analyze output -> JSON artifact
+schema_migrations
+session_sources
+sessions
+raw_events
+messages
+tool_calls
+tool_results
+command_runs
+file_activities
+model_usage
+parse_warnings
+analysis_runs
+message_features
+session_features
+session_classifications
+graph_nodes
+graph_edges
 ```
 
-Reports, graph projection, and Claude Code parsing remain unimplemented.
+Ingestion is source-scoped delete-and-replace: re-ingesting one source removes
+that source's normalized rows and any derived analysis rows for the affected
+session IDs before inserting the newly parsed bundle. Analysis is
+session-scoped delete-and-replace: rerunning `analyze` for a session replaces
+that session's previous derived analysis rows.
 
-This means the next useful implementation slice can be the first report surface
-or graph-oriented projection work, now that a non-Codex adapter validates the
-normalized model.
+Current deterministic message features include repeated-request similarity and
+user text markers for correction, frustration, and scope boundaries. Marker
+features are deduplicated by marker family per message while preserving matched
+strings in evidence. Repeated-request features include matched prior message
+IDs, source event IDs, similarity score, and threshold evidence. Current session
+features include message counts, command/tool failure counts and ratios,
+repeated failure groups with group types and source event IDs, repeated command
+failure groups, edited file counts, same-file repeated edit counts with
+per-path source event IDs, maximum edits to one file, and conservative
+unresolved-ending evidence. Current classification labels are:
+
+- `user_stuck`
+- `tooling_blocked`
+- `agent_looping`
+- `resolved_after_corrections`
+
+Every classification stores score, confidence, evidence event IDs, and a short
+evidence summary.
+
+### Current Limitations
+
+- Claude Code parsing is not implemented.
+- Markdown/terminal reports beyond the `analyze` summary tables are not
+  implemented.
+- Graph tables and Pydantic graph schemas exist, but no graph projection writer
+  or reader is implemented yet.
+- Export commands are not implemented.
+- The tool is local-only and deterministic; it does not call LLMs or external
+  APIs.
+- Privacy hardening is partial: command/file paths and user/assistant message
+  text are persisted locally because current deterministic analysis needs them;
+  tool outputs, command outputs, patch/content payloads, and structured
+  arguments are generally stored as hashes/lengths plus metadata rather than raw
+  output text.
+
+The repository also has synthetic tests for CLI behavior, schema validation,
+DuckDB initialization and round-tripping, adapter discovery, Codex parsing, Pi
+parsing, ingest behavior, session listing, feature extraction, classification,
+analysis persistence, analysis artifacts, and privacy helpers.
+
+This means the next useful implementation slice can be aggregate summaries over
+all sessions and over a specific project/folder, followed by deeper
+project-level trend work. Human-readable reports and graph projection should
+come after those summary views exist, so they can reuse the same aggregate
+queries and evidence model rather than inventing a parallel reporting layer.
 
 ## Local Session Inspection Findings
 
@@ -1230,16 +1372,18 @@ Claude Code ~/.claude/projects
 Pi          ~/.pi/agent/sessions
 ```
 
-Discovery should produce candidate records, not parsed sessions:
+Discovery currently produces candidate records, not parsed sessions:
 
 ```text
 SessionSource
-  agent
-  path
+  source_id
+  agent_name
+  source_path
+  source_kind
   discovered_at
-  size_bytes
-  modified_at
-  content_hash
+  native_session_id
+  parent_source_id
+  metadata
 ```
 
 Pi's current session location was re-verified during Phase 4 planning. The
@@ -1256,6 +1400,9 @@ Each supported agent gets its own adapter module.
 session_doctor/adapters/codex.py
 session_doctor/adapters/claude.py
 session_doctor/adapters/pi.py
+session_doctor/adapters/common.py
+session_doctor/adapters/patches.py
+session_doctor/adapters/pi_tools.py
 ```
 
 Adapters should parse native files into the normalized event model. They should
@@ -1291,15 +1438,21 @@ Core entities:
 
 ```text
 Session
-Turn
+SessionSource
+RawEvent
 Message
 ToolCall
 ToolResult
 CommandRun
-FileEdit
+FileActivity
+ModelUsage
 ParseWarning
-ClassificationSignal
-SessionMetric
+AnalysisRun
+MessageFeature
+SessionFeature
+SessionClassification
+GraphNode
+GraphEdge
 ```
 
 Every normalized record should include provenance:
@@ -1335,25 +1488,30 @@ DuckDB should be included early because it is a key part of the tool.
 DuckDB is not the classifier. It is the local analytical store for normalized
 events, features, classifications, and future project-level trends.
 
-Initial storage should include:
+Current storage includes:
 
 ```text
+schema_migrations
+session_sources
 sessions
+raw_events
 messages
 tool_calls
 tool_results
-file_edits
+command_runs
+file_activities
+model_usage
 parse_warnings
+analysis_runs
 message_features
 session_features
-message_classifications
 session_classifications
 graph_nodes
 graph_edges
 ```
 
-The first implementation can also export JSONL for portability, but DuckDB
-should be the primary local query/report substrate.
+DuckDB is the primary local query/report substrate. JSONL/Parquet export remains
+future work.
 
 Design requirements:
 
@@ -1361,7 +1519,7 @@ Design requirements:
 - no background service required
 - deterministic schema migrations or versioned rebuilds
 - easy deletion/rebuild of derived tables
-- export to JSONL and Parquet
+- future export to JSONL and Parquet
 
 ## Layer 5: Feature Extraction
 
@@ -1471,8 +1629,10 @@ as an optional layer.
 
 ## Layer 7: Graph View
 
-Graph view should be planned from the beginning, even if it is not the first MVP
-feature to be fully implemented.
+Graph view should be planned from the beginning, but it should be implemented
+after aggregate summary/project trend views. The aggregate views will clarify
+which cross-session entities and evidence anchors are most important before the
+tool commits to graph semantics.
 
 The graph is a derived projection over the normalized timeline. It is not the
 source of truth.
@@ -1480,7 +1640,7 @@ source of truth.
 Primary source of truth:
 
 ```text
-Session -> Turn -> Message -> ToolCall -> ToolResult
+SessionSource -> Session -> RawEvent -> Message / ToolCall / ToolResult / CommandRun / FileActivity
 ```
 
 Derived graph view:
@@ -1522,6 +1682,10 @@ Initial output can be JSON nodes/edges. Later it can support Markdown summaries,
 Graphviz, HTML, or MCP/query access.
 
 ## Layer 8: Reporting
+
+Reporting should reuse the aggregate summary and project trend query layer. The
+first report surface should therefore come after there is already a useful way
+to summarize all ingested sessions and sessions under a specific project/folder.
 
 The first report should focus on single-session diagnosis.
 
@@ -1636,23 +1800,33 @@ Implemented Pi as the second native adapter after Codex:
 - keep Claude Code parsing, graph projection, and report generation out of
   scope
 
+Status: complete. A follow-up refactor split shared adapter utilities, Pi tool
+parsing, and patch parsing into focused modules while keeping behavior stable.
+
 Detailed plan: `docs/phase-4-plan.md`.
 
-### Phase 5: Broader Deterministic Features
+### Phase 5: Deterministic Feature Hardening
 
-Broaden deterministic feature extraction after the Phase 3 Codex Analysis MVP
-has proven the core model:
+Hardened the existing deterministic Codex and Pi analysis before adding
+aggregate summaries, project trends, reports, or graph views:
 
-- repeated request detection
-- correction markers
-- frustration markers
-- scope boundary markers
-- failed tool ratio
-- repeated error detection
-- same-file edit repetition
+- preserve raw-event ordering when loading analysis-relevant records from
+  DuckDB
+- normalize offset-aware timestamps before DuckDB writes
+- make unresolved-ending evidence conservative around later final answers and
+  short sessions with no final answer
+- preserve marker match evidence while avoiding duplicate marker-family feature
+  rows
+- add repeated-failure group types and source event IDs
+- let `agent_looping` use repeated failing command text or repeated command
+  stdout/stderr hashes while ignoring repeated non-command tool-output failures
+  by themselves
+- enrich same-file edit-loop and repeated-request evidence
+- keep existing `analyze` output shape while exposing richer JSON evidence
 
-Feature extraction should remain deterministic and explainable. Sentiment
-analysis remains optional future work and should not be the primary classifier.
+Status: complete.
+
+Detailed plan: `docs/phase-5-plan.md`.
 
 ### Phase 6: Classification Scoring
 
@@ -1661,15 +1835,69 @@ Expand features into richer labels and scores.
 Keep the scoring simple, deterministic, and explainable at first. Every
 classification should include evidence event IDs and an evidence summary.
 
-### Phase 7: Single-Session Report
+### Phase 7: Aggregate Summary MVP
 
-Generate a Markdown and terminal report for a single session.
+Add the first aggregate view over the local DuckDB store before investing in
+graph or polished report surfaces.
 
-The report should include evidence references back to normalized event IDs.
+The MVP should answer:
 
-### Phase 8: Graph Projection
+- how many sessions have been ingested in total?
+- how many sessions exist for a given project/folder?
+- which agents produced those sessions?
+- how many sessions have analysis rows?
+- what classifications are most common?
+- which recent sessions look most stuck, blocked, or looping?
+- which commands fail most often?
+- which files are repeatedly edited in problematic sessions?
+- where should a user or agent look next?
 
-Implement the derived graph model and `session-doctor graph <session-id>`.
+Likely command shape:
+
+```bash
+session-doctor summary
+session-doctor summary --project /path/to/project
+session-doctor summary --agent pi
+```
+
+This phase should primarily query existing normalized and analysis tables. It
+should avoid graph projection and avoid writing a polished Markdown report.
+
+### Phase 8: Project-Level Trends
+
+Extend aggregate summaries into trend views across sessions:
+
+- trend by project
+- trend by week/month
+- repeated stuck patterns
+- repeated failing commands or tool outputs
+- repeated files involved in problematic sessions
+- agent fit by project/task type
+- prompt clarity drift
+- project complexity signals
+
+This phase should provide the first useful view over all sessions and over a
+specific folder/project. It should still stay deterministic and local-only.
+
+Likely command shape:
+
+```bash
+session-doctor trends
+session-doctor trends --project /path/to/project
+session-doctor projects list
+```
+
+### Phase 9: Reports And Graph Projection
+
+Build polished report and graph surfaces after summary/trend queries exist.
+
+Single-session reports should provide terminal and Markdown views that include
+evidence references back to normalized event IDs. Reports should reuse summary
+and trend metrics where useful, for example by showing whether the current
+session resembles repeated project-level failures.
+
+Graph projection should implement the derived graph model and
+`session-doctor graph <session-id>`.
 
 Start with JSON output:
 
@@ -1681,20 +1909,6 @@ Start with JSON output:
 ```
 
 Later output formats can be added after the graph semantics stabilize.
-
-### Phase 9: Project-Level Trends
-
-Extend the DuckDB model and reports across sessions:
-
-- trend by project
-- trend by week/month
-- repeated stuck patterns
-- agent fit by project/task type
-- prompt clarity drift
-- project complexity signals
-
-This is not the first MVP, but the earlier schema should be designed to support
-it.
 
 ### Phase 10: Agent Wrappers
 
@@ -1715,14 +1929,15 @@ These should call the CLI rather than duplicate business logic.
 - full OpenCode support
 - training a supervised ML model
 - perfect sentiment analysis
-- project-wide trend reports
+- cloud-hosted/project-wide dashboards
 - graphical UI for graph visualization
 
 ## Open Implementation Questions
 
 - Which Claude Code session files contain the most reliable role/tool metadata?
-- Should graph nodes be persisted in DuckDB immediately or generated on demand
-  from normalized event tables?
+- Should the first graph projection populate the existing DuckDB `graph_nodes`
+  and `graph_edges` tables, generate graphs on demand from normalized event
+  tables, or support both modes?
 
 The Claude adapter question should be resolved when Claude parsing starts. The
 graph persistence question should be resolved later when graph projection

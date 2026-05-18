@@ -180,6 +180,7 @@ def repeated_request_features(
                     evidence={
                         "matched_message_id": matched_message.message_id,
                         "matched_source_event_id": matched_message.source_event_id,
+                        "similarity_score": round(score, 3),
                         "threshold": REPEAT_REQUEST_SIMILARITY_THRESHOLD,
                     },
                 )
@@ -215,7 +216,7 @@ def marker_features(
                         message=message,
                         feature_name=feature_name,
                         feature_value=marker_family,
-                        evidence={"matched_markers": matched_markers},
+                        evidence={"matched_markers": sorted(matched_markers)},
                     )
                 )
     return features
@@ -236,9 +237,9 @@ def session_count_features(
     ]
     failed_tool_results = [result for result in bundle.tool_results if result.is_error is True]
     repeated_failures = repeated_failure_groups(bundle)
-    repeated_command_failures = repeated_failure_groups_with_prefix(
-        repeated_failures,
-        "failed_command:",
+    repeated_command_failures = repeated_command_loop_failure_groups(repeated_failures)
+    repeated_command_failure_count = repeated_failure_max_repeat_count(
+        repeated_command_failures,
     )
     file_edit_counts = Counter(
         activity.path
@@ -246,6 +247,7 @@ def session_count_features(
         if activity.operation in MUTATING_FILE_OPERATIONS
     )
     repeated_file_edits = {path: count for path, count in file_edit_counts.items() if count > 1}
+    repeated_file_edit_events = repeated_file_edit_source_events(bundle)
     unresolved_evidence = unresolved_ending_evidence(bundle, message_features)
 
     return [
@@ -317,7 +319,14 @@ def session_count_features(
             session_id,
             "failed_tool_result_count",
             len(failed_tool_results),
-            evidence={"tool_result_ids": [result.tool_result_id for result in failed_tool_results]},
+            evidence={
+                "tool_result_ids": [result.tool_result_id for result in failed_tool_results],
+                "source_event_ids": [
+                    result.source_event_id
+                    for result in failed_tool_results
+                    if result.source_event_id
+                ],
+            },
         ),
         session_feature(
             analysis_run_id,
@@ -340,7 +349,7 @@ def session_count_features(
             analysis_run_id,
             session_id,
             "repeated_command_failure_count",
-            sum(group["repeat_count"] for group in repeated_command_failures),
+            repeated_command_failure_count,
             evidence={
                 "groups": repeated_command_failures,
                 "source_event_ids": repeated_failure_source_event_ids(repeated_command_failures),
@@ -358,7 +367,17 @@ def session_count_features(
             session_id,
             "same_file_edited_repeatedly_count",
             len(repeated_file_edits),
-            evidence={"paths": repeated_file_edits},
+            evidence={
+                "paths": repeated_file_edits,
+                "source_event_ids_by_path": repeated_file_edit_events,
+                "source_event_ids": sorted(
+                    {
+                        source_event_id
+                        for source_event_ids in repeated_file_edit_events.values()
+                        for source_event_id in source_event_ids
+                    }
+                ),
+            },
         ),
         session_feature(
             analysis_run_id,
@@ -378,52 +397,79 @@ def session_count_features(
 
 
 def repeated_failure_groups(bundle: ParsedSessionBundle) -> list[dict[str, object]]:
-    group_values: defaultdict[str, list[tuple[str, str | None]]] = defaultdict(list)
+    group_values: defaultdict[tuple[str, str], list[tuple[str, str | None]]] = defaultdict(list)
     for command in bundle.command_runs:
         if command.exit_code is None or command.exit_code == 0:
             continue
         if command.stderr_hash:
-            group_values[f"stderr_hash:{command.stderr_hash}"].append(
-                (command.command_run_id, command.source_event_id)
+            group_values[("command_stderr_hash", f"stderr_hash:{command.stderr_hash}")].append(
+                (command.command_run_id, command.source_event_id),
             )
         if command.stdout_hash:
-            group_values[f"stdout_hash:{command.stdout_hash}"].append(
-                (command.command_run_id, command.source_event_id)
+            group_values[("command_stdout_hash", f"stdout_hash:{command.stdout_hash}")].append(
+                (command.command_run_id, command.source_event_id),
             )
-        group_values[f"failed_command:{command.command}"].append(
+        group_values[("failed_command_text", f"failed_command:{command.command}")].append(
             (command.command_run_id, command.source_event_id),
         )
 
     for result in bundle.tool_results:
         if result.is_error is not True or not result.output_hash:
             continue
-        group_values[f"tool_output_hash:{result.output_hash}"].append(
-            (result.tool_result_id, result.source_event_id),
+        group_values[("tool_output_hash", f"tool_output_hash:{result.output_hash}")].append(
+            (result.tool_result_id, result.source_event_id)
         )
 
     return [
         {
             "key": key,
+            "group_type": group_type,
             "record_ids": sorted(record_id for record_id, _ in records),
             "source_event_ids": sorted(
                 {source_event_id for _, source_event_id in records if source_event_id}
             ),
             "repeat_count": len(records) - 1,
         }
-        for key, records in sorted(group_values.items())
+        for (group_type, key), records in sorted(group_values.items())
         if len(records) > 1
     ]
 
 
-def repeated_failure_groups_with_prefix(
+def repeated_command_loop_failure_groups(
     groups: list[dict[str, object]],
-    key_prefix: str,
 ) -> list[dict[str, object]]:
+    command_loop_group_types = {
+        "failed_command_text",
+        "command_stdout_hash",
+        "command_stderr_hash",
+    }
     return [
         group
         for group in groups
-        if isinstance(group.get("key"), str) and str(group["key"]).startswith(key_prefix)
+        if isinstance(group.get("group_type"), str)
+        and str(group["group_type"]) in command_loop_group_types
     ]
+
+
+def repeated_failure_max_repeat_count(groups: list[dict[str, object]]) -> int:
+    repeat_counts = [group.get("repeat_count") for group in groups]
+    return max((count for count in repeat_counts if isinstance(count, int)), default=0)
+
+
+def repeated_file_edit_source_events(bundle: ParsedSessionBundle) -> dict[str, list[str]]:
+    source_events_by_path: defaultdict[str, set[str]] = defaultdict(set)
+    edit_counts_by_path: Counter[str] = Counter()
+    for activity in bundle.file_activities:
+        if activity.operation not in MUTATING_FILE_OPERATIONS:
+            continue
+        edit_counts_by_path[activity.path] += 1
+        if activity.source_event_id:
+            source_events_by_path[activity.path].add(activity.source_event_id)
+    return {
+        path: sorted(source_events_by_path[path])
+        for path, count in edit_counts_by_path.items()
+        if count > 1
+    }
 
 
 def repeated_failure_source_event_ids(groups: list[dict[str, object]]) -> list[str]:
@@ -447,6 +493,9 @@ def unresolved_ending_evidence(
         for event in bundle.raw_events
         if event.event_id is not None
     }
+    late_record_indexes = {
+        event.record_index for event in bundle.raw_events if event.event_id in late_event_ids
+    }
     final_answer_indexes = [
         event_indexes[message.source_event_id]
         for message in bundle.messages
@@ -454,7 +503,6 @@ def unresolved_ending_evidence(
         and message.metadata.get("phase") == "final_answer"
         and message.source_event_id in event_indexes
     ]
-    final_answer_index = max(final_answer_indexes, default=None)
     late_message_event_indexes = {
         message.message_id: event_indexes.get(message.source_event_id)
         for message in bundle.messages
@@ -470,9 +518,9 @@ def unresolved_ending_evidence(
             "frustration_marker",
             "repeat_request_similarity",
         }
-        and unresolved_after_final_answer(
+        and not has_later_final_answer(
             late_message_event_indexes[feature.message_id],
-            final_answer_index,
+            final_answer_indexes,
         )
     }
     late_failed_command_ids = [
@@ -481,16 +529,20 @@ def unresolved_ending_evidence(
         if command.source_event_id in late_event_ids
         and command.exit_code is not None
         and command.exit_code != 0
-        and unresolved_after_final_answer(
+        and not has_later_final_answer(
             event_indexes.get(command.source_event_id),
-            final_answer_index,
+            final_answer_indexes,
         )
     ]
     late_warning_ids = [
         warning.warning_id
         for warning in bundle.parse_warnings
         if warning.record_index is not None
-        and warning.record_index >= ending_record_index_start(bundle)
+        and (
+            warning.record_index in late_record_indexes
+            or warning.record_index >= ending_record_index_start(bundle)
+        )
+        and not has_later_final_answer(warning.record_index, final_answer_indexes)
     ]
     evidence: dict[str, object] = {}
     if late_feature_names:
@@ -499,16 +551,19 @@ def unresolved_ending_evidence(
         evidence["late_failed_command_ids"] = late_failed_command_ids
     if late_warning_ids:
         evidence["late_parse_warning_ids"] = late_warning_ids
-    if final_answer_index is None:
+    has_late_unresolved_signal = bool(evidence)
+    if not final_answer_indexes and has_late_unresolved_signal:
         evidence["missing_final_answer"] = True
     return evidence
 
 
-def unresolved_after_final_answer(
+def has_later_final_answer(
     record_index: int | None,
-    final_answer_index: int | None,
+    final_answer_indexes: list[int],
 ) -> bool:
-    return final_answer_index is None or record_index is None or record_index > final_answer_index
+    if record_index is None:
+        return False
+    return any(final_answer_index > record_index for final_answer_index in final_answer_indexes)
 
 
 def ending_source_event_ids(bundle: ParsedSessionBundle) -> set[str]:

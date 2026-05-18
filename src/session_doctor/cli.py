@@ -425,7 +425,7 @@ def analyze(
         session_id=session_id,
         started_at=started_at,
         completed_at=datetime.now(UTC),
-        analyzer_version="phase3",
+        analyzer_version="phase5",
         artifact_path=str(artifact_path) if artifact_path else None,
     )
     payload = analysis_payload(
