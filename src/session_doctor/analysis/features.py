@@ -485,6 +485,9 @@ def unresolved_ending_evidence(
         for event in bundle.raw_events
         if event.event_id is not None
     }
+    late_record_indexes = {
+        event.record_index for event in bundle.raw_events if event.event_id in late_event_ids
+    }
     final_answer_indexes = [
         event_indexes[message.source_event_id]
         for message in bundle.messages
@@ -527,7 +530,7 @@ def unresolved_ending_evidence(
         warning.warning_id
         for warning in bundle.parse_warnings
         if warning.record_index is not None
-        and warning.record_index >= ending_record_index_start(bundle)
+        and warning.record_index in late_record_indexes
         and not has_later_final_answer(warning.record_index, final_answer_indexes)
     ]
     evidence: dict[str, object] = {}

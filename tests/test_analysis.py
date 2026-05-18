@@ -15,6 +15,7 @@ from session_doctor.schemas import (
     FileActivity,
     Message,
     NormalizedRole,
+    ParseWarning,
     RawEvent,
     Session,
     ToolResult,
@@ -412,6 +413,17 @@ def test_ending_signal_unions_timestamp_window_with_event_count_window() -> None
     assert "correction_marker" in unresolved_evidence["late_message_features"]
 
 
+def test_ending_signal_includes_parse_warnings_from_timestamp_window() -> None:
+    bundle = timestamp_window_parse_warning_bundle()
+
+    result = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    session_features = {feature.feature_name: feature for feature in result.session_features}
+    unresolved_evidence = session_features["unresolved_ending_signal"].evidence
+    assert session_features["unresolved_ending_signal"].feature_value == "true"
+    assert unresolved_evidence["late_parse_warning_ids"] == ["warning-1"]
+
+
 def test_agent_looping_repeated_failure_evidence_includes_event_ids() -> None:
     bundle = repeated_command_failure_bundle()
     features = analyze_features(bundle, analysis_run_id="analysis-1")
@@ -472,6 +484,25 @@ def test_agent_looping_detects_repeated_command_stderr_hashes() -> None:
     groups = repeated_command_failure.evidence["groups"]
     assert len(groups) == 1
     assert groups[0]["group_type"] == "command_stderr_hash"
+
+
+def test_agent_looping_ignores_small_command_group_mixed_with_tool_output_group() -> None:
+    bundle = mixed_small_command_and_tool_failure_groups_bundle()
+    features = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    classifications = classify_session(
+        bundle,
+        analysis_run_id="analysis-1",
+        message_features=features.message_features,
+        session_features=features.session_features,
+    )
+
+    labels = {classification.label for classification in classifications}
+    assert "tooling_blocked" in labels
+    assert "agent_looping" not in labels
+    session_features = {feature.feature_name: feature for feature in features.session_features}
+    assert session_features["repeated_failure_count"].feature_value == "2"
+    assert session_features["repeated_command_failure_count"].feature_value == "1"
 
 
 def analysis_fixture_bundle() -> ParsedSessionBundle:
@@ -673,6 +704,39 @@ def bursty_timestamp_window_bundle() -> ParsedSessionBundle:
     return ParsedSessionBundle(session=session, raw_events=raw_events, messages=messages)
 
 
+def timestamp_window_parse_warning_bundle() -> ParsedSessionBundle:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    start = datetime(2026, 5, 10, 8, 0, tzinfo=UTC)
+    raw_events = [
+        RawEvent(
+            event_id=f"event-{index}",
+            source_id="source-1",
+            agent_name=AgentName.CODEX,
+            record_index=index,
+            timestamp=start + timedelta(seconds=index),
+        )
+        for index in range(1, 31)
+    ]
+    parse_warnings = [
+        ParseWarning(
+            warning_id="warning-1",
+            source_id="source-1",
+            record_index=5,
+            severity="warning",
+            message="Unsupported late timestamp-window record shape.",
+        )
+    ]
+    return ParsedSessionBundle(
+        session=session,
+        raw_events=raw_events,
+        parse_warnings=parse_warnings,
+    )
+
+
 def repeated_command_failure_bundle() -> ParsedSessionBundle:
     session = Session(
         session_id="session-1",
@@ -756,6 +820,49 @@ def shared_stderr_distinct_command_failure_bundle() -> ParsedSessionBundle:
         for index in range(1, 4)
     ]
     return ParsedSessionBundle(session=session, raw_events=raw_events, command_runs=command_runs)
+
+
+def mixed_small_command_and_tool_failure_groups_bundle() -> ParsedSessionBundle:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    raw_events = [
+        RawEvent(
+            event_id=f"event-{index}",
+            source_id="source-1",
+            agent_name=AgentName.CODEX,
+            record_index=index,
+        )
+        for index in range(1, 5)
+    ]
+    command_runs = [
+        CommandRun(
+            command_run_id=f"command-{index}",
+            session_id=session.session_id,
+            source_event_id=f"event-{index}",
+            command="pytest -q",
+            exit_code=1,
+        )
+        for index in range(1, 3)
+    ]
+    tool_results = [
+        ToolResult(
+            tool_result_id=f"tool-result-{index}",
+            session_id=session.session_id,
+            source_event_id=f"event-{index + 2}",
+            is_error=True,
+            output_hash="same-tool-error",
+        )
+        for index in range(1, 3)
+    ]
+    return ParsedSessionBundle(
+        session=session,
+        raw_events=raw_events,
+        command_runs=command_runs,
+        tool_results=tool_results,
+    )
 
 
 def message(

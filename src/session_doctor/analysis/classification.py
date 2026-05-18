@@ -88,7 +88,7 @@ def classify_session(
         )
 
     if (repeat_request_count >= 2 and same_file_repeated_count >= 1) or (
-        repeated_failure_count >= 2 and repeated_command_failure_count > 0
+        repeated_command_failure_count >= 2
     ):
         classifications.append(
             classification(
