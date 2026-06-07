@@ -27,14 +27,20 @@ from .cli_options import (
 from .cli_renderers import (
     ANALYSIS_SUMMARY_FEATURES,
     render_adapters_table,
-    render_analysis_summary,
     render_database_info,
     render_doctor_table,
-    render_ingest_summary,
     render_sessions_table,
+    scan_adapter_summary,
+)
+from .cli_renderers import (
+    render_analysis_summary as _render_analysis_summary,
+)
+from .cli_renderers import (
+    render_ingest_summary as _render_ingest_summary,
 )
 from .config import supports_current_python
 from .ingest_workflow import IngestSummary, ingest_sources
+from .schemas import AnalysisRun, SessionClassification, SessionFeature
 from .store import TABLE_NAMES, DuckDBStore
 
 console = Console()
@@ -56,6 +62,9 @@ __all__ = [
     "os_access_writable",
     "path_can_be_created",
     "require_valid_database_path",
+    "render_analysis_summary",
+    "render_ingest_summary",
+    "scan_adapter_summary",
     "sources_for_ingest",
     "write_analysis_artifact",
 ]
@@ -210,7 +219,7 @@ def ingest(
     sources = sources_for_ingest(adapter, source)
     store = DuckDBStore(database_path)
     summary = ingest_sources(adapter, sources, store, console)
-    render_ingest_summary(summary, database_path, console)
+    render_ingest_summary(summary, database_path)
 
 
 @app.command()
@@ -263,7 +272,6 @@ def analyze(
         result.analysis_run,
         result.session_features,
         result.classifications,
-        console,
     )
 
 
@@ -289,3 +297,22 @@ app.add_typer(sessions_app, name="sessions")
 def not_implemented(command_name: str) -> None:
     console.print(f"[yellow]{command_name} is not implemented yet.[/yellow]")
     raise typer.Exit(2)
+
+
+def render_ingest_summary(summary: IngestSummary, database_path: Path) -> None:
+    _render_ingest_summary(summary, database_path, console)
+
+
+def render_analysis_summary(
+    session_id: str,
+    analysis_run: AnalysisRun,
+    session_features: list[SessionFeature],
+    classifications: list[SessionClassification],
+) -> None:
+    _render_analysis_summary(
+        session_id,
+        analysis_run,
+        session_features,
+        classifications,
+        console,
+    )

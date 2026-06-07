@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from inspect import signature
 from pathlib import Path
 from shutil import copyfile
 from typing import Any, cast
@@ -28,6 +29,14 @@ def test_cli_version() -> None:
 
     assert result.exit_code == 0
     assert __version__ in result.stdout
+
+
+def test_cli_preserves_helper_facade_imports() -> None:
+    from session_doctor import cli
+
+    assert cli.scan_adapter_summary is not None
+    assert "console" not in signature(cli.render_ingest_summary).parameters
+    assert "console" not in signature(cli.render_analysis_summary).parameters
 
 
 def test_db_info_reports_missing_temp_database(tmp_path) -> None:
