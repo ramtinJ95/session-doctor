@@ -8,10 +8,12 @@ from datetime import datetime, timedelta
 from session_doctor.adapters import ParsedSessionBundle
 from session_doctor.ids import stable_id
 from session_doctor.schemas import (
+    CommandRun,
     Message,
     MessageFeature,
     NormalizedRole,
     SessionFeature,
+    ToolResult,
 )
 
 REPEAT_REQUEST_SIMILARITY_THRESHOLD = 0.35
@@ -129,6 +131,22 @@ class RequestSignature:
     char_grams: frozenset[str]
 
 
+@dataclass(frozen=True)
+class SessionFeatureContext:
+    session_id: str
+    message_features: list[MessageFeature]
+    message_feature_counts: Counter[str]
+    failed_commands: list[CommandRun]
+    failed_tool_results: list[ToolResult]
+    repeated_failures: list[dict[str, object]]
+    repeated_command_failures: list[dict[str, object]]
+    repeated_command_failure_count: int
+    file_edit_counts: Counter[str]
+    repeated_file_edits: dict[str, int]
+    repeated_file_edit_events: dict[str, list[str]]
+    unresolved_evidence: dict[str, object]
+
+
 def analyze_features(
     bundle: ParsedSessionBundle,
     analysis_run_id: str,
@@ -228,7 +246,22 @@ def session_count_features(
     message_features: list[MessageFeature],
 ) -> list[SessionFeature]:
     assert bundle.session is not None
-    session_id = bundle.session.session_id
+    context = session_feature_context(bundle, message_features)
+    return [
+        *message_count_session_features(bundle, analysis_run_id, context),
+        *command_session_features(bundle, analysis_run_id, context),
+        *tool_result_session_features(bundle, analysis_run_id, context),
+        *repeated_failure_session_features(analysis_run_id, context),
+        *file_activity_session_features(analysis_run_id, context),
+        unresolved_ending_session_feature(analysis_run_id, context),
+    ]
+
+
+def session_feature_context(
+    bundle: ParsedSessionBundle,
+    message_features: list[MessageFeature],
+) -> SessionFeatureContext:
+    assert bundle.session is not None
     feature_counts = message_feature_counts(message_features)
     failed_commands = [
         command
@@ -238,142 +271,206 @@ def session_count_features(
     failed_tool_results = [result for result in bundle.tool_results if result.is_error is True]
     repeated_failures = repeated_failure_groups(bundle)
     repeated_command_failures = repeated_command_loop_failure_groups(repeated_failures)
-    repeated_command_failure_count = repeated_failure_max_repeat_count(
-        repeated_command_failures,
-    )
     file_edit_counts = Counter(
         activity.path
         for activity in bundle.file_activities
         if activity.operation in MUTATING_FILE_OPERATIONS
     )
     repeated_file_edits = {path: count for path, count in file_edit_counts.items() if count > 1}
-    repeated_file_edit_events = repeated_file_edit_source_events(bundle)
-    unresolved_evidence = unresolved_ending_evidence(bundle, message_features)
+    return SessionFeatureContext(
+        session_id=bundle.session.session_id,
+        message_features=message_features,
+        message_feature_counts=feature_counts,
+        failed_commands=failed_commands,
+        failed_tool_results=failed_tool_results,
+        repeated_failures=repeated_failures,
+        repeated_command_failures=repeated_command_failures,
+        repeated_command_failure_count=repeated_failure_max_repeat_count(
+            repeated_command_failures,
+        ),
+        file_edit_counts=file_edit_counts,
+        repeated_file_edits=repeated_file_edits,
+        repeated_file_edit_events=repeated_file_edit_source_events(bundle),
+        unresolved_evidence=unresolved_ending_evidence(bundle, message_features),
+    )
 
+
+def message_count_session_features(
+    bundle: ParsedSessionBundle,
+    analysis_run_id: str,
+    context: SessionFeatureContext,
+) -> list[SessionFeature]:
     return [
         session_feature(
             analysis_run_id,
-            session_id,
+            context.session_id,
             "user_message_count",
             count_messages(bundle.messages, NormalizedRole.USER),
         ),
         session_feature(
             analysis_run_id,
-            session_id,
+            context.session_id,
             "assistant_message_count",
             count_messages(bundle.messages, NormalizedRole.ASSISTANT),
         ),
         session_feature(
             analysis_run_id,
-            session_id,
+            context.session_id,
             "repeat_request_count",
-            feature_counts["repeat_request_similarity"],
-            evidence=feature_evidence(message_features, "repeat_request_similarity"),
+            context.message_feature_counts["repeat_request_similarity"],
+            evidence=feature_evidence(context.message_features, "repeat_request_similarity"),
         ),
         session_feature(
             analysis_run_id,
-            session_id,
+            context.session_id,
             "correction_count",
-            feature_counts["correction_marker"],
-            evidence=feature_evidence(message_features, "correction_marker"),
+            context.message_feature_counts["correction_marker"],
+            evidence=feature_evidence(context.message_features, "correction_marker"),
         ),
         session_feature(
             analysis_run_id,
-            session_id,
+            context.session_id,
             "frustration_count",
-            feature_counts["frustration_marker"],
-            evidence=feature_evidence(message_features, "frustration_marker"),
+            context.message_feature_counts["frustration_marker"],
+            evidence=feature_evidence(context.message_features, "frustration_marker"),
         ),
         session_feature(
             analysis_run_id,
-            session_id,
+            context.session_id,
             "scope_boundary_count",
-            feature_counts["scope_boundary_marker"],
-            evidence=feature_evidence(message_features, "scope_boundary_marker"),
+            context.message_feature_counts["scope_boundary_marker"],
+            evidence=feature_evidence(context.message_features, "scope_boundary_marker"),
         ),
-        session_feature(analysis_run_id, session_id, "command_count", len(bundle.command_runs)),
+    ]
+
+
+def command_session_features(
+    bundle: ParsedSessionBundle,
+    analysis_run_id: str,
+    context: SessionFeatureContext,
+) -> list[SessionFeature]:
+    failed_command_ratio = ratio(len(context.failed_commands), len(bundle.command_runs))
+    return [
+        session_feature(
+            analysis_run_id, context.session_id, "command_count", len(bundle.command_runs)
+        ),
         session_feature(
             analysis_run_id,
-            session_id,
+            context.session_id,
             "failed_command_count",
-            len(failed_commands),
+            len(context.failed_commands),
             evidence={
-                "command_run_ids": [command.command_run_id for command in failed_commands],
+                "command_run_ids": [command.command_run_id for command in context.failed_commands],
                 "source_event_ids": [
                     command.source_event_id
-                    for command in failed_commands
+                    for command in context.failed_commands
                     if command.source_event_id
                 ],
             },
         ),
         session_feature(
             analysis_run_id,
-            session_id,
+            context.session_id,
             "failed_command_ratio",
-            ratio(len(failed_commands), len(bundle.command_runs)),
-            score=ratio(len(failed_commands), len(bundle.command_runs)),
+            failed_command_ratio,
+            score=failed_command_ratio,
         ),
-        session_feature(analysis_run_id, session_id, "tool_result_count", len(bundle.tool_results)),
+    ]
+
+
+def tool_result_session_features(
+    bundle: ParsedSessionBundle,
+    analysis_run_id: str,
+    context: SessionFeatureContext,
+) -> list[SessionFeature]:
+    failed_tool_result_ratio = ratio(len(context.failed_tool_results), len(bundle.tool_results))
+    return [
         session_feature(
             analysis_run_id,
-            session_id,
+            context.session_id,
+            "tool_result_count",
+            len(bundle.tool_results),
+        ),
+        session_feature(
+            analysis_run_id,
+            context.session_id,
             "failed_tool_result_count",
-            len(failed_tool_results),
+            len(context.failed_tool_results),
             evidence={
-                "tool_result_ids": [result.tool_result_id for result in failed_tool_results],
+                "tool_result_ids": [
+                    result.tool_result_id for result in context.failed_tool_results
+                ],
                 "source_event_ids": [
                     result.source_event_id
-                    for result in failed_tool_results
+                    for result in context.failed_tool_results
                     if result.source_event_id
                 ],
             },
         ),
         session_feature(
             analysis_run_id,
-            session_id,
+            context.session_id,
             "failed_tool_result_ratio",
-            ratio(len(failed_tool_results), len(bundle.tool_results)),
-            score=ratio(len(failed_tool_results), len(bundle.tool_results)),
+            failed_tool_result_ratio,
+            score=failed_tool_result_ratio,
         ),
+    ]
+
+
+def repeated_failure_session_features(
+    analysis_run_id: str,
+    context: SessionFeatureContext,
+) -> list[SessionFeature]:
+    return [
         session_feature(
             analysis_run_id,
-            session_id,
+            context.session_id,
             "repeated_failure_count",
-            sum(group["repeat_count"] for group in repeated_failures),
+            sum(group["repeat_count"] for group in context.repeated_failures),
             evidence={
-                "groups": repeated_failures,
-                "source_event_ids": repeated_failure_source_event_ids(repeated_failures),
+                "groups": context.repeated_failures,
+                "source_event_ids": repeated_failure_source_event_ids(context.repeated_failures),
             },
         ),
         session_feature(
             analysis_run_id,
-            session_id,
+            context.session_id,
             "repeated_command_failure_count",
-            repeated_command_failure_count,
+            context.repeated_command_failure_count,
             evidence={
-                "groups": repeated_command_failures,
-                "source_event_ids": repeated_failure_source_event_ids(repeated_command_failures),
+                "groups": context.repeated_command_failures,
+                "source_event_ids": repeated_failure_source_event_ids(
+                    context.repeated_command_failures
+                ),
             },
         ),
+    ]
+
+
+def file_activity_session_features(
+    analysis_run_id: str,
+    context: SessionFeatureContext,
+) -> list[SessionFeature]:
+    return [
         session_feature(
             analysis_run_id,
-            session_id,
+            context.session_id,
             "edited_file_count",
-            len(file_edit_counts),
-            evidence={"paths": sorted(file_edit_counts)},
+            len(context.file_edit_counts),
+            evidence={"paths": sorted(context.file_edit_counts)},
         ),
         session_feature(
             analysis_run_id,
-            session_id,
+            context.session_id,
             "same_file_edited_repeatedly_count",
-            len(repeated_file_edits),
+            len(context.repeated_file_edits),
             evidence={
-                "paths": repeated_file_edits,
-                "source_event_ids_by_path": repeated_file_edit_events,
+                "paths": context.repeated_file_edits,
+                "source_event_ids_by_path": context.repeated_file_edit_events,
                 "source_event_ids": sorted(
                     {
                         source_event_id
-                        for source_event_ids in repeated_file_edit_events.values()
+                        for source_event_ids in context.repeated_file_edit_events.values()
                         for source_event_id in source_event_ids
                     }
                 ),
@@ -381,19 +478,25 @@ def session_count_features(
         ),
         session_feature(
             analysis_run_id,
-            session_id,
+            context.session_id,
             "max_edits_to_single_file",
-            max(file_edit_counts.values(), default=0),
-        ),
-        session_feature(
-            analysis_run_id,
-            session_id,
-            "unresolved_ending_signal",
-            bool(unresolved_evidence),
-            score=1.0 if unresolved_evidence else 0.0,
-            evidence=unresolved_evidence,
+            max(context.file_edit_counts.values(), default=0),
         ),
     ]
+
+
+def unresolved_ending_session_feature(
+    analysis_run_id: str,
+    context: SessionFeatureContext,
+) -> SessionFeature:
+    return session_feature(
+        analysis_run_id,
+        context.session_id,
+        "unresolved_ending_signal",
+        bool(context.unresolved_evidence),
+        score=1.0 if context.unresolved_evidence else 0.0,
+        evidence=context.unresolved_evidence,
+    )
 
 
 def repeated_failure_groups(bundle: ParsedSessionBundle) -> list[dict[str, object]]:
