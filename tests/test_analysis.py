@@ -189,6 +189,51 @@ def test_analyze_features_detects_message_and_session_signals() -> None:
     } == {"command_stdout_hash", "failed_command_text"}
 
 
+def test_analyze_features_emits_phase6_risk_scores_with_metadata() -> None:
+    bundle = analysis_fixture_bundle()
+
+    result = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    session_features = {feature.feature_name: feature for feature in result.session_features}
+    expected_score_names = {
+        "friction_score",
+        "stuckness_score",
+        "prompt_clarity_risk",
+        "agent_fit_risk",
+        "project_complexity_signal",
+    }
+    assert expected_score_names.issubset(session_features)
+    assert session_features["friction_score"].feature_value == "0.780"
+    assert session_features["friction_score"].score == pytest.approx(0.78)
+    assert session_features["stuckness_score"].feature_value == "0.480"
+    assert session_features["friction_score"].metadata["formula"] == "friction_score_v1"
+    assert session_features["friction_score"].metadata["component_values"] == {
+        "correction_count": 0.333,
+        "failed_command_ratio": 1.0,
+        "failed_tool_result_ratio": 1.0,
+        "frustration_count": 0.333,
+        "repeated_failure_count": 0.667,
+        "unresolved_ending_signal": 1.0,
+    }
+    assert "event-10" in session_features["friction_score"].evidence["source_event_ids"]
+
+
+def test_risk_scores_distinguish_clean_and_complex_sessions() -> None:
+    clean_result = analyze_features(clean_finished_bundle(), analysis_run_id="analysis-1")
+    complex_result = analyze_features(broad_low_friction_bundle(), analysis_run_id="analysis-2")
+
+    clean_features = {feature.feature_name: feature for feature in clean_result.session_features}
+    complex_features = {
+        feature.feature_name: feature for feature in complex_result.session_features
+    }
+
+    assert clean_features["friction_score"].feature_value == "0.000"
+    assert clean_features["stuckness_score"].feature_value == "0.000"
+    assert clean_features["agent_fit_risk"].score < 0.25
+    assert complex_features["project_complexity_signal"].score >= 0.65
+    assert complex_features["friction_score"].score < 0.25
+
+
 def test_marker_features_deduplicate_same_family_per_message() -> None:
     session = Session(
         session_id="session-1",
@@ -748,6 +793,107 @@ def resolved_failed_command_bundle() -> ParsedSessionBundle:
         raw_events=raw_events,
         messages=messages,
         command_runs=command_runs,
+    )
+
+
+def clean_finished_bundle() -> ParsedSessionBundle:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    raw_events = [
+        RawEvent(
+            event_id=f"event-{index}",
+            source_id="source-1",
+            agent_name=AgentName.CODEX,
+            record_index=index,
+        )
+        for index in range(1, 4)
+    ]
+    messages = [
+        message("message-1", NormalizedRole.USER, "Please summarize the repository.", "event-1"),
+        message(
+            "message-2",
+            NormalizedRole.ASSISTANT,
+            "Summary complete.",
+            "event-3",
+            metadata={"phase": "final_answer"},
+        ),
+    ]
+    return ParsedSessionBundle(session=session, raw_events=raw_events, messages=messages)
+
+
+def broad_low_friction_bundle() -> ParsedSessionBundle:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    raw_events = [
+        RawEvent(
+            event_id=f"event-{index}",
+            source_id="source-1",
+            agent_name=AgentName.CODEX,
+            record_index=index,
+        )
+        for index in range(1, 21)
+    ]
+    messages = [
+        message("message-1", NormalizedRole.USER, "Implement the planned changes.", "event-1"),
+        message(
+            "message-2",
+            NormalizedRole.ASSISTANT,
+            "Implemented and tested.",
+            "event-20",
+            metadata={"phase": "final_answer"},
+        ),
+    ]
+    command_runs = [
+        CommandRun(
+            command_run_id=f"command-{index}",
+            session_id=session.session_id,
+            source_event_id=f"event-{index + 1}",
+            command=f"command {index}",
+            exit_code=0,
+        )
+        for index in range(1, 13)
+    ]
+    tool_results = [
+        ToolResult(
+            tool_result_id=f"tool-result-{index}",
+            session_id=session.session_id,
+            source_event_id=f"event-{index + 9}",
+            is_error=False,
+        )
+        for index in range(1, 21)
+    ]
+    file_activities = [
+        FileActivity(
+            file_activity_id=f"file-{index}",
+            session_id=session.session_id,
+            source_event_id=f"event-{index + 1}",
+            path=f"src/file_{index}.py",
+            operation="edit",
+        )
+        for index in range(1, 9)
+    ] + [
+        FileActivity(
+            file_activity_id=f"file-repeat-{index}",
+            session_id=session.session_id,
+            source_event_id=f"event-{index + 8}",
+            path="src/file_1.py",
+            operation="edit",
+        )
+        for index in range(1, 6)
+    ]
+    return ParsedSessionBundle(
+        session=session,
+        raw_events=raw_events,
+        messages=messages,
+        command_runs=command_runs,
+        tool_results=tool_results,
+        file_activities=file_activities,
     )
 
 
