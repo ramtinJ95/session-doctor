@@ -72,10 +72,11 @@ straightforward, but they are not part of the first implementation slice.
 
 ## Current Repository State
 
-As of the Phase 5 deterministic feature hardening work, the repository has a
-working local CLI for ingesting and analyzing Codex and Pi session logs. It has
-discovery support for Claude Code, but Claude parsing remains intentionally
-unimplemented. The implemented vertical slice is:
+As of the current repository state, Phase 5 deterministic feature hardening is
+implemented and Phase 6 classification scoring is planned but not implemented.
+The repository has a working local CLI for ingesting and analyzing Codex and Pi
+session logs. It has discovery support for Claude Code, but Claude parsing
+remains intentionally unimplemented. The implemented vertical slice is:
 
 ```text
 Codex/Pi JSONL source
@@ -270,6 +271,13 @@ evidence summary.
   implemented.
 - Graph tables and Pydantic graph schemas exist, but no graph projection writer
   or reader is implemented yet.
+- Reusable Phase 6 risk score features such as `friction_score`,
+  `stuckness_score`, `prompt_clarity_risk`, `agent_fit_risk`, and
+  `project_complexity_signal` are not implemented yet.
+- Richer planned labels such as `healthy`, `agent_misunderstood`,
+  `prompt_ambiguous`, `task_too_large`, `repo_complexity_high`, and
+  `abandoned_or_stopped` are not implemented yet.
+- Aggregate summary and project-trend commands are not implemented yet.
 - Export commands are not implemented.
 - The tool is local-only and deterministic; it does not call LLMs or external
   APIs.
@@ -284,11 +292,14 @@ DuckDB initialization and round-tripping, adapter discovery, Codex parsing, Pi
 parsing, ingest behavior, session listing, feature extraction, classification,
 analysis persistence, analysis artifacts, and privacy helpers.
 
-This means the next useful implementation slice can be aggregate summaries over
-all sessions and over a specific project/folder, followed by deeper
-project-level trend work. Human-readable reports and graph projection should
-come after those summary views exist, so they can reuse the same aggregate
-queries and evidence model rather than inventing a parallel reporting layer.
+This means the next useful implementation slice is Phase 6 classification
+scoring: reusable deterministic risk score features, clearer classification
+metadata, and conservative additional labels supported by existing evidence.
+After that, aggregate summaries over all sessions and over a specific
+project/folder should come before deeper project-level trend work. Human-readable
+reports and graph projection should come after those summary views exist, so
+they can reuse the same aggregate queries and evidence model rather than
+inventing a parallel reporting layer.
 
 ## Local Session Inspection Findings
 
@@ -1834,10 +1845,29 @@ Detailed plan: `docs/phase-5-plan.md`.
 
 ### Phase 6: Classification Scoring
 
-Expand features into richer labels and scores.
+Expand features into richer labels and scores over the already-ingested Codex
+and Pi normalized records. This phase should not add Claude Code parsing,
+aggregate summaries, reports, graph projection, exports, LLM calls, embeddings,
+or new ML dependencies.
+
+Expected additions:
+
+- reusable session score features: `friction_score`, `stuckness_score`,
+  `prompt_clarity_risk`, `agent_fit_risk`, and `project_complexity_signal`
+- threshold metadata and formula versions on score and label rows
+- clearer evidence summaries for existing labels
+- conservative new labels only where the current deterministic evidence supports
+  them
+- compact terminal output and backward-compatible JSON artifacts that expose the
+  new score features
 
 Keep the scoring simple, deterministic, and explainable at first. Every
 classification should include evidence event IDs and an evidence summary.
+
+Status: planned. The detailed plan exists, but the current code still emits the
+Phase 5 feature set and the four initial session labels.
+
+Detailed plan: `docs/phase-6-plan.md`.
 
 ### Phase 7: Aggregate Summary MVP
 
