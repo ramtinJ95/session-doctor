@@ -41,6 +41,18 @@ adapters_app = typer.Typer(help="Inspect built-in session adapters.")
 db_app = typer.Typer(help="Manage the local DuckDB store.")
 sessions_app = typer.Typer(help="Inspect ingested sessions.")
 
+ANALYSIS_SUMMARY_FEATURES = (
+    "repeat_request_count",
+    "correction_count",
+    "frustration_count",
+    "scope_boundary_count",
+    "failed_command_ratio",
+    "repeated_failure_count",
+    "repeated_command_failure_count",
+    "same_file_edited_repeatedly_count",
+    "unresolved_ending_signal",
+)
+
 
 @dataclass
 class IngestSummary:
@@ -602,17 +614,7 @@ def render_analysis_summary(
     summary_table.add_row("Session ID", session_id)
     summary_table.add_row("Analysis run", analysis_run.analysis_run_id)
     summary_table.add_row("Artifact", analysis_run.artifact_path or "")
-    for feature_name in (
-        "repeat_request_count",
-        "correction_count",
-        "frustration_count",
-        "scope_boundary_count",
-        "failed_command_ratio",
-        "repeated_failure_count",
-        "repeated_command_failure_count",
-        "same_file_edited_repeatedly_count",
-        "unresolved_ending_signal",
-    ):
+    for feature_name in ANALYSIS_SUMMARY_FEATURES:
         feature = next(
             (candidate for candidate in session_features if candidate.feature_name == feature_name),
             None,
