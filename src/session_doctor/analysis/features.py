@@ -116,6 +116,26 @@ SCOPE_BOUNDARY_MARKERS = {
     "defer": "defer",
 }
 
+AMBIGUITY_MARKERS = {
+    "not sure": "unclear",
+    "unclear": "unclear",
+    "ambiguous": "ambiguous",
+    "which one": "which_one",
+    "what do you mean": "clarify",
+    "can you clarify": "clarify",
+}
+
+STOP_OR_PAUSE_MARKERS = {
+    "stop": "stop",
+    "stop doing": "stop",
+    "pause": "pause",
+    "leave it": "defer",
+    "never mind": "nevermind",
+    "nevermind": "nevermind",
+    "not now": "defer",
+    "we can stop": "stop",
+}
+
 
 @dataclass(frozen=True)
 class ExtractedFeatures:
@@ -218,6 +238,8 @@ def marker_features(
         ("correction_marker", CORRECTION_MARKERS),
         ("frustration_marker", FRUSTRATION_MARKERS),
         ("scope_boundary_marker", SCOPE_BOUNDARY_MARKERS),
+        ("ambiguity_marker", AMBIGUITY_MARKERS),
+        ("stop_or_pause_marker", STOP_OR_PAUSE_MARKERS),
     )
     for message in messages:
         if message.role != NormalizedRole.USER or not message.text:
@@ -345,6 +367,20 @@ def message_count_session_features(
             "scope_boundary_count",
             context.message_feature_counts["scope_boundary_marker"],
             evidence=feature_evidence(context.message_features, "scope_boundary_marker"),
+        ),
+        session_feature(
+            analysis_run_id,
+            context.session_id,
+            "ambiguity_count",
+            context.message_feature_counts["ambiguity_marker"],
+            evidence=feature_evidence(context.message_features, "ambiguity_marker"),
+        ),
+        session_feature(
+            analysis_run_id,
+            context.session_id,
+            "stop_or_pause_count",
+            context.message_feature_counts["stop_or_pause_marker"],
+            evidence=feature_evidence(context.message_features, "stop_or_pause_marker"),
         ),
     ]
 
@@ -598,11 +634,15 @@ def risk_score_session_features(
                 "repeat_request_count": capped_count(
                     int_session_feature(features_by_name, "repeat_request_count"), cap=3
                 ),
+                "ambiguity_count": capped_count(
+                    int_session_feature(features_by_name, "ambiguity_count"), cap=3
+                ),
             },
             component_weights={
                 "scope_boundary_count": 0.22,
                 "correction_count": 0.24,
                 "repeat_request_count": 0.20,
+                "ambiguity_count": 0.18,
             },
         ),
         risk_score_feature(
