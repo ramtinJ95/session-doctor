@@ -4,7 +4,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import duckdb
-import pytest
 
 from session_doctor.adapters import ParsedSessionBundle
 from session_doctor.adapters.codex import CodexAdapter
@@ -27,7 +26,6 @@ from session_doctor.schemas import (
     ToolResult,
 )
 from session_doctor.store import SCHEMA_VERSION, TABLE_NAMES, DuckDBStore
-from session_doctor.store.migrations import apply_migrations
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "codex"
 
@@ -53,23 +51,16 @@ def test_store_info_handles_missing_database(tmp_path) -> None:
     assert info.tables == ()
 
 
-def test_migration_rejects_newer_schema(tmp_path) -> None:
-    database_path = tmp_path / "newer.duckdb"
+def test_store_initialize_records_current_internal_schema_version(tmp_path) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    store = DuckDBStore(database_path)
+
+    store.initialize()
+
     with duckdb.connect(str(database_path)) as connection:
-        connection.execute(
-            """
-            CREATE TABLE schema_migrations (
-                version INTEGER PRIMARY KEY,
-                applied_at TIMESTAMP DEFAULT current_timestamp
-            )
-            """
-        )
-        connection.execute(
-            "INSERT INTO schema_migrations (version) VALUES (?)",
-            [SCHEMA_VERSION + 1],
-        )
-        with pytest.raises(RuntimeError, match="newer"):
-            apply_migrations(connection)
+        row = connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
+
+    assert row == (SCHEMA_VERSION,)
 
 
 def test_store_insert_parsed_bundle_persists_normalized_records(tmp_path) -> None:

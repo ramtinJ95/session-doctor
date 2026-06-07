@@ -213,7 +213,10 @@ rejected by `ingest` with a clear not-implemented error.
 
 ### Storage And Analysis Coverage
 
-DuckDB schema version `2` creates these tables:
+The current internal DuckDB schema marker is `2`. This marker is for local
+inspection and rebuild coordination only; before the first release, existing
+DuckDB files and JSON artifacts may be regenerated instead of migrated for
+compatibility. The current store creates these tables:
 
 ```text
 schema_migrations
@@ -1517,7 +1520,8 @@ Design requirements:
 
 - local-only by default
 - no background service required
-- deterministic schema migrations or versioned rebuilds
+- deterministic versioned rebuilds before the first release; migration
+  compatibility starts only after a released schema contract exists
 - easy deletion/rebuild of derived tables
 - future export to JSONL and Parquet
 
