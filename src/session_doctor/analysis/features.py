@@ -701,6 +701,21 @@ def ratio(numerator: int, denominator: int) -> float:
     return numerator / denominator
 
 
+def clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def capped_count(value: int, *, cap: int) -> float:
+    if cap <= 0:
+        msg = "cap must be greater than zero"
+        raise ValueError(msg)
+    return clamp01(max(value, 0) / cap)
+
+
+def score_feature_value(score: float) -> str:
+    return f"{clamp01(score):.3f}"
+
+
 def feature_evidence(features: list[MessageFeature], feature_name: str) -> dict[str, object]:
     matched_features = [feature for feature in features if feature.feature_name == feature_name]
     return {
