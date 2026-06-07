@@ -4,7 +4,8 @@ from datetime import UTC, datetime, timedelta
 
 from session_doctor.adapters import ParsedSessionBundle
 from session_doctor.analysis import analyze_features, classify_session
-from session_doctor.analysis import features as feature_helpers
+from session_doctor.analysis import ending as ending_helpers
+from session_doctor.analysis.timeline import has_later_final_answer
 from session_doctor.schemas import AgentName, NormalizedRole, RawEvent, Session
 
 from .fixtures import (
@@ -276,13 +277,11 @@ def test_ending_signal_includes_malformed_final_record_parse_warning() -> None:
     assert unresolved_evidence["late_parse_warning_ids"] == ["warning-1"]
 
 
-def test_classification_re_exports_later_final_answer_helper() -> None:
-    from session_doctor.analysis.classification import has_later_final_answer
-
+def test_timeline_detects_later_final_answer() -> None:
     assert has_later_final_answer(2, [1, 3]) is True
 
 
-def test_feature_ending_wrappers_use_feature_window_constants(monkeypatch) -> None:
+def test_ending_helpers_use_ending_window_constants(monkeypatch) -> None:
     session = Session(
         session_id="session-1",
         source_id="source-1",
@@ -303,11 +302,11 @@ def test_feature_ending_wrappers_use_feature_window_constants(monkeypatch) -> No
         ],
     )
 
-    monkeypatch.setattr(feature_helpers, "ENDING_WINDOW_MIN_EVENTS", 2)
-    monkeypatch.setattr(feature_helpers, "ENDING_WINDOW_MAX_EVENTS", 2)
-    monkeypatch.setattr(feature_helpers, "ENDING_WINDOW_FRACTION", 1.0)
-    monkeypatch.setattr(feature_helpers, "ENDING_WINDOW_MINUTES", 1)
+    monkeypatch.setattr(ending_helpers, "ENDING_WINDOW_MIN_EVENTS", 2)
+    monkeypatch.setattr(ending_helpers, "ENDING_WINDOW_MAX_EVENTS", 2)
+    monkeypatch.setattr(ending_helpers, "ENDING_WINDOW_FRACTION", 1.0)
+    monkeypatch.setattr(ending_helpers, "ENDING_WINDOW_MINUTES", 1)
 
-    assert feature_helpers.ending_record_index_start(bundle) == 9
-    assert feature_helpers.timestamp_window_source_event_ids(bundle) == {"event-9", "event-10"}
-    assert feature_helpers.ending_source_event_ids(bundle) == {"event-9", "event-10"}
+    assert ending_helpers.ending_record_index_start(bundle) == 9
+    assert ending_helpers.timestamp_window_source_event_ids(bundle) == {"event-9", "event-10"}
+    assert ending_helpers.ending_source_event_ids(bundle) == {"event-9", "event-10"}

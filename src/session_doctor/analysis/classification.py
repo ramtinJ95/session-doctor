@@ -7,36 +7,7 @@ from session_doctor.schemas import (
     SessionFeature,
 )
 
-from .classification_constants import (
-    AGENT_LOOPING_REPEATED_COMMAND_FAILURE_THRESHOLD,
-    AGENT_MISUNDERSTOOD_PROMPT_RISK_THRESHOLD,
-    HEALTHY_SCORE_THRESHOLD,
-    MISUNDERSTANDING_CORRECTION_FAMILIES,
-    NEGATIVE_LABELS,
-    PROMPT_AMBIGUOUS_THRESHOLD,
-    REPO_COMPLEXITY_HIGH_THRESHOLD,
-    RESOLVED_AFTER_CORRECTIONS_SCORE,
-    TASK_TOO_LARGE_COMPLEXITY_THRESHOLD,
-    TASK_TOO_LARGE_FRICTION_THRESHOLD,
-    TOOLING_BLOCKED_FAILED_COMMAND_RATIO_THRESHOLD,
-    TOOLING_BLOCKED_FAILED_TOOL_RESULT_RATIO_THRESHOLD,
-    TOOLING_BLOCKED_REPEATED_FAILURE_THRESHOLD,
-    USER_STUCK_STUCKNESS_THRESHOLD,
-)
-from .classification_context import (
-    ClassificationContext,
-    bool_feature,
-    float_feature,
-    int_feature,
-)
-from .classification_evidence import (
-    count_phrase,
-    evidence_event_ids,
-    families_phrase,
-    joined_evidence_summary,
-    ratio_phrase,
-)
-from .classification_factories import classification, classification_metadata
+from .classification_context import ClassificationContext
 from .classification_rules import (
     abandoned_or_stopped_classification,
     agent_looping_classification,
@@ -49,57 +20,8 @@ from .classification_rules import (
     tooling_blocked_classification,
     user_stuck_classification,
 )
-from .ending import unresolved_stop_or_pause_evidence
-from .timeline import (
-    has_assistant_final_answer,
-    resolved_after_last_correction,
-)
-from .timeline import (
-    has_later_final_answer as timeline_has_later_final_answer,
-)
 
-__all__ = [
-    "AGENT_LOOPING_REPEATED_COMMAND_FAILURE_THRESHOLD",
-    "AGENT_MISUNDERSTOOD_PROMPT_RISK_THRESHOLD",
-    "ClassificationContext",
-    "HEALTHY_SCORE_THRESHOLD",
-    "MISUNDERSTANDING_CORRECTION_FAMILIES",
-    "NEGATIVE_LABELS",
-    "PROMPT_AMBIGUOUS_THRESHOLD",
-    "REPO_COMPLEXITY_HIGH_THRESHOLD",
-    "RESOLVED_AFTER_CORRECTIONS_SCORE",
-    "TASK_TOO_LARGE_COMPLEXITY_THRESHOLD",
-    "TASK_TOO_LARGE_FRICTION_THRESHOLD",
-    "TOOLING_BLOCKED_FAILED_COMMAND_RATIO_THRESHOLD",
-    "TOOLING_BLOCKED_FAILED_TOOL_RESULT_RATIO_THRESHOLD",
-    "TOOLING_BLOCKED_REPEATED_FAILURE_THRESHOLD",
-    "USER_STUCK_STUCKNESS_THRESHOLD",
-    "abandoned_or_stopped_classification",
-    "agent_looping_classification",
-    "agent_misunderstood_classification",
-    "bool_feature",
-    "classification",
-    "classification_metadata",
-    "classify_session",
-    "count_phrase",
-    "evidence_event_ids",
-    "families_phrase",
-    "float_feature",
-    "has_assistant_final_answer",
-    "has_later_final_answer",
-    "healthy_classification",
-    "int_feature",
-    "joined_evidence_summary",
-    "prompt_ambiguous_classification",
-    "ratio_phrase",
-    "repo_complexity_high_classification",
-    "resolved_after_corrections_classification",
-    "resolved_after_last_correction",
-    "task_too_large_classification",
-    "tooling_blocked_classification",
-    "unresolved_stop_or_pause_evidence",
-    "user_stuck_classification",
-]
+__all__ = ["classify_session"]
 
 
 def classify_session(
@@ -135,7 +57,3 @@ def classify_session(
     if healthy := healthy_classification(context, classifications):
         classifications.append(healthy)
     return classifications
-
-
-def has_later_final_answer(record_index: int | None, final_answer_indexes: list[int]) -> bool:
-    return timeline_has_later_final_answer(record_index, final_answer_indexes)

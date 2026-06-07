@@ -4,7 +4,7 @@ from math import inf, nan
 
 import pytest
 
-from session_doctor.analysis.features import capped_count, clamp01, score_feature_value
+from session_doctor.analysis.scoring import capped_count, clamp01, score_feature_value
 
 
 def test_score_helpers_bound_and_format_scores() -> None:
