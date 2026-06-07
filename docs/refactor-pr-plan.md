@@ -1,6 +1,6 @@
 # Refactor PR Plan: Split Large Modules Safely
 
-Status: PRs 1-3 complete; PRs 4-7 planned.
+Status: PRs 1-4 complete; PRs 5-7 planned.
 
 This plan breaks the current god-file cleanup into focused, reviewable PRs. The
 goal is to reduce module size and coupling without changing behavior, schemas,
@@ -24,7 +24,9 @@ Items may be marked complete as the sequence lands.
   `DuckDBStore` class plus row serializers and JSON/DB helpers.
 - `src/session_doctor/analysis/classification.py` — 791 lines. Owns threshold
   constants, rule orchestration, rule implementations, evidence summaries, and
-  final-answer/stop-pause ending helpers.
+  final-answer/stop-pause ending helpers. Status: timeline and ending helpers
+  extracted by PR 2; constants, context, factories, evidence helpers, and rules
+  split into focused modules by PR 4.
 - `src/session_doctor/cli.py` — 645 lines. Mixes Typer declarations, workflow
   orchestration, validation, Rich rendering, artifact writing, and JSON payloads.
 - `src/session_doctor/adapters/codex.py` — 621 lines. Mixes source discovery,
@@ -243,6 +245,8 @@ uv run pytest tests/analysis/test_similarity.py tests/analysis/test_features.py 
 - Full validation passes.
 
 ## PR 4 — Split Classification Rules and Evidence Helpers
+
+Status: complete.
 
 Risk: medium. Classification output is user-facing and persisted.
 
