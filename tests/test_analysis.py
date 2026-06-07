@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from math import inf, nan
+
+import pytest
 
 from session_doctor.adapters import ParsedSessionBundle
 from session_doctor.analysis import (
@@ -134,6 +137,14 @@ def test_score_helpers_bound_and_format_scores() -> None:
     assert capped_count(-1, cap=4) == 0.0
     assert score_feature_value(0.3333) == "0.333"
     assert score_feature_value(1.25) == "1.000"
+
+
+def test_score_helpers_reject_non_finite_scores() -> None:
+    for value in (nan, inf, -inf):
+        with pytest.raises(ValueError, match="score value must be finite"):
+            clamp01(value)
+        with pytest.raises(ValueError, match="score value must be finite"):
+            score_feature_value(value)
 
 
 def test_analyze_features_detects_message_and_session_signals() -> None:

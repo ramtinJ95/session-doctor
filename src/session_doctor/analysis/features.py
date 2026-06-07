@@ -4,6 +4,7 @@ import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from math import isfinite
 
 from session_doctor.adapters import ParsedSessionBundle
 from session_doctor.ids import stable_id
@@ -805,6 +806,9 @@ def ratio(numerator: int, denominator: int) -> float:
 
 
 def clamp01(value: float) -> float:
+    if not isfinite(value):
+        msg = "score value must be finite"
+        raise ValueError(msg)
     return max(0.0, min(1.0, value))
 
 
