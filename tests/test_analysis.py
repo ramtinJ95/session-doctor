@@ -416,6 +416,111 @@ def test_classify_session_detects_resolution_after_correction() -> None:
     labels = {classification.label for classification in classifications}
     assert "resolved_after_corrections" in labels
     assert "user_stuck" not in labels
+    assert "agent_misunderstood" in labels
+
+
+def test_classify_session_emits_healthy_for_clean_finished_session() -> None:
+    bundle = clean_finished_bundle()
+    features = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    classifications = classify_session(
+        bundle,
+        analysis_run_id="analysis-1",
+        message_features=features.message_features,
+        session_features=features.session_features,
+    )
+
+    assert [classification.label for classification in classifications] == ["healthy"]
+    healthy = classifications[0]
+    assert healthy.metadata["rule"] == "healthy_v1"
+    assert healthy.evidence_summary.startswith("Session appears clean")
+
+
+def test_classify_session_emits_prompt_ambiguous_from_calibrated_markers() -> None:
+    bundle = prompt_ambiguous_bundle()
+    features = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    classifications = classify_session(
+        bundle,
+        analysis_run_id="analysis-1",
+        message_features=features.message_features,
+        session_features=features.session_features,
+    )
+
+    labels = {classification.label for classification in classifications}
+    assert "prompt_ambiguous" in labels
+    session_features = {feature.feature_name: feature for feature in features.session_features}
+    assert session_features["ambiguity_count"].feature_value == "4"
+    assert session_features["prompt_clarity_risk"].score >= 0.55
+
+
+def test_classify_session_avoids_prompt_ambiguous_for_single_scope_boundary() -> None:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    bundle = ParsedSessionBundle(
+        session=session,
+        messages=[
+            message("message-1", NormalizedRole.USER, "Only update README.md.", "event-1")
+        ],
+    )
+    features = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    classifications = classify_session(
+        bundle,
+        analysis_run_id="analysis-1",
+        message_features=features.message_features,
+        session_features=features.session_features,
+    )
+
+    assert "prompt_ambiguous" not in {classification.label for classification in classifications}
+
+
+def test_classify_session_emits_size_and_complexity_labels_conservatively() -> None:
+    low_friction_features = analyze_features(broad_low_friction_bundle(), "analysis-1")
+    low_friction_classifications = classify_session(
+        broad_low_friction_bundle(),
+        "analysis-1",
+        low_friction_features.message_features,
+        low_friction_features.session_features,
+    )
+
+    low_friction_labels = {
+        classification.label for classification in low_friction_classifications
+    }
+    assert "task_too_large" not in low_friction_labels
+
+    bundle = complex_high_friction_bundle()
+    features = analyze_features(bundle, analysis_run_id="analysis-2")
+    classifications = classify_session(
+        bundle,
+        analysis_run_id="analysis-2",
+        message_features=features.message_features,
+        session_features=features.session_features,
+    )
+
+    labels = {classification.label for classification in classifications}
+    assert "task_too_large" in labels
+    assert "repo_complexity_high" in labels
+
+
+def test_classify_session_emits_abandoned_or_stopped_for_late_stop_marker() -> None:
+    bundle = abandoned_or_stopped_bundle()
+    features = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    classifications = classify_session(
+        bundle,
+        analysis_run_id="analysis-1",
+        message_features=features.message_features,
+        session_features=features.session_features,
+    )
+
+    labels = {classification.label for classification in classifications}
+    assert "abandoned_or_stopped" in labels
+    session_features = {feature.feature_name: feature for feature in features.session_features}
+    assert session_features["stop_or_pause_count"].feature_value == "1"
 
 
 def test_unresolved_ending_ignores_markers_resolved_by_final_answer() -> None:
@@ -912,6 +1017,141 @@ def broad_low_friction_bundle() -> ParsedSessionBundle:
         tool_results=tool_results,
         file_activities=file_activities,
     )
+
+
+def prompt_ambiguous_bundle() -> ParsedSessionBundle:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    raw_events = [
+        RawEvent(
+            event_id=f"event-{index}",
+            source_id="source-1",
+            agent_name=AgentName.CODEX,
+            record_index=index,
+        )
+        for index in range(1, 5)
+    ]
+    messages = [
+        message(
+            "message-1",
+            NormalizedRole.USER,
+            "I am not sure which one to update; only touch docs.",
+            "event-1",
+        ),
+        message(
+            "message-2",
+            NormalizedRole.USER,
+            "This is unclear, do not change code; wrong target.",
+            "event-2",
+        ),
+        message(
+            "message-3",
+            NormalizedRole.USER,
+            "The request is ambiguous, I meant the phase plan only.",
+            "event-3",
+        ),
+        message(
+            "message-4",
+            NormalizedRole.USER,
+            "Can you clarify before you continue? That is not what I meant.",
+            "event-4",
+        ),
+    ]
+    return ParsedSessionBundle(session=session, raw_events=raw_events, messages=messages)
+
+
+def complex_high_friction_bundle() -> ParsedSessionBundle:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    raw_events = [
+        RawEvent(
+            event_id=f"event-{index}",
+            source_id="source-1",
+            agent_name=AgentName.CODEX,
+            record_index=index,
+        )
+        for index in range(1, 31)
+    ]
+    messages = [
+        message("message-1", NormalizedRole.USER, "Implement the broad refactor.", "event-1")
+    ]
+    command_runs = [
+        CommandRun(
+            command_run_id=f"command-{index}",
+            session_id=session.session_id,
+            source_event_id=f"event-{index + 1}",
+            command=f"pytest shard {index}",
+            exit_code=1,
+            stderr_hash="shared-complex-failure",
+        )
+        for index in range(1, 13)
+    ]
+    tool_results = [
+        ToolResult(
+            tool_result_id=f"tool-result-{index}",
+            session_id=session.session_id,
+            source_event_id=f"event-{index + 13}",
+            is_error=False,
+        )
+        for index in range(1, 21)
+    ]
+    file_activities = [
+        FileActivity(
+            file_activity_id=f"file-{index}",
+            session_id=session.session_id,
+            source_event_id=f"event-{index + 1}",
+            path=f"src/file_{index}.py",
+            operation="edit",
+        )
+        for index in range(1, 9)
+    ] + [
+        FileActivity(
+            file_activity_id=f"file-repeat-{path_index}-{edit_index}",
+            session_id=session.session_id,
+            source_event_id=f"event-{path_index + edit_index + 8}",
+            path=f"src/file_{path_index}.py",
+            operation="edit",
+        )
+        for path_index in range(1, 4)
+        for edit_index in range(1, 6)
+    ]
+    return ParsedSessionBundle(
+        session=session,
+        raw_events=raw_events,
+        messages=messages,
+        command_runs=command_runs,
+        tool_results=tool_results,
+        file_activities=file_activities,
+    )
+
+
+def abandoned_or_stopped_bundle() -> ParsedSessionBundle:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    raw_events = [
+        RawEvent(
+            event_id=f"event-{index}",
+            source_id="source-1",
+            agent_name=AgentName.CODEX,
+            record_index=index,
+        )
+        for index in range(1, 7)
+    ]
+    messages = [
+        message("message-1", NormalizedRole.USER, "Please update the plan.", "event-1"),
+        message("message-2", NormalizedRole.ASSISTANT, "I will update it.", "event-2"),
+        message("message-3", NormalizedRole.USER, "Never mind, we can stop.", "event-6"),
+    ]
+    return ParsedSessionBundle(session=session, raw_events=raw_events, messages=messages)
 
 
 def bursty_timestamp_window_bundle() -> ParsedSessionBundle:

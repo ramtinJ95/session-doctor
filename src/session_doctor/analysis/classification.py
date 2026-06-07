@@ -16,6 +16,32 @@ TOOLING_BLOCKED_FAILED_COMMAND_RATIO_THRESHOLD = 0.50
 TOOLING_BLOCKED_REPEATED_FAILURE_THRESHOLD = 2
 AGENT_LOOPING_REPEATED_COMMAND_FAILURE_THRESHOLD = 2
 RESOLVED_AFTER_CORRECTIONS_SCORE = 0.70
+HEALTHY_SCORE_THRESHOLD = 0.25
+AGENT_MISUNDERSTOOD_PROMPT_RISK_THRESHOLD = 0.35
+PROMPT_AMBIGUOUS_THRESHOLD = 0.55
+TASK_TOO_LARGE_COMPLEXITY_THRESHOLD = 0.65
+TASK_TOO_LARGE_FRICTION_THRESHOLD = 0.35
+REPO_COMPLEXITY_HIGH_THRESHOLD = 0.75
+NEGATIVE_LABELS = frozenset(
+    {
+        "user_stuck",
+        "tooling_blocked",
+        "agent_looping",
+        "agent_misunderstood",
+        "prompt_ambiguous",
+        "task_too_large",
+        "repo_complexity_high",
+        "abandoned_or_stopped",
+    }
+)
+MISUNDERSTANDING_CORRECTION_FAMILIES = frozenset(
+    {
+        "not_what_i_asked",
+        "not_what_i_meant",
+        "misunderstood",
+        "unexpected_action",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -42,6 +68,13 @@ class ClassificationContext:
     def evidence_event_ids(self, feature_names: list[str]) -> list[str]:
         return evidence_event_ids(self.message_features, self.session_features, feature_names)
 
+    def message_feature_values(self, feature_name: str) -> set[str]:
+        return {
+            feature.feature_value
+            for feature in self.message_features
+            if feature.feature_name == feature_name
+        }
+
 
 def classify_session(
     bundle: ParsedSessionBundle,
@@ -59,13 +92,23 @@ def classify_session(
         message_features=message_features,
         session_features={feature.feature_name: feature for feature in session_features},
     )
-    rules = (
+    label_rules = (
         user_stuck_classification,
         tooling_blocked_classification,
         agent_looping_classification,
         resolved_after_corrections_classification,
+        agent_misunderstood_classification,
+        prompt_ambiguous_classification,
+        task_too_large_classification,
+        repo_complexity_high_classification,
+        abandoned_or_stopped_classification,
     )
-    return [classification for rule in rules if (classification := rule(context)) is not None]
+    classifications = [
+        classification for rule in label_rules if (classification := rule(context)) is not None
+    ]
+    if healthy := healthy_classification(context, classifications):
+        classifications.append(healthy)
+    return classifications
 
 
 def user_stuck_classification(context: ClassificationContext) -> SessionClassification | None:
@@ -258,6 +301,280 @@ def resolved_after_corrections_classification(
     )
 
 
+def agent_misunderstood_classification(
+    context: ClassificationContext,
+) -> SessionClassification | None:
+    correction_count = context.int_feature("correction_count")
+    prompt_clarity_risk = context.float_feature("prompt_clarity_risk")
+    matched_families = context.message_feature_values("correction_marker")
+    direct_misunderstanding = bool(matched_families & MISUNDERSTANDING_CORRECTION_FAMILIES)
+    if not (
+        correction_count >= 1
+        and (
+            prompt_clarity_risk >= AGENT_MISUNDERSTOOD_PROMPT_RISK_THRESHOLD
+            or direct_misunderstanding
+        )
+    ):
+        return None
+
+    return classification(
+        analysis_run_id=context.analysis_run_id,
+        session_id=context.session_id,
+        label="agent_misunderstood",
+        score=max(prompt_clarity_risk, 0.50 if direct_misunderstanding else 0.0),
+        confidence=0.72 if direct_misunderstanding else 0.62,
+        evidence_event_ids=context.evidence_event_ids(
+            ["correction_marker", "prompt_clarity_risk"]
+        ),
+        evidence_summary=joined_evidence_summary(
+            "Session has misunderstanding evidence",
+            [
+                count_phrase(correction_count, "correction"),
+                families_phrase(matched_families, "correction marker"),
+                ratio_phrase(prompt_clarity_risk, "prompt clarity risk"),
+            ],
+        ),
+        metadata=classification_metadata(
+            rule="agent_misunderstood_v1",
+            score_feature="prompt_clarity_risk",
+            threshold=AGENT_MISUNDERSTOOD_PROMPT_RISK_THRESHOLD,
+            contributing_features=["correction_marker", "prompt_clarity_risk"],
+        ),
+    )
+
+
+def prompt_ambiguous_classification(context: ClassificationContext) -> SessionClassification | None:
+    prompt_clarity_risk = context.float_feature("prompt_clarity_risk")
+    scope_boundary_count = context.int_feature("scope_boundary_count")
+    ambiguity_count = context.int_feature("ambiguity_count")
+    failed_command_ratio = context.float_feature("failed_command_ratio")
+    if not (
+        prompt_clarity_risk >= PROMPT_AMBIGUOUS_THRESHOLD
+        and (scope_boundary_count >= 2 or ambiguity_count >= 1)
+        and failed_command_ratio < TOOLING_BLOCKED_FAILED_COMMAND_RATIO_THRESHOLD
+    ):
+        return None
+
+    return classification(
+        analysis_run_id=context.analysis_run_id,
+        session_id=context.session_id,
+        label="prompt_ambiguous",
+        score=prompt_clarity_risk,
+        confidence=0.66 if ambiguity_count else 0.58,
+        evidence_event_ids=context.evidence_event_ids(
+            ["scope_boundary_marker", "ambiguity_marker", "prompt_clarity_risk"]
+        ),
+        evidence_summary=joined_evidence_summary(
+            "Session has prompt-clarity risk evidence",
+            [
+                count_phrase(scope_boundary_count, "scope boundary"),
+                count_phrase(ambiguity_count, "ambiguity marker"),
+                ratio_phrase(prompt_clarity_risk, "prompt clarity risk"),
+            ],
+        ),
+        metadata=classification_metadata(
+            rule="prompt_ambiguous_v1",
+            score_feature="prompt_clarity_risk",
+            threshold=PROMPT_AMBIGUOUS_THRESHOLD,
+            contributing_features=[
+                "scope_boundary_count",
+                "correction_count",
+                "repeat_request_count",
+                "ambiguity_count",
+            ],
+        ),
+    )
+
+
+def task_too_large_classification(context: ClassificationContext) -> SessionClassification | None:
+    project_complexity_signal = context.float_feature("project_complexity_signal")
+    friction_score = context.float_feature("friction_score")
+    unresolved_ending_signal = context.bool_feature("unresolved_ending_signal")
+    edited_file_count = context.int_feature("edited_file_count")
+    command_count = context.int_feature("command_count")
+    broad_surface = edited_file_count >= 6 and command_count >= 8
+    has_friction = friction_score >= TASK_TOO_LARGE_FRICTION_THRESHOLD or unresolved_ending_signal
+    if not (
+        project_complexity_signal >= TASK_TOO_LARGE_COMPLEXITY_THRESHOLD
+        and has_friction
+        and (broad_surface or unresolved_ending_signal)
+    ):
+        return None
+
+    return classification(
+        analysis_run_id=context.analysis_run_id,
+        session_id=context.session_id,
+        label="task_too_large",
+        score=max(project_complexity_signal, friction_score),
+        confidence=0.60,
+        evidence_event_ids=context.evidence_event_ids(
+            [
+                "project_complexity_signal",
+                "friction_score",
+                "edited_file_count",
+                "command_count",
+                "unresolved_ending_signal",
+            ]
+        ),
+        evidence_summary=joined_evidence_summary(
+            "Session has broad task-surface evidence with friction",
+            [
+                count_phrase(edited_file_count, "edited file"),
+                count_phrase(command_count, "command"),
+                ratio_phrase(project_complexity_signal, "project complexity signal"),
+                ratio_phrase(friction_score, "friction score"),
+                "unresolved-ending evidence" if unresolved_ending_signal else "",
+            ],
+        ),
+        metadata=classification_metadata(
+            rule="task_too_large_v1",
+            score_feature="project_complexity_signal",
+            threshold=TASK_TOO_LARGE_COMPLEXITY_THRESHOLD,
+            contributing_features=[
+                "project_complexity_signal",
+                "friction_score",
+                "edited_file_count",
+                "command_count",
+            ],
+            extra_thresholds={"friction_score": TASK_TOO_LARGE_FRICTION_THRESHOLD},
+        ),
+    )
+
+
+def repo_complexity_high_classification(
+    context: ClassificationContext,
+) -> SessionClassification | None:
+    project_complexity_signal = context.float_feature("project_complexity_signal")
+    edited_file_count = context.int_feature("edited_file_count")
+    same_file_repeated_count = context.int_feature("same_file_edited_repeatedly_count")
+    command_count = context.int_feature("command_count")
+    tool_result_count = context.int_feature("tool_result_count")
+    activity_count = command_count + tool_result_count
+    if not (
+        project_complexity_signal >= REPO_COMPLEXITY_HIGH_THRESHOLD
+        and edited_file_count >= 2
+        and same_file_repeated_count >= 1
+        and activity_count >= 8
+    ):
+        return None
+
+    return classification(
+        analysis_run_id=context.analysis_run_id,
+        session_id=context.session_id,
+        label="repo_complexity_high",
+        score=project_complexity_signal,
+        confidence=0.55,
+        evidence_event_ids=context.evidence_event_ids(
+            [
+                "project_complexity_signal",
+                "edited_file_count",
+                "same_file_edited_repeatedly_count",
+                "command_count",
+                "tool_result_count",
+            ]
+        ),
+        evidence_summary=joined_evidence_summary(
+            "Session touched a complex-looking area",
+            [
+                count_phrase(edited_file_count, "edited file"),
+                count_phrase(same_file_repeated_count, "repeatedly edited file"),
+                count_phrase(activity_count, "command/tool result"),
+                ratio_phrase(project_complexity_signal, "project complexity signal"),
+            ],
+        ),
+        metadata=classification_metadata(
+            rule="repo_complexity_high_v1",
+            score_feature="project_complexity_signal",
+            threshold=REPO_COMPLEXITY_HIGH_THRESHOLD,
+            contributing_features=[
+                "edited_file_count",
+                "same_file_edited_repeatedly_count",
+                "max_edits_to_single_file",
+                "command_count",
+                "tool_result_count",
+            ],
+        ),
+    )
+
+
+def abandoned_or_stopped_classification(
+    context: ClassificationContext,
+) -> SessionClassification | None:
+    stop_or_pause_count = context.int_feature("stop_or_pause_count")
+    if stop_or_pause_count < 1 or not unresolved_stop_or_pause_evidence(
+        context.bundle,
+        context.message_features,
+    ):
+        return None
+
+    return classification(
+        analysis_run_id=context.analysis_run_id,
+        session_id=context.session_id,
+        label="abandoned_or_stopped",
+        score=0.65,
+        confidence=0.70,
+        evidence_event_ids=context.evidence_event_ids(["stop_or_pause_marker"]),
+        evidence_summary=joined_evidence_summary(
+            "Session has unresolved stop/defer evidence",
+            [count_phrase(stop_or_pause_count, "stop or pause marker")],
+        ),
+        metadata=classification_metadata(
+            rule="abandoned_or_stopped_v1",
+            score_feature="stop_or_pause_count",
+            threshold=1,
+            contributing_features=["stop_or_pause_marker", "assistant_final_answer"],
+        ),
+    )
+
+
+def healthy_classification(
+    context: ClassificationContext,
+    classifications: list[SessionClassification],
+) -> SessionClassification | None:
+    if any(classification.label in NEGATIVE_LABELS for classification in classifications):
+        return None
+    if classifications:
+        return None
+    message_count = context.int_feature("user_message_count") + context.int_feature(
+        "assistant_message_count"
+    )
+    if message_count < 1:
+        return None
+    if context.bool_feature("unresolved_ending_signal"):
+        return None
+    score_features = [
+        context.float_feature("friction_score"),
+        context.float_feature("stuckness_score"),
+        context.float_feature("agent_fit_risk"),
+    ]
+    if any(score >= HEALTHY_SCORE_THRESHOLD for score in score_features):
+        return None
+
+    return classification(
+        analysis_run_id=context.analysis_run_id,
+        session_id=context.session_id,
+        label="healthy",
+        score=1.0 - max(score_features, default=0.0),
+        confidence=0.55,
+        evidence_event_ids=[],
+        evidence_summary=(
+            "Session appears clean: no failure, repeat, correction, "
+            "or unresolved-ending evidence."
+        ),
+        metadata=classification_metadata(
+            rule="healthy_v1",
+            score_feature="friction_score/stuckness_score/agent_fit_risk",
+            threshold=HEALTHY_SCORE_THRESHOLD,
+            contributing_features=[
+                "friction_score",
+                "stuckness_score",
+                "agent_fit_risk",
+                "unresolved_ending_signal",
+            ],
+        ),
+    )
+
+
 def classification_metadata(
     *,
     rule: str,
@@ -297,6 +614,12 @@ def ratio_phrase(ratio: float, label: str) -> str:
     return f"{label} {ratio:.2f}"
 
 
+def families_phrase(families: set[str], label: str) -> str:
+    if not families:
+        return ""
+    return f"{label} families {', '.join(sorted(families))}"
+
+
 def resolved_after_last_correction(
     bundle: ParsedSessionBundle,
     message_features: list[MessageFeature],
@@ -332,6 +655,57 @@ def resolved_after_last_correction(
         and command.exit_code != 0
         for command in bundle.command_runs
     )
+
+
+def unresolved_stop_or_pause_evidence(
+    bundle: ParsedSessionBundle,
+    message_features: list[MessageFeature],
+) -> bool:
+    event_indexes = {
+        event.event_id: event.record_index
+        for event in bundle.raw_events
+        if event.event_id is not None
+    }
+    late_event_ids = ending_source_event_ids(bundle)
+    stop_or_pause_indexes = [
+        event_indexes[feature.source_event_id]
+        for feature in message_features
+        if feature.feature_name == "stop_or_pause_marker"
+        and feature.source_event_id in late_event_ids
+        and feature.source_event_id in event_indexes
+    ]
+    if not stop_or_pause_indexes:
+        return False
+
+    final_answer_indexes = [
+        event_indexes[message.source_event_id]
+        for message in bundle.messages
+        if message.role == NormalizedRole.ASSISTANT
+        and message.metadata.get("phase") == "final_answer"
+        and message.source_event_id in event_indexes
+    ]
+    return any(
+        not has_later_final_answer(stop_or_pause_index, final_answer_indexes)
+        for stop_or_pause_index in stop_or_pause_indexes
+    )
+
+
+def has_later_final_answer(record_index: int, final_answer_indexes: list[int]) -> bool:
+    return any(final_answer_index > record_index for final_answer_index in final_answer_indexes)
+
+
+def ending_source_event_ids(bundle: ParsedSessionBundle) -> set[str]:
+    if not bundle.raw_events:
+        return set()
+    event_count = len(bundle.raw_events)
+    window_size = min(20, max(5, int(event_count * 0.20)))
+    max_index = max(event.record_index for event in bundle.raw_events)
+    start_index = max(0, max_index - window_size + 1)
+    return {
+        event.event_id
+        for event in bundle.raw_events
+        if event.record_index >= start_index and event.event_id is not None
+    }
 
 
 def int_feature(features: dict[str, SessionFeature], name: str) -> int:
