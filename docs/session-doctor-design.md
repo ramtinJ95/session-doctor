@@ -72,8 +72,8 @@ straightforward, but they are not part of the first implementation slice.
 
 ## Current Repository State
 
-As of the current repository state, Phase 5 deterministic feature hardening is
-implemented and Phase 6 classification scoring is planned but not implemented.
+As of the current repository state, Phase 5 deterministic feature hardening and
+Phase 6 classification scoring are implemented.
 The repository has a working local CLI for ingesting and analyzing Codex and Pi
 session logs. It has discovery support for Claude Code, but Claude parsing
 remains intentionally unimplemented. The implemented vertical slice is:
@@ -246,23 +246,39 @@ session-scoped delete-and-replace: rerunning `analyze` for a session replaces
 that session's previous derived analysis rows.
 
 Current deterministic message features include repeated-request similarity and
-user text markers for correction, frustration, and scope boundaries. Marker
-features are deduplicated by marker family per message while preserving matched
-strings in evidence. Repeated-request features include matched prior message
-IDs, source event IDs, similarity score, and threshold evidence. Current session
-features include message counts, command/tool failure counts and ratios,
-repeated failure groups with group types and source event IDs, repeated command
-failure groups, edited file counts, same-file repeated edit counts with
-per-path source event IDs, maximum edits to one file, and conservative
-unresolved-ending evidence. Current classification labels are:
+user text markers for correction, frustration, scope boundaries, ambiguity, and
+stop/pause/defer signals. Marker features are deduplicated by marker family per
+message while preserving matched strings in evidence. Repeated-request features
+include matched prior message IDs, source event IDs, similarity score, and
+threshold evidence. Current session features include message counts,
+command/tool failure counts and ratios, repeated failure groups with group types
+and source event IDs, repeated command failure groups, edited file counts,
+same-file repeated edit counts with per-path source event IDs, maximum edits to
+one file, conservative unresolved-ending evidence, and reusable Phase 6 risk
+scores:
+
+- `friction_score`
+- `stuckness_score`
+- `prompt_clarity_risk`
+- `agent_fit_risk`
+- `project_complexity_signal`
+
+Current classification labels are:
 
 - `user_stuck`
 - `tooling_blocked`
 - `agent_looping`
 - `resolved_after_corrections`
+- `healthy`
+- `agent_misunderstood`
+- `prompt_ambiguous`
+- `task_too_large`
+- `repo_complexity_high`
+- `abandoned_or_stopped`
 
-Every classification stores score, confidence, evidence event IDs, and a short
-evidence summary.
+Every classification stores score, confidence, evidence event IDs, a short
+evidence summary, and rule metadata with thresholds and contributing features
+where applicable.
 
 ### Current Limitations
 
@@ -271,12 +287,6 @@ evidence summary.
   implemented.
 - Graph tables and Pydantic graph schemas exist, but no graph projection writer
   or reader is implemented yet.
-- Reusable Phase 6 risk score features such as `friction_score`,
-  `stuckness_score`, `prompt_clarity_risk`, `agent_fit_risk`, and
-  `project_complexity_signal` are not implemented yet.
-- Richer planned labels such as `healthy`, `agent_misunderstood`,
-  `prompt_ambiguous`, `task_too_large`, `repo_complexity_high`, and
-  `abandoned_or_stopped` are not implemented yet.
 - Aggregate summary and project-trend commands are not implemented yet.
 - Export commands are not implemented.
 - The tool is local-only and deterministic; it does not call LLMs or external
@@ -292,14 +302,11 @@ DuckDB initialization and round-tripping, adapter discovery, Codex parsing, Pi
 parsing, ingest behavior, session listing, feature extraction, classification,
 analysis persistence, analysis artifacts, and privacy helpers.
 
-This means the next useful implementation slice is Phase 6 classification
-scoring: reusable deterministic risk score features, clearer classification
-metadata, and conservative additional labels supported by existing evidence.
-After that, aggregate summaries over all sessions and over a specific
-project/folder should come before deeper project-level trend work. Human-readable
-reports and graph projection should come after those summary views exist, so
-they can reuse the same aggregate queries and evidence model rather than
-inventing a parallel reporting layer.
+This means the next useful implementation slice is aggregate summaries over all
+sessions and over a specific project/folder, followed by deeper project-level
+trend work. Human-readable reports and graph projection should come after those
+summary views exist, so they can reuse the same aggregate queries and evidence
+model rather than inventing a parallel reporting layer.
 
 ## Local Session Inspection Findings
 
@@ -1864,8 +1871,10 @@ Expected additions:
 Keep the scoring simple, deterministic, and explainable at first. Every
 classification should include evidence event IDs and an evidence summary.
 
-Status: planned. The detailed plan exists, but the current code still emits the
-Phase 5 feature set and the four initial session labels.
+Status: complete. The existing `analyze` command now emits Phase 6 score
+features as session features, surfaces them in terminal and JSON output, and
+stores metadata-rich deterministic labels without adding new command surfaces or
+schema tables.
 
 Detailed plan: `docs/phase-6-plan.md`.
 
