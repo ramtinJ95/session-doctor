@@ -1,6 +1,6 @@
 # Refactor PR Plan: Split Large Modules Safely
 
-Status: PRs 1-6 complete; PR 7 planned.
+Status: PRs 1-7 complete; optional PR 8 planned.
 
 This plan breaks the current god-file cleanup into focused, reviewable PRs. The
 goal is to reduce module size and coupling without changing behavior, schemas,
@@ -31,6 +31,8 @@ Items may be marked complete as the sequence lands.
   split into focused modules by PR 4.
 - `src/session_doctor/cli.py` — 645 lines. Mixes Typer declarations, workflow
   orchestration, validation, Rich rendering, artifact writing, and JSON payloads.
+  Status: CLI options, renderers, ingest workflow, analysis workflow, and
+  artifact helpers split into focused modules by PR 7.
 - `src/session_doctor/adapters/codex.py` — 621 lines. Mixes source discovery,
   parse dispatch, metadata extraction, warning policy, fallback message de-dupe,
   and Codex schema factories. Status: Codex metadata, records, messages, tools,
@@ -451,6 +453,8 @@ uv run pytest tests/test_codex_adapter.py tests/test_pi_adapter.py tests/test_ad
 - Full validation passes.
 
 ## PR 7 — Split CLI Workflows, Renderers, and Artifacts
+
+Status: complete.
 
 Risk: low-to-medium. CLI output is user-facing, but extraction can be mostly
 mechanical after analysis/store/adapters are smaller.
