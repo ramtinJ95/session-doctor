@@ -696,3 +696,12 @@ def test_pi_parse_source_emits_warnings_without_stopping() -> None:
     }
     assert len(bundle.parse_warnings) == 3
     assert len(bundle.messages) == 4
+
+
+def test_pi_facade_preserves_helper_imports() -> None:
+    from session_doctor.adapters import pi
+    from session_doctor.adapters.pi import phase_from_metadata
+
+    assert phase_from_metadata({"metadata": {"phase": "plan"}}) == "plan"
+    assert "phase_from_metadata" in pi.__all__
+    assert "arguments_from_tool_call_block" in pi.__all__

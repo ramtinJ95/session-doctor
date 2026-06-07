@@ -7,7 +7,7 @@ from session_doctor.ids import source_id_for_path
 from session_doctor.schemas import AgentName, NormalizedRole, RawEvent, SessionSource, SourceKind
 
 from .base import BaseAdapter, ParsedSessionBundle
-from .codex_commands import command_run_from_event_msg
+from .codex_commands import command_output_parts, command_run_from_event_msg, command_text
 from .codex_files import file_activities_from_patch_event
 from .codex_messages import (
     CODEX_MESSAGE_SOURCE_EVENT_MSG_FALLBACK,
@@ -18,7 +18,7 @@ from .codex_messages import (
     message_identity,
     normalize_codex_role,
 )
-from .codex_metadata import CodexSessionMetadata, extract_session_metadata
+from .codex_metadata import CodexSessionMetadata, extract_session_metadata, session_id_from_filename
 from .codex_records import raw_event_for_record, read_codex_jsonl
 from .codex_tools import (
     argument_keys,
@@ -203,10 +203,22 @@ __all__ = [
     "CodexAdapter",
     "CodexSessionMetadata",
     "argument_keys",
+    "command_output_parts",
+    "command_run_from_event_msg",
+    "command_text",
     "extract_session_metadata",
+    "file_activities_from_patch_event",
+    "has_nearby_response_message",
     "message_from_event_msg_fallback",
     "message_from_response_item",
+    "message_identity",
+    "model_usage_from_token_count",
     "normalize_codex_role",
     "raw_event_for_record",
     "read_codex_jsonl",
+    "session_id_from_filename",
+    "tool_call_from_response_item",
+    "tool_call_from_web_search_call",
+    "tool_result_from_response_item",
+    "tool_result_from_web_search_end",
 ]

@@ -177,3 +177,17 @@ def test_codex_parse_source_keeps_repeated_fallback_messages_across_turns(tmp_pa
         bundle.messages[1].metadata["codex_message_source"]
         == CODEX_MESSAGE_SOURCE_EVENT_MSG_FALLBACK
     )
+
+
+def test_codex_facade_preserves_helper_imports() -> None:
+    from session_doctor.adapters import codex
+    from session_doctor.adapters.codex import command_output_parts, command_text
+
+    assert command_text(["python", "-m", "pytest"]) == "python -m pytest"
+    assert command_output_parts({"aggregated_output": "failed"}) == (
+        "failed",
+        "",
+        "aggregated_output",
+    )
+    assert "command_text" in codex.__all__
+    assert "session_id_from_filename" in codex.__all__
