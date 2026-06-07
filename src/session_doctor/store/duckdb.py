@@ -15,23 +15,10 @@ from .connection import initialize_database
 from .json_values import duckdb_value, metadata_json, parse_metadata, parse_string_list
 from .models import SessionSummary, StoreInfo
 from .readers import (
-    latest_schema_version,
     list_session_summaries,
     load_session_bundle,
-    message_source_counts_by_session,
     store_info,
     table_count,
-)
-from .row_loaders import (
-    load_command_runs,
-    load_file_activities,
-    load_messages,
-    load_model_usage,
-    load_parse_warnings,
-    load_raw_events,
-    load_session,
-    load_tool_calls,
-    load_tool_results,
 )
 from .row_mappers import (
     analysis_run_rows,
@@ -47,12 +34,6 @@ from .row_mappers import (
     session_rows,
     tool_call_rows,
     tool_result_rows,
-)
-from .writers import (
-    delete_analysis_records,
-    delete_source_records,
-    insert_rows,
-    insert_session_source,
 )
 from .writers import (
     insert_parsed_bundle as write_parsed_bundle,
@@ -86,22 +67,6 @@ __all__ = [
 
 
 class DuckDBStore:
-    _schema_version = staticmethod(latest_schema_version)
-    _delete_source_records = staticmethod(delete_source_records)
-    _delete_analysis_records = staticmethod(delete_analysis_records)
-    _insert_session_source = staticmethod(insert_session_source)
-    _insert_rows = staticmethod(insert_rows)
-    _message_source_counts = staticmethod(message_source_counts_by_session)
-    _load_session = staticmethod(load_session)
-    _load_raw_events = staticmethod(load_raw_events)
-    _load_messages = staticmethod(load_messages)
-    _load_tool_calls = staticmethod(load_tool_calls)
-    _load_tool_results = staticmethod(load_tool_results)
-    _load_command_runs = staticmethod(load_command_runs)
-    _load_file_activities = staticmethod(load_file_activities)
-    _load_model_usage = staticmethod(load_model_usage)
-    _load_parse_warnings = staticmethod(load_parse_warnings)
-
     def __init__(self, database_path: Path) -> None:
         self.database_path = database_path.expanduser()
 
