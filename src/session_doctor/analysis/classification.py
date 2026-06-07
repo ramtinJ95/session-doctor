@@ -1,15 +1,42 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from session_doctor.adapters import ParsedSessionBundle
-from session_doctor.ids import stable_id
 from session_doctor.schemas import (
     MessageFeature,
     SessionClassification,
     SessionFeature,
 )
 
+from .classification_constants import (
+    AGENT_LOOPING_REPEATED_COMMAND_FAILURE_THRESHOLD,
+    AGENT_MISUNDERSTOOD_PROMPT_RISK_THRESHOLD,
+    HEALTHY_SCORE_THRESHOLD,
+    MISUNDERSTANDING_CORRECTION_FAMILIES,
+    NEGATIVE_LABELS,
+    PROMPT_AMBIGUOUS_THRESHOLD,
+    REPO_COMPLEXITY_HIGH_THRESHOLD,
+    RESOLVED_AFTER_CORRECTIONS_SCORE,
+    TASK_TOO_LARGE_COMPLEXITY_THRESHOLD,
+    TASK_TOO_LARGE_FRICTION_THRESHOLD,
+    TOOLING_BLOCKED_FAILED_COMMAND_RATIO_THRESHOLD,
+    TOOLING_BLOCKED_FAILED_TOOL_RESULT_RATIO_THRESHOLD,
+    TOOLING_BLOCKED_REPEATED_FAILURE_THRESHOLD,
+    USER_STUCK_STUCKNESS_THRESHOLD,
+)
+from .classification_context import (
+    ClassificationContext,
+    bool_feature,
+    float_feature,
+    int_feature,
+)
+from .classification_evidence import (
+    count_phrase,
+    evidence_event_ids,
+    families_phrase,
+    joined_evidence_summary,
+    ratio_phrase,
+)
+from .classification_factories import classification, classification_metadata
 from .ending import unresolved_stop_or_pause_evidence
 from .timeline import (
     has_assistant_final_answer,
@@ -19,70 +46,44 @@ from .timeline import (
     has_later_final_answer as timeline_has_later_final_answer,
 )
 
-USER_STUCK_STUCKNESS_THRESHOLD = 0.45
-TOOLING_BLOCKED_FAILED_COMMAND_RATIO_THRESHOLD = 0.50
-TOOLING_BLOCKED_FAILED_TOOL_RESULT_RATIO_THRESHOLD = 0.50
-TOOLING_BLOCKED_REPEATED_FAILURE_THRESHOLD = 2
-AGENT_LOOPING_REPEATED_COMMAND_FAILURE_THRESHOLD = 2
-RESOLVED_AFTER_CORRECTIONS_SCORE = 0.70
-HEALTHY_SCORE_THRESHOLD = 0.25
-AGENT_MISUNDERSTOOD_PROMPT_RISK_THRESHOLD = 0.35
-PROMPT_AMBIGUOUS_THRESHOLD = 0.55
-TASK_TOO_LARGE_COMPLEXITY_THRESHOLD = 0.65
-TASK_TOO_LARGE_FRICTION_THRESHOLD = 0.35
-REPO_COMPLEXITY_HIGH_THRESHOLD = 0.75
-NEGATIVE_LABELS = frozenset(
-    {
-        "user_stuck",
-        "tooling_blocked",
-        "agent_looping",
-        "agent_misunderstood",
-        "prompt_ambiguous",
-        "task_too_large",
-        "repo_complexity_high",
-        "abandoned_or_stopped",
-    }
-)
-MISUNDERSTANDING_CORRECTION_FAMILIES = frozenset(
-    {
-        "not_what_i_asked",
-        "not_what_i_meant",
-        "misunderstood",
-        "unexpected_action",
-    }
-)
-
-
-@dataclass(frozen=True)
-class ClassificationContext:
-    bundle: ParsedSessionBundle
-    analysis_run_id: str
-    message_features: list[MessageFeature]
-    session_features: dict[str, SessionFeature]
-
-    @property
-    def session_id(self) -> str:
-        assert self.bundle.session is not None
-        return self.bundle.session.session_id
-
-    def int_feature(self, name: str) -> int:
-        return int_feature(self.session_features, name)
-
-    def float_feature(self, name: str) -> float:
-        return float_feature(self.session_features, name)
-
-    def bool_feature(self, name: str) -> bool:
-        return bool_feature(self.session_features, name)
-
-    def evidence_event_ids(self, feature_names: list[str]) -> list[str]:
-        return evidence_event_ids(self.message_features, self.session_features, feature_names)
-
-    def message_feature_values(self, feature_name: str) -> set[str]:
-        return {
-            feature.feature_value
-            for feature in self.message_features
-            if feature.feature_name == feature_name
-        }
+__all__ = [
+    "AGENT_LOOPING_REPEATED_COMMAND_FAILURE_THRESHOLD",
+    "AGENT_MISUNDERSTOOD_PROMPT_RISK_THRESHOLD",
+    "ClassificationContext",
+    "HEALTHY_SCORE_THRESHOLD",
+    "MISUNDERSTANDING_CORRECTION_FAMILIES",
+    "NEGATIVE_LABELS",
+    "PROMPT_AMBIGUOUS_THRESHOLD",
+    "REPO_COMPLEXITY_HIGH_THRESHOLD",
+    "RESOLVED_AFTER_CORRECTIONS_SCORE",
+    "TASK_TOO_LARGE_COMPLEXITY_THRESHOLD",
+    "TASK_TOO_LARGE_FRICTION_THRESHOLD",
+    "TOOLING_BLOCKED_FAILED_COMMAND_RATIO_THRESHOLD",
+    "TOOLING_BLOCKED_FAILED_TOOL_RESULT_RATIO_THRESHOLD",
+    "TOOLING_BLOCKED_REPEATED_FAILURE_THRESHOLD",
+    "USER_STUCK_STUCKNESS_THRESHOLD",
+    "agent_looping_classification",
+    "agent_misunderstood_classification",
+    "bool_feature",
+    "classification",
+    "classification_metadata",
+    "classify_session",
+    "count_phrase",
+    "evidence_event_ids",
+    "families_phrase",
+    "float_feature",
+    "has_later_final_answer",
+    "healthy_classification",
+    "int_feature",
+    "joined_evidence_summary",
+    "prompt_ambiguous_classification",
+    "ratio_phrase",
+    "repo_complexity_high_classification",
+    "resolved_after_corrections_classification",
+    "task_too_large_classification",
+    "tooling_blocked_classification",
+    "user_stuck_classification",
+]
 
 
 def classify_session(
@@ -612,129 +613,5 @@ def healthy_classification(
     )
 
 
-def classification_metadata(
-    *,
-    rule: str,
-    contributing_features: list[str],
-    score_feature: str | None = None,
-    threshold: float | int | None = None,
-    extra_thresholds: dict[str, float | int] | None = None,
-    fixed_score: float | None = None,
-) -> dict[str, object]:
-    metadata: dict[str, object] = {
-        "rule": rule,
-        "contributing_features": contributing_features,
-    }
-    if score_feature is not None:
-        metadata["score_feature"] = score_feature
-    if threshold is not None:
-        metadata["threshold"] = threshold
-    if extra_thresholds:
-        metadata["extra_thresholds"] = extra_thresholds
-    if fixed_score is not None:
-        metadata["fixed_score"] = fixed_score
-    return metadata
-
-
-def joined_evidence_summary(prefix: str, evidence_parts: list[str]) -> str:
-    populated_parts = [part for part in evidence_parts if part]
-    if not populated_parts:
-        return f"{prefix}."
-    return f"{prefix}: {', '.join(populated_parts)}."
-
-
-def count_phrase(count: int, singular_label: str) -> str:
-    if count <= 0:
-        return ""
-    plural_label = singular_label if count == 1 else f"{singular_label}s"
-    return f"{count} {plural_label}"
-
-
-def ratio_phrase(ratio: float, label: str) -> str:
-    if ratio <= 0:
-        return ""
-    return f"{label} {ratio:.2f}"
-
-
-def families_phrase(families: set[str], label: str) -> str:
-    if not families:
-        return ""
-    return f"{label} families {', '.join(sorted(families))}"
-
-
 def has_later_final_answer(record_index: int | None, final_answer_indexes: list[int]) -> bool:
     return timeline_has_later_final_answer(record_index, final_answer_indexes)
-
-
-def int_feature(features: dict[str, SessionFeature], name: str) -> int:
-    feature = features.get(name)
-    if feature is None:
-        return 0
-    try:
-        return int(float(feature.feature_value))
-    except ValueError:
-        return 0
-
-
-def float_feature(features: dict[str, SessionFeature], name: str) -> float:
-    feature = features.get(name)
-    if feature is None:
-        return 0.0
-    try:
-        return float(feature.feature_value)
-    except ValueError:
-        return 0.0
-
-
-def bool_feature(features: dict[str, SessionFeature], name: str) -> bool:
-    feature = features.get(name)
-    return feature is not None and feature.feature_value == "true"
-
-
-def evidence_event_ids(
-    message_features: list[MessageFeature],
-    session_features: dict[str, SessionFeature],
-    feature_names: list[str],
-) -> list[str]:
-    event_ids: set[str] = set()
-    for feature in message_features:
-        if feature.feature_name in feature_names and feature.source_event_id:
-            event_ids.add(feature.source_event_id)
-    for feature_name in feature_names:
-        feature = session_features.get(feature_name)
-        if feature is None:
-            continue
-        raw_event_ids = feature.evidence.get("source_event_ids", [])
-        if not isinstance(raw_event_ids, list):
-            continue
-        event_ids.update(event_id for event_id in raw_event_ids if isinstance(event_id, str))
-    return sorted(event_ids)
-
-
-def classification(
-    *,
-    analysis_run_id: str,
-    session_id: str,
-    label: str,
-    score: float,
-    confidence: float,
-    evidence_event_ids: list[str],
-    evidence_summary: str,
-    metadata: dict[str, object],
-) -> SessionClassification:
-    return SessionClassification(
-        session_classification_id=stable_id(
-            "session_classification",
-            analysis_run_id,
-            session_id,
-            label,
-        ),
-        analysis_run_id=analysis_run_id,
-        session_id=session_id,
-        label=label,
-        score=score,
-        confidence=confidence,
-        evidence_event_ids=evidence_event_ids,
-        evidence_summary=evidence_summary,
-        metadata=metadata,
-    )
