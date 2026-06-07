@@ -417,6 +417,13 @@ def test_classify_session_detects_resolution_after_correction() -> None:
     assert "resolved_after_corrections" in labels
     assert "user_stuck" not in labels
     assert "agent_misunderstood" in labels
+    resolved = next(
+        classification
+        for classification in classifications
+        if classification.label == "resolved_after_corrections"
+    )
+    assert "score_feature" not in resolved.metadata
+    assert resolved.metadata["fixed_score"] == 0.7
 
 
 def test_classify_session_emits_healthy_for_clean_finished_session() -> None:
@@ -434,6 +441,87 @@ def test_classify_session_emits_healthy_for_clean_finished_session() -> None:
     healthy = classifications[0]
     assert healthy.metadata["rule"] == "healthy_v1"
     assert healthy.evidence_summary.startswith("Session appears clean")
+
+
+def test_classify_session_does_not_emit_healthy_for_unfinished_user_only_session() -> None:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    bundle = ParsedSessionBundle(
+        session=session,
+        raw_events=[
+            RawEvent(
+                event_id="event-1",
+                source_id="source-1",
+                agent_name=AgentName.CODEX,
+                record_index=1,
+            )
+        ],
+        messages=[
+            message(
+                "message-1",
+                NormalizedRole.USER,
+                "Please summarize the repository.",
+                "event-1",
+            )
+        ],
+    )
+    features = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    classifications = classify_session(
+        bundle,
+        analysis_run_id="analysis-1",
+        message_features=features.message_features,
+        session_features=features.session_features,
+    )
+
+    assert "healthy" not in {classification.label for classification in classifications}
+
+
+def test_classify_session_emits_tooling_blocked_for_failed_tool_ratio() -> None:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    bundle = ParsedSessionBundle(
+        session=session,
+        raw_events=[
+            RawEvent(
+                event_id="event-1",
+                source_id="source-1",
+                agent_name=AgentName.CODEX,
+                record_index=1,
+            )
+        ],
+        tool_results=[
+            ToolResult(
+                tool_result_id="tool-result-1",
+                session_id=session.session_id,
+                source_event_id="event-1",
+                is_error=True,
+            )
+        ],
+    )
+    features = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    classifications = classify_session(
+        bundle,
+        analysis_run_id="analysis-1",
+        message_features=features.message_features,
+        session_features=features.session_features,
+    )
+
+    tooling_blocked = next(
+        classification
+        for classification in classifications
+        if classification.label == "tooling_blocked"
+    )
+    assert tooling_blocked.evidence_event_ids == ["event-1"]
+    session_features = {feature.feature_name: feature for feature in features.session_features}
+    assert session_features["friction_score"].evidence["source_event_ids"] == ["event-1"]
 
 
 def test_classify_session_emits_prompt_ambiguous_from_calibrated_markers() -> None:
@@ -517,6 +605,140 @@ def test_classify_session_emits_abandoned_or_stopped_for_late_stop_marker() -> N
     assert "abandoned_or_stopped" in labels
     session_features = {feature.feature_name: feature for feature in features.session_features}
     assert session_features["stop_or_pause_count"].feature_value == "1"
+
+
+def test_abandoned_or_stopped_uses_timestamp_ending_window() -> None:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    start = datetime(2026, 5, 10, 8, 0, tzinfo=UTC)
+    raw_events = [
+        RawEvent(
+            event_id=f"event-{index}",
+            source_id="source-1",
+            agent_name=AgentName.CODEX,
+            record_index=index,
+            timestamp=start + timedelta(minutes=39 if index == 10 else index),
+        )
+        for index in range(1, 41)
+    ]
+    bundle = ParsedSessionBundle(
+        session=session,
+        raw_events=raw_events,
+        messages=[
+            message(
+                "message-1",
+                NormalizedRole.USER,
+                "Never mind, we can stop here.",
+                "event-10",
+            )
+        ],
+    )
+    features = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    classifications = classify_session(
+        bundle,
+        analysis_run_id="analysis-1",
+        message_features=features.message_features,
+        session_features=features.session_features,
+    )
+
+    abandoned = next(
+        classification
+        for classification in classifications
+        if classification.label == "abandoned_or_stopped"
+    )
+    assert abandoned.evidence_event_ids == ["event-10"]
+
+
+def test_abandoned_or_stopped_uses_only_unresolved_late_stop_evidence() -> None:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    raw_events = [
+        RawEvent(
+            event_id=f"event-{index}",
+            source_id="source-1",
+            agent_name=AgentName.CODEX,
+            record_index=index,
+        )
+        for index in range(1, 9)
+    ]
+    bundle = ParsedSessionBundle(
+        session=session,
+        raw_events=raw_events,
+        messages=[
+            message("message-1", NormalizedRole.USER, "Never mind for now.", "event-2"),
+            message(
+                "message-2",
+                NormalizedRole.ASSISTANT,
+                "Completed that part.",
+                "event-4",
+                metadata={"phase": "final_answer"},
+            ),
+            message("message-3", NormalizedRole.USER, "Not now, we can stop.", "event-8"),
+        ],
+    )
+    features = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    classifications = classify_session(
+        bundle,
+        analysis_run_id="analysis-1",
+        message_features=features.message_features,
+        session_features=features.session_features,
+    )
+
+    abandoned = next(
+        classification
+        for classification in classifications
+        if classification.label == "abandoned_or_stopped"
+    )
+    assert abandoned.evidence_event_ids == ["event-8"]
+    assert "1 late stop or pause marker" in abandoned.evidence_summary
+
+
+def test_stop_after_scope_instruction_does_not_emit_abandoned_or_stopped() -> None:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    bundle = ParsedSessionBundle(
+        session=session,
+        raw_events=[
+            RawEvent(
+                event_id="event-1",
+                source_id="source-1",
+                agent_name=AgentName.CODEX,
+                record_index=1,
+            )
+        ],
+        messages=[
+            message(
+                "message-1",
+                NormalizedRole.USER,
+                "Stop after updating docs.",
+                "event-1",
+            )
+        ],
+    )
+    features = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    classifications = classify_session(
+        bundle,
+        analysis_run_id="analysis-1",
+        message_features=features.message_features,
+        session_features=features.session_features,
+    )
+
+    labels = {classification.label for classification in classifications}
+    assert "abandoned_or_stopped" not in labels
+    session_features = {feature.feature_name: feature for feature in features.session_features}
+    assert session_features["stop_or_pause_count"].feature_value == "0"
 
 
 def test_unresolved_ending_ignores_markers_resolved_by_final_answer() -> None:
@@ -643,6 +865,12 @@ def test_agent_looping_repeated_failure_evidence_includes_event_ids() -> None:
         if classification.label == "agent_looping"
     )
     assert agent_looping.evidence_event_ids == ["event-1", "event-2", "event-3"]
+    assert "threshold" not in agent_looping.metadata
+    assert agent_looping.metadata["extra_thresholds"] == {
+        "repeat_request_count": 2,
+        "same_file_edited_repeatedly_count": 1,
+        "repeated_command_failure_count": 2,
+    }
 
 
 def test_agent_looping_ignores_non_command_repeated_failures() -> None:

@@ -135,6 +135,11 @@ STOP_OR_PAUSE_MARKERS = {
     "not now": "defer",
     "we can stop": "stop",
 }
+STOP_OR_PAUSE_CONTEXT_PATTERN = re.compile(r"\bstop\s+(after|before|when|once|if|at|on)\b")
+SESSION_FEATURE_EVIDENCE_ALIASES = {
+    "failed_command_ratio": ("failed_command_count",),
+    "failed_tool_result_ratio": ("failed_tool_result_count",),
+}
 
 
 @dataclass(frozen=True)
@@ -248,7 +253,7 @@ def marker_features(
         for feature_name, markers in marker_groups:
             matched_marker_families: defaultdict[str, list[str]] = defaultdict(list)
             for marker, marker_family in markers.items():
-                if marker_matches(text, marker):
+                if marker_matches_for_feature(text, feature_name, marker):
                     matched_marker_families[marker_family].append(marker)
             for marker_family, matched_markers in matched_marker_families.items():
                 features.append(
@@ -761,15 +766,20 @@ def source_event_ids_for_session_features(
 ) -> list[str]:
     source_event_ids: set[str] = set()
     for feature_name in feature_names:
-        feature = features.get(feature_name)
-        if feature is None:
-            continue
-        raw_source_event_ids = feature.evidence.get("source_event_ids", [])
-        if isinstance(raw_source_event_ids, list):
-            source_event_ids.update(
-                event_id for event_id in raw_source_event_ids if isinstance(event_id, str)
-            )
+        for evidence_feature_name in evidence_feature_names(feature_name):
+            feature = features.get(evidence_feature_name)
+            if feature is None:
+                continue
+            raw_source_event_ids = feature.evidence.get("source_event_ids", [])
+            if isinstance(raw_source_event_ids, list):
+                source_event_ids.update(
+                    event_id for event_id in raw_source_event_ids if isinstance(event_id, str)
+                )
     return sorted(source_event_ids)
+
+
+def evidence_feature_names(feature_name: str) -> tuple[str, ...]:
+    return (feature_name, *SESSION_FEATURE_EVIDENCE_ALIASES.get(feature_name, ()))
 
 
 def round_score_mapping(values: dict[str, float]) -> dict[str, float]:
@@ -907,16 +917,27 @@ def unresolved_ending_evidence(
         for message in bundle.messages
         if message.source_event_id in late_event_ids
     }
+    unresolved_message_feature_names = {
+        "correction_marker",
+        "frustration_marker",
+        "repeat_request_similarity",
+    }
     late_feature_names = {
         feature.feature_name
         for feature in message_features
         if feature.message_id in late_message_event_indexes
-        and feature.feature_name
-        in {
-            "correction_marker",
-            "frustration_marker",
-            "repeat_request_similarity",
-        }
+        and feature.feature_name in unresolved_message_feature_names
+        and not has_later_final_answer(
+            late_message_event_indexes[feature.message_id],
+            final_answer_indexes,
+        )
+    }
+    late_feature_source_event_ids = {
+        feature.source_event_id
+        for feature in message_features
+        if feature.message_id in late_message_event_indexes
+        and feature.source_event_id is not None
+        and feature.feature_name in unresolved_message_feature_names
         and not has_later_final_answer(
             late_message_event_indexes[feature.message_id],
             final_answer_indexes,
@@ -933,6 +954,17 @@ def unresolved_ending_evidence(
             final_answer_indexes,
         )
     ]
+    late_failed_command_source_event_ids = {
+        command.source_event_id
+        for command in bundle.command_runs
+        if command.source_event_id in late_event_ids
+        and command.exit_code is not None
+        and command.exit_code != 0
+        and not has_later_final_answer(
+            event_indexes.get(command.source_event_id),
+            final_answer_indexes,
+        )
+    }
     late_warning_ids = [
         warning.warning_id
         for warning in bundle.parse_warnings
@@ -950,6 +982,13 @@ def unresolved_ending_evidence(
         evidence["late_failed_command_ids"] = late_failed_command_ids
     if late_warning_ids:
         evidence["late_parse_warning_ids"] = late_warning_ids
+    source_event_ids = sorted(
+        event_id
+        for event_id in late_feature_source_event_ids | late_failed_command_source_event_ids
+        if event_id is not None
+    )
+    if source_event_ids:
+        evidence["source_event_ids"] = source_event_ids
     has_late_unresolved_signal = bool(evidence)
     if not final_answer_indexes and has_late_unresolved_signal:
         evidence["missing_final_answer"] = True
@@ -967,7 +1006,11 @@ def has_later_final_answer(
 
 def ending_source_event_ids(bundle: ParsedSessionBundle) -> set[str]:
     start_index = ending_record_index_start(bundle)
-    event_ids = {event.event_id for event in bundle.raw_events if event.record_index >= start_index}
+    event_ids = {
+        event.event_id
+        for event in bundle.raw_events
+        if event.record_index >= start_index and event.event_id is not None
+    }
     event_ids.update(timestamp_window_source_event_ids(bundle))
     return event_ids
 
@@ -1061,6 +1104,12 @@ def marker_matches(text: str, marker: str) -> bool:
     if " " in normalized_marker:
         return normalized_marker in text
     return re.search(rf"\b{re.escape(normalized_marker)}\b", text) is not None
+
+
+def marker_matches_for_feature(text: str, feature_name: str, marker: str) -> bool:
+    if feature_name == "stop_or_pause_marker" and marker == "stop":
+        return marker_matches(text, marker) and not STOP_OR_PAUSE_CONTEXT_PATTERN.search(text)
+    return marker_matches(text, marker)
 
 
 def char_grams(text: str, size: int = 4) -> frozenset[str]:

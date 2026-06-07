@@ -11,8 +11,11 @@ from session_doctor.schemas import (
     SessionFeature,
 )
 
+from .features import ending_source_event_ids as shared_ending_source_event_ids
+
 USER_STUCK_STUCKNESS_THRESHOLD = 0.45
 TOOLING_BLOCKED_FAILED_COMMAND_RATIO_THRESHOLD = 0.50
+TOOLING_BLOCKED_FAILED_TOOL_RESULT_RATIO_THRESHOLD = 0.50
 TOOLING_BLOCKED_REPEATED_FAILURE_THRESHOLD = 2
 AGENT_LOOPING_REPEATED_COMMAND_FAILURE_THRESHOLD = 2
 RESOLVED_AFTER_CORRECTIONS_SCORE = 0.70
@@ -179,6 +182,7 @@ def tooling_blocked_classification(context: ClassificationContext) -> SessionCla
     friction_score = context.float_feature("friction_score")
     if (
         failed_command_ratio < TOOLING_BLOCKED_FAILED_COMMAND_RATIO_THRESHOLD
+        and failed_tool_result_ratio < TOOLING_BLOCKED_FAILED_TOOL_RESULT_RATIO_THRESHOLD
         and repeated_failure_count < TOOLING_BLOCKED_REPEATED_FAILURE_THRESHOLD
     ):
         return None
@@ -190,6 +194,7 @@ def tooling_blocked_classification(context: ClassificationContext) -> SessionCla
         score=max(
             friction_score,
             failed_command_ratio,
+            failed_tool_result_ratio,
             min(1.0, 0.50 + 0.10 * repeated_failure_count),
         ),
         confidence=0.80,
@@ -214,6 +219,7 @@ def tooling_blocked_classification(context: ClassificationContext) -> SessionCla
                 "repeated_failure_count",
             ],
             extra_thresholds={
+                "failed_tool_result_ratio": TOOLING_BLOCKED_FAILED_TOOL_RESULT_RATIO_THRESHOLD,
                 "repeated_failure_count": TOOLING_BLOCKED_REPEATED_FAILURE_THRESHOLD,
             },
         ),
@@ -264,12 +270,16 @@ def agent_looping_classification(context: ClassificationContext) -> SessionClass
         metadata=classification_metadata(
             rule="agent_looping_v2",
             score_feature="agent_fit_risk",
-            threshold=AGENT_LOOPING_REPEATED_COMMAND_FAILURE_THRESHOLD,
             contributing_features=[
                 "repeat_request_count",
                 "same_file_edited_repeatedly_count",
                 "repeated_command_failure_count",
             ],
+            extra_thresholds={
+                "repeat_request_count": 2,
+                "same_file_edited_repeatedly_count": 1,
+                "repeated_command_failure_count": AGENT_LOOPING_REPEATED_COMMAND_FAILURE_THRESHOLD,
+            },
         ),
     )
 
@@ -294,9 +304,8 @@ def resolved_after_corrections_classification(
         evidence_summary="Session ends with a final answer after correction evidence.",
         metadata=classification_metadata(
             rule="resolved_after_corrections_v2",
-            score_feature="resolved_after_corrections_score",
-            threshold=RESOLVED_AFTER_CORRECTIONS_SCORE,
             contributing_features=["correction_marker", "assistant_final_answer"],
+            fixed_score=RESOLVED_AFTER_CORRECTIONS_SCORE,
         ),
     )
 
@@ -498,11 +507,11 @@ def repo_complexity_high_classification(
 def abandoned_or_stopped_classification(
     context: ClassificationContext,
 ) -> SessionClassification | None:
-    stop_or_pause_count = context.int_feature("stop_or_pause_count")
-    if stop_or_pause_count < 1 or not unresolved_stop_or_pause_evidence(
+    triggering_event_ids = unresolved_stop_or_pause_evidence(
         context.bundle,
         context.message_features,
-    ):
+    )
+    if not triggering_event_ids:
         return None
 
     return classification(
@@ -511,16 +520,15 @@ def abandoned_or_stopped_classification(
         label="abandoned_or_stopped",
         score=0.65,
         confidence=0.70,
-        evidence_event_ids=context.evidence_event_ids(["stop_or_pause_marker"]),
+        evidence_event_ids=triggering_event_ids,
         evidence_summary=joined_evidence_summary(
             "Session has unresolved stop/defer evidence",
-            [count_phrase(stop_or_pause_count, "stop or pause marker")],
+            [count_phrase(len(triggering_event_ids), "late stop or pause marker")],
         ),
         metadata=classification_metadata(
             rule="abandoned_or_stopped_v1",
-            score_feature="stop_or_pause_count",
-            threshold=1,
             contributing_features=["stop_or_pause_marker", "assistant_final_answer"],
+            extra_thresholds={"late_stop_or_pause_marker_count": 1},
         ),
     )
 
@@ -537,6 +545,8 @@ def healthy_classification(
         "assistant_message_count"
     )
     if message_count < 1:
+        return None
+    if not has_assistant_final_answer(context.bundle):
         return None
     if context.bool_feature("unresolved_ending_signal"):
         return None
@@ -575,19 +585,24 @@ def healthy_classification(
 def classification_metadata(
     *,
     rule: str,
-    score_feature: str,
-    threshold: float | int,
     contributing_features: list[str],
+    score_feature: str | None = None,
+    threshold: float | int | None = None,
     extra_thresholds: dict[str, float | int] | None = None,
+    fixed_score: float | None = None,
 ) -> dict[str, object]:
     metadata: dict[str, object] = {
         "rule": rule,
-        "score_feature": score_feature,
-        "threshold": threshold,
         "contributing_features": contributing_features,
     }
+    if score_feature is not None:
+        metadata["score_feature"] = score_feature
+    if threshold is not None:
+        metadata["threshold"] = threshold
     if extra_thresholds:
         metadata["extra_thresholds"] = extra_thresholds
+    if fixed_score is not None:
+        metadata["fixed_score"] = fixed_score
     return metadata
 
 
@@ -654,25 +669,32 @@ def resolved_after_last_correction(
     )
 
 
+def has_assistant_final_answer(bundle: ParsedSessionBundle) -> bool:
+    return any(
+        message.role == NormalizedRole.ASSISTANT and message.metadata.get("phase") == "final_answer"
+        for message in bundle.messages
+    )
+
+
 def unresolved_stop_or_pause_evidence(
     bundle: ParsedSessionBundle,
     message_features: list[MessageFeature],
-) -> bool:
+) -> list[str]:
     event_indexes = {
         event.event_id: event.record_index
         for event in bundle.raw_events
         if event.event_id is not None
     }
-    late_event_ids = ending_source_event_ids(bundle)
-    stop_or_pause_indexes = [
-        event_indexes[feature.source_event_id]
+    late_event_ids = shared_ending_source_event_ids(bundle)
+    stop_or_pause_events = [
+        (feature.source_event_id, event_indexes[feature.source_event_id])
         for feature in message_features
         if feature.feature_name == "stop_or_pause_marker"
         and feature.source_event_id in late_event_ids
         and feature.source_event_id in event_indexes
     ]
-    if not stop_or_pause_indexes:
-        return False
+    if not stop_or_pause_events:
+        return []
 
     final_answer_indexes = [
         event_indexes[message.source_event_id]
@@ -681,28 +703,18 @@ def unresolved_stop_or_pause_evidence(
         and message.metadata.get("phase") == "final_answer"
         and message.source_event_id in event_indexes
     ]
-    return any(
-        not has_later_final_answer(stop_or_pause_index, final_answer_indexes)
-        for stop_or_pause_index in stop_or_pause_indexes
+    return sorted(
+        {
+            source_event_id
+            for source_event_id, stop_or_pause_index in stop_or_pause_events
+            if source_event_id is not None
+            and not has_later_final_answer(stop_or_pause_index, final_answer_indexes)
+        }
     )
 
 
 def has_later_final_answer(record_index: int, final_answer_indexes: list[int]) -> bool:
     return any(final_answer_index > record_index for final_answer_index in final_answer_indexes)
-
-
-def ending_source_event_ids(bundle: ParsedSessionBundle) -> set[str]:
-    if not bundle.raw_events:
-        return set()
-    event_count = len(bundle.raw_events)
-    window_size = min(20, max(5, int(event_count * 0.20)))
-    max_index = max(event.record_index for event in bundle.raw_events)
-    start_index = max(0, max_index - window_size + 1)
-    return {
-        event.event_id
-        for event in bundle.raw_events
-        if event.record_index >= start_index and event.event_id is not None
-    }
 
 
 def int_feature(features: dict[str, SessionFeature], name: str) -> int:
