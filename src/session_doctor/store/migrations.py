@@ -34,13 +34,6 @@ def apply_migrations(connection: duckdb.DuckDBPyConnection) -> None:
         )
         """
     )
-    existing_version = current_database_version(connection)
-    if existing_version is not None and existing_version > SCHEMA_VERSION:
-        msg = (
-            f"Database schema version {existing_version} is newer than "
-            f"session-doctor supports ({SCHEMA_VERSION})."
-        )
-        raise RuntimeError(msg)
 
     for statement in CREATE_TABLE_STATEMENTS:
         connection.execute(statement)
@@ -49,11 +42,6 @@ def apply_migrations(connection: duckdb.DuckDBPyConnection) -> None:
         "INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)",
         [SCHEMA_VERSION],
     )
-
-
-def current_database_version(connection: duckdb.DuckDBPyConnection) -> int | None:
-    row = connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
-    return int(row[0]) if row and row[0] is not None else None
 
 
 CREATE_TABLE_STATEMENTS = (
