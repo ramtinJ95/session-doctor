@@ -6,12 +6,12 @@ from session_doctor.adapters import ParsedSessionBundle
 from session_doctor.ids import stable_id
 from session_doctor.schemas import (
     MessageFeature,
-    NormalizedRole,
     SessionClassification,
     SessionFeature,
 )
 
-from .features import ending_source_event_ids as shared_ending_source_event_ids
+from .ending import unresolved_stop_or_pause_evidence
+from .timeline import has_assistant_final_answer, resolved_after_last_correction
 
 USER_STUCK_STUCKNESS_THRESHOLD = 0.45
 TOOLING_BLOCKED_FAILED_COMMAND_RATIO_THRESHOLD = 0.50
@@ -654,91 +654,6 @@ def families_phrase(families: set[str], label: str) -> str:
     if not families:
         return ""
     return f"{label} families {', '.join(sorted(families))}"
-
-
-def resolved_after_last_correction(
-    bundle: ParsedSessionBundle,
-    message_features: list[MessageFeature],
-) -> bool:
-    event_indexes = {
-        event.event_id: event.record_index
-        for event in bundle.raw_events
-        if event.event_id is not None
-    }
-    correction_indexes = [
-        event_indexes[feature.source_event_id]
-        for feature in message_features
-        if feature.feature_name == "correction_marker" and feature.source_event_id in event_indexes
-    ]
-    if not correction_indexes:
-        return False
-    last_correction_index = max(correction_indexes)
-
-    final_answer_indexes = [
-        event_indexes[message.source_event_id]
-        for message in bundle.messages
-        if message.role == NormalizedRole.ASSISTANT
-        and message.metadata.get("phase") == "final_answer"
-        and message.source_event_id in event_indexes
-    ]
-    if not final_answer_indexes or max(final_answer_indexes) <= last_correction_index:
-        return False
-
-    return not any(
-        command.source_event_id in event_indexes
-        and event_indexes[command.source_event_id] > last_correction_index
-        and command.exit_code is not None
-        and command.exit_code != 0
-        for command in bundle.command_runs
-    )
-
-
-def has_assistant_final_answer(bundle: ParsedSessionBundle) -> bool:
-    return any(
-        message.role == NormalizedRole.ASSISTANT and message.metadata.get("phase") == "final_answer"
-        for message in bundle.messages
-    )
-
-
-def unresolved_stop_or_pause_evidence(
-    bundle: ParsedSessionBundle,
-    message_features: list[MessageFeature],
-) -> list[str]:
-    event_indexes = {
-        event.event_id: event.record_index
-        for event in bundle.raw_events
-        if event.event_id is not None
-    }
-    late_event_ids = shared_ending_source_event_ids(bundle)
-    stop_or_pause_events = [
-        (feature.source_event_id, event_indexes[feature.source_event_id])
-        for feature in message_features
-        if feature.feature_name == "stop_or_pause_marker"
-        and feature.source_event_id in late_event_ids
-        and feature.source_event_id in event_indexes
-    ]
-    if not stop_or_pause_events:
-        return []
-
-    final_answer_indexes = [
-        event_indexes[message.source_event_id]
-        for message in bundle.messages
-        if message.role == NormalizedRole.ASSISTANT
-        and message.metadata.get("phase") == "final_answer"
-        and message.source_event_id in event_indexes
-    ]
-    return sorted(
-        {
-            source_event_id
-            for source_event_id, stop_or_pause_index in stop_or_pause_events
-            if source_event_id is not None
-            and not has_later_final_answer(stop_or_pause_index, final_answer_indexes)
-        }
-    )
-
-
-def has_later_final_answer(record_index: int, final_answer_indexes: list[int]) -> bool:
-    return any(final_answer_index > record_index for final_answer_index in final_answer_indexes)
 
 
 def int_feature(features: dict[str, SessionFeature], name: str) -> int:
