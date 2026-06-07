@@ -8,7 +8,12 @@ from session_doctor.analysis import (
     analyze_features,
     classify_session,
 )
-from session_doctor.analysis.features import request_similarity
+from session_doctor.analysis.features import (
+    capped_count,
+    clamp01,
+    request_similarity,
+    score_feature_value,
+)
 from session_doctor.schemas import (
     AgentName,
     CommandRun,
@@ -118,6 +123,17 @@ def test_request_similarity_uses_fixture_calibrated_score_margins() -> None:
     assert max(negative_scores) < REPEAT_REQUEST_SIMILARITY_THRESHOLD
     assert max(near_miss_scores) < REPEAT_REQUEST_SIMILARITY_THRESHOLD
     assert min(positive_scores) - max(near_miss_scores) > 0.02
+
+
+def test_score_helpers_bound_and_format_scores() -> None:
+    assert clamp01(-0.25) == 0.0
+    assert clamp01(0.75) == 0.75
+    assert clamp01(1.25) == 1.0
+    assert capped_count(2, cap=4) == 0.5
+    assert capped_count(8, cap=4) == 1.0
+    assert capped_count(-1, cap=4) == 0.0
+    assert score_feature_value(0.3333) == "0.333"
+    assert score_feature_value(1.25) == "1.000"
 
 
 def test_analyze_features_detects_message_and_session_signals() -> None:
