@@ -1,6 +1,6 @@
 # Refactor PR Plan: Split Large Modules Safely
 
-Status: planned.
+Status: PR 1 complete; PRs 2-7 planned.
 
 This plan breaks the current god-file cleanup into focused, reviewable PRs. The
 goal is to reduce module size and coupling without changing behavior, schemas,
@@ -10,7 +10,10 @@ stored row semantics.
 Use this document as the starting point for future refactor work so the repo
 does not need another broad discovery pass before implementation.
 
-## Current Hotspots
+## Baseline Hotspots
+
+This section captures the pre-refactor baseline used to create the PR sequence.
+Items may be marked complete as the sequence lands.
 
 - `src/session_doctor/analysis/features.py` — 1,243 lines. Owns marker
   vocabularies, request similarity, message/session features, repeated failure
@@ -30,9 +33,10 @@ does not need another broad discovery pass before implementation.
   `src/session_doctor/adapters/pi_tools.py` — 528 lines. Pi parsing is partially
   extracted, but tool-call, tool-result, command, file, output/error, and usage
   concerns remain bundled together.
-- `tests/test_analysis.py` — 1,616 lines. Mega-test covering similarity,
-  scoring helpers, feature extraction, classification, unresolved endings,
-  repeated failures, and fixture builders.
+- `tests/test_analysis.py` — 1,616 lines before PR 1. Mega-test covering
+  similarity, scoring helpers, feature extraction, classification, unresolved
+  endings, repeated failures, and fixture builders. Status: split into
+  `tests/analysis/` by PR 1.
 
 ## Refactor Ground Rules
 
@@ -64,6 +68,8 @@ If an intermediate commit is intentionally mechanical and type checking is noisy
 until the last commit, still ensure the final PR state passes all four commands.
 
 ## PR 1 — Split Analysis Tests and Fixtures
+
+Status: complete.
 
 Risk: low. Production behavior should not change.
 
