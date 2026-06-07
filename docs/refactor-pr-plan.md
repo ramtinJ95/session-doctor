@@ -1,6 +1,6 @@
 # Refactor PR Plan: Split Large Modules Safely
 
-Status: PR 1 complete; PRs 2-7 planned.
+Status: PRs 1-2 complete; PRs 3-7 planned.
 
 This plan breaks the current god-file cleanup into focused, reviewable PRs. The
 goal is to reduce module size and coupling without changing behavior, schemas,
@@ -18,7 +18,7 @@ Items may be marked complete as the sequence lands.
 - `src/session_doctor/analysis/features.py` — 1,243 lines. Owns marker
   vocabularies, request similarity, message/session features, repeated failure
   evidence, file edit evidence, risk-score formulas, and unresolved-ending
-  evidence.
+  evidence. Status: timeline and ending helpers extracted by PR 2.
 - `src/session_doctor/store/duckdb.py` — 1,012 lines. Contains a 686-line
   `DuckDBStore` class plus row serializers and JSON/DB helpers.
 - `src/session_doctor/analysis/classification.py` — 791 lines. Owns threshold
@@ -121,6 +121,8 @@ Acceptance criteria:
 - Full validation passes.
 
 ## PR 2 — Extract Shared Analysis Timeline and Ending Helpers
+
+Status: complete.
 
 Risk: low-to-medium. This touches behavior-adjacent helper code used by both
 features and classification, so move code first before improving it.
