@@ -11,6 +11,12 @@ from session_doctor.schemas import (
     SessionFeature,
 )
 
+USER_STUCK_STUCKNESS_THRESHOLD = 0.45
+TOOLING_BLOCKED_FAILED_COMMAND_RATIO_THRESHOLD = 0.50
+TOOLING_BLOCKED_REPEATED_FAILURE_THRESHOLD = 2
+AGENT_LOOPING_REPEATED_COMMAND_FAILURE_THRESHOLD = 2
+RESOLVED_AFTER_CORRECTIONS_SCORE = 0.70
+
 
 @dataclass(frozen=True)
 class ClassificationContext:
@@ -67,10 +73,12 @@ def user_stuck_classification(context: ClassificationContext) -> SessionClassifi
     correction_count = context.int_feature("correction_count")
     frustration_count = context.int_feature("frustration_count")
     unresolved_ending_signal = context.bool_feature("unresolved_ending_signal")
+    stuckness_score = context.float_feature("stuckness_score")
     if not (
         repeat_request_count >= 2
         or correction_count >= 2
         or (unresolved_ending_signal and (correction_count > 0 or frustration_count > 0))
+        or stuckness_score >= USER_STUCK_STUCKNESS_THRESHOLD
     ):
         return None
 
@@ -78,13 +86,16 @@ def user_stuck_classification(context: ClassificationContext) -> SessionClassifi
         analysis_run_id=context.analysis_run_id,
         session_id=context.session_id,
         label="user_stuck",
-        score=min(
-            1.0,
-            0.40
-            + 0.15 * repeat_request_count
-            + 0.15 * correction_count
-            + 0.10 * frustration_count
-            + (0.20 if unresolved_ending_signal else 0.0),
+        score=max(
+            stuckness_score,
+            min(
+                1.0,
+                0.40
+                + 0.15 * repeat_request_count
+                + 0.15 * correction_count
+                + 0.10 * frustration_count
+                + (0.20 if unresolved_ending_signal else 0.0),
+            ),
         ),
         confidence=0.75,
         evidence_event_ids=context.evidence_event_ids(
@@ -95,31 +106,74 @@ def user_stuck_classification(context: ClassificationContext) -> SessionClassifi
                 "unresolved_ending_signal",
             ],
         ),
-        evidence_summary=(
-            "Session shows repeated request, correction, frustration, "
-            "or unresolved-ending evidence."
+        evidence_summary=joined_evidence_summary(
+            "Session shows stuckness evidence",
+            [
+                count_phrase(repeat_request_count, "repeated user request"),
+                count_phrase(correction_count, "correction"),
+                count_phrase(frustration_count, "frustration marker"),
+                "unresolved-ending evidence" if unresolved_ending_signal else "",
+            ],
         ),
-        metadata={"rule": "user_stuck_v1"},
+        metadata=classification_metadata(
+            rule="user_stuck_v2",
+            score_feature="stuckness_score",
+            threshold=USER_STUCK_STUCKNESS_THRESHOLD,
+            contributing_features=[
+                "repeat_request_count",
+                "correction_count",
+                "frustration_count",
+                "unresolved_ending_signal",
+            ],
+        ),
     )
 
 
 def tooling_blocked_classification(context: ClassificationContext) -> SessionClassification | None:
     failed_command_ratio = context.float_feature("failed_command_ratio")
     repeated_failure_count = context.int_feature("repeated_failure_count")
-    if failed_command_ratio < 0.50 and repeated_failure_count < 2:
+    failed_tool_result_ratio = context.float_feature("failed_tool_result_ratio")
+    friction_score = context.float_feature("friction_score")
+    if (
+        failed_command_ratio < TOOLING_BLOCKED_FAILED_COMMAND_RATIO_THRESHOLD
+        and repeated_failure_count < TOOLING_BLOCKED_REPEATED_FAILURE_THRESHOLD
+    ):
         return None
 
     return classification(
         analysis_run_id=context.analysis_run_id,
         session_id=context.session_id,
         label="tooling_blocked",
-        score=max(failed_command_ratio, min(1.0, 0.50 + 0.10 * repeated_failure_count)),
+        score=max(
+            friction_score,
+            failed_command_ratio,
+            min(1.0, 0.50 + 0.10 * repeated_failure_count),
+        ),
         confidence=0.80,
         evidence_event_ids=context.evidence_event_ids(
             ["failed_command_count", "failed_tool_result_count", "repeated_failure_count"],
         ),
-        evidence_summary="Session has failed command/tool evidence or repeated failures.",
-        metadata={"rule": "tooling_blocked_v1"},
+        evidence_summary=joined_evidence_summary(
+            "Session has tooling blocker evidence",
+            [
+                ratio_phrase(failed_command_ratio, "failed command ratio"),
+                ratio_phrase(failed_tool_result_ratio, "failed tool-result ratio"),
+                count_phrase(repeated_failure_count, "repeated failure"),
+            ],
+        ),
+        metadata=classification_metadata(
+            rule="tooling_blocked_v2",
+            score_feature="friction_score",
+            threshold=TOOLING_BLOCKED_FAILED_COMMAND_RATIO_THRESHOLD,
+            contributing_features=[
+                "failed_command_ratio",
+                "failed_tool_result_ratio",
+                "repeated_failure_count",
+            ],
+            extra_thresholds={
+                "repeated_failure_count": TOOLING_BLOCKED_REPEATED_FAILURE_THRESHOLD,
+            },
+        ),
     )
 
 
@@ -127,9 +181,10 @@ def agent_looping_classification(context: ClassificationContext) -> SessionClass
     repeat_request_count = context.int_feature("repeat_request_count")
     repeated_command_failure_count = context.int_feature("repeated_command_failure_count")
     same_file_repeated_count = context.int_feature("same_file_edited_repeatedly_count")
+    agent_fit_risk = context.float_feature("agent_fit_risk")
     if not (
         (repeat_request_count >= 2 and same_file_repeated_count >= 1)
-        or repeated_command_failure_count >= 2
+        or repeated_command_failure_count >= AGENT_LOOPING_REPEATED_COMMAND_FAILURE_THRESHOLD
     ):
         return None
 
@@ -137,12 +192,15 @@ def agent_looping_classification(context: ClassificationContext) -> SessionClass
         analysis_run_id=context.analysis_run_id,
         session_id=context.session_id,
         label="agent_looping",
-        score=min(
-            1.0,
-            0.45
-            + 0.15 * repeat_request_count
-            + 0.15 * same_file_repeated_count
-            + 0.10 * repeated_command_failure_count,
+        score=max(
+            agent_fit_risk,
+            min(
+                1.0,
+                0.45
+                + 0.15 * repeat_request_count
+                + 0.15 * same_file_repeated_count
+                + 0.10 * repeated_command_failure_count,
+            ),
         ),
         confidence=0.65,
         evidence_event_ids=context.evidence_event_ids(
@@ -152,10 +210,24 @@ def agent_looping_classification(context: ClassificationContext) -> SessionClass
                 "repeated_command_failure_count",
             ],
         ),
-        evidence_summary=(
-            "Session has repeated request/file-edit evidence or repeated command failures."
+        evidence_summary=joined_evidence_summary(
+            "Session has loop evidence",
+            [
+                count_phrase(repeat_request_count, "repeated user request"),
+                count_phrase(same_file_repeated_count, "repeatedly edited file"),
+                count_phrase(repeated_command_failure_count, "repeated command failure"),
+            ],
         ),
-        metadata={"rule": "agent_looping_v1"},
+        metadata=classification_metadata(
+            rule="agent_looping_v2",
+            score_feature="agent_fit_risk",
+            threshold=AGENT_LOOPING_REPEATED_COMMAND_FAILURE_THRESHOLD,
+            contributing_features=[
+                "repeat_request_count",
+                "same_file_edited_repeatedly_count",
+                "repeated_command_failure_count",
+            ],
+        ),
     )
 
 
@@ -173,12 +245,56 @@ def resolved_after_corrections_classification(
         analysis_run_id=context.analysis_run_id,
         session_id=context.session_id,
         label="resolved_after_corrections",
-        score=0.70,
+        score=RESOLVED_AFTER_CORRECTIONS_SCORE,
         confidence=0.60,
         evidence_event_ids=context.evidence_event_ids(["correction_marker"]),
         evidence_summary="Session ends with a final answer after correction evidence.",
-        metadata={"rule": "resolved_after_corrections_v1"},
+        metadata=classification_metadata(
+            rule="resolved_after_corrections_v2",
+            score_feature="resolved_after_corrections_score",
+            threshold=RESOLVED_AFTER_CORRECTIONS_SCORE,
+            contributing_features=["correction_marker", "assistant_final_answer"],
+        ),
     )
+
+
+def classification_metadata(
+    *,
+    rule: str,
+    score_feature: str,
+    threshold: float | int,
+    contributing_features: list[str],
+    extra_thresholds: dict[str, float | int] | None = None,
+) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "rule": rule,
+        "score_feature": score_feature,
+        "threshold": threshold,
+        "contributing_features": contributing_features,
+    }
+    if extra_thresholds:
+        metadata["extra_thresholds"] = extra_thresholds
+    return metadata
+
+
+def joined_evidence_summary(prefix: str, evidence_parts: list[str]) -> str:
+    populated_parts = [part for part in evidence_parts if part]
+    if not populated_parts:
+        return f"{prefix}."
+    return f"{prefix}: {', '.join(populated_parts)}."
+
+
+def count_phrase(count: int, singular_label: str) -> str:
+    if count <= 0:
+        return ""
+    plural_label = singular_label if count == 1 else f"{singular_label}s"
+    return f"{count} {plural_label}"
+
+
+def ratio_phrase(ratio: float, label: str) -> str:
+    if ratio <= 0:
+        return ""
+    return f"{label} {ratio:.2f}"
 
 
 def resolved_after_last_correction(
