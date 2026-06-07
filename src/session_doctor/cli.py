@@ -42,10 +42,17 @@ db_app = typer.Typer(help="Manage the local DuckDB store.")
 sessions_app = typer.Typer(help="Inspect ingested sessions.")
 
 ANALYSIS_SUMMARY_FEATURES = (
+    "friction_score",
+    "stuckness_score",
+    "prompt_clarity_risk",
+    "agent_fit_risk",
+    "project_complexity_signal",
     "repeat_request_count",
     "correction_count",
     "frustration_count",
     "scope_boundary_count",
+    "ambiguity_count",
+    "stop_or_pause_count",
     "failed_command_ratio",
     "repeated_failure_count",
     "repeated_command_failure_count",
@@ -437,7 +444,7 @@ def analyze(
         session_id=session_id,
         started_at=started_at,
         completed_at=datetime.now(UTC),
-        analyzer_version="phase5",
+        analyzer_version="phase6",
         artifact_path=str(artifact_path) if artifact_path else None,
     )
     payload = analysis_payload(

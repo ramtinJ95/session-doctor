@@ -260,11 +260,17 @@ def test_analyze_ingested_codex_session_writes_artifact_and_rows(tmp_path) -> No
     assert result.exit_code == 0
     assert "Session analysis" in result.stdout
     assert "Classifications" in result.stdout
+    assert "friction_score" in result.stdout
+    assert "stuckness_score" in result.stdout
     artifact_path = tmp_path / "artifacts" / f"{session_id}-analysis.json"
     assert artifact_path.exists()
     payload = cast("dict[str, Any]", json.loads(artifact_path.read_text()))
     assert payload["session"]["session_id"] == session_id
+    assert payload["analysis_run"]["analyzer_version"] == "phase6"
     assert "failed_command_ratio" in payload["summary_metrics"]
+    assert "friction_score" in payload["summary_metrics"]
+    friction_score = payload_feature(payload, "session_features", "friction_score")
+    assert friction_score["metadata"]["formula"] == "friction_score_v1"
     repeated_failure_evidence = payload_feature_evidence(
         payload, "session_features", "repeated_failure_count"
     )
@@ -278,6 +284,12 @@ def test_analyze_ingested_codex_session_writes_artifact_and_rows(tmp_path) -> No
     labels = {classification["label"] for classification in payload["classifications"]}
     assert {"user_stuck", "tooling_blocked"}.issubset(labels)
     assert "agent_looping" not in labels
+    user_stuck = next(
+        classification
+        for classification in payload["classifications"]
+        if classification["label"] == "user_stuck"
+    )
+    assert user_stuck["metadata"]["score_feature"] == "stuckness_score"
     assert store.table_count("analysis_runs") == 1
     assert store.table_count("session_features") > 0
     assert store.table_count("session_classifications") > 0
@@ -307,12 +319,14 @@ def test_analyze_ingested_pi_session_writes_artifact_and_rows(tmp_path) -> None:
     assert result.exit_code == 0
     assert "Session analysis" in result.stdout
     assert "Classifications" in result.stdout
+    assert "agent_fit_risk" in result.stdout
     artifact_path = tmp_path / "artifacts" / f"{session_id}-analysis.json"
     assert artifact_path.exists()
     payload = cast("dict[str, Any]", json.loads(artifact_path.read_text()))
     assert payload["session"]["session_id"] == session_id
     assert payload["session"]["agent_name"] == "pi"
     assert "failed_command_ratio" in payload["summary_metrics"]
+    assert "project_complexity_signal" in payload["summary_metrics"]
     repeated_failure_evidence = payload_feature_evidence(
         payload, "session_features", "repeated_failure_count"
     )
@@ -358,6 +372,7 @@ def test_analyze_json_format_still_writes_default_artifact(tmp_path) -> None:
     assert payload["session"]["session_id"] == session_id
     assert "session_features" in payload
     assert "classifications" in payload
+    assert "friction_score" in payload["summary_metrics"]
     assert (tmp_path / "artifacts" / f"{session_id}-analysis.json").exists()
 
 
