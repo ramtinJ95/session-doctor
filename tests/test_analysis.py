@@ -232,6 +232,11 @@ def test_risk_scores_distinguish_clean_and_complex_sessions() -> None:
     assert clean_features["agent_fit_risk"].score < 0.25
     assert complex_features["project_complexity_signal"].score >= 0.65
     assert complex_features["friction_score"].score < 0.25
+    assert "event-29" in complex_features["project_complexity_signal"].evidence["source_event_ids"]
+    assert "event-2" in complex_features["edited_file_count"].evidence["source_event_ids"]
+    assert "event-29" in complex_features["tool_result_count"].evidence["source_event_ids"]
+    assert "event-13" in complex_features["command_count"].evidence["source_event_ids"]
+    assert "event-13" in complex_features["max_edits_to_single_file"].evidence["source_event_ids"]
 
 
 def test_marker_features_deduplicate_same_family_per_message() -> None:
@@ -397,6 +402,8 @@ def test_classify_session_emits_initial_deterministic_labels() -> None:
         "repeat_request_count",
         "correction_count",
         "frustration_count",
+        "repeated_command_failure_count",
+        "same_file_edited_repeatedly_count",
         "unresolved_ending_signal",
     ]
     assert "repeated user request" in user_stuck.evidence_summary
@@ -542,6 +549,22 @@ def test_classify_session_emits_prompt_ambiguous_from_calibrated_markers() -> No
     assert session_features["prompt_clarity_risk"].score >= 0.55
 
 
+def test_classify_session_suppresses_prompt_ambiguous_for_failed_tooling() -> None:
+    bundle = prompt_ambiguous_with_tool_failure_bundle()
+    features = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    classifications = classify_session(
+        bundle,
+        analysis_run_id="analysis-1",
+        message_features=features.message_features,
+        session_features=features.session_features,
+    )
+
+    labels = {classification.label for classification in classifications}
+    assert "tooling_blocked" in labels
+    assert "prompt_ambiguous" not in labels
+
+
 def test_classify_session_avoids_prompt_ambiguous_for_single_scope_boundary() -> None:
     session = Session(
         session_id="session-1",
@@ -588,6 +611,35 @@ def test_classify_session_emits_size_and_complexity_labels_conservatively() -> N
     labels = {classification.label for classification in classifications}
     assert "task_too_large" in labels
     assert "repo_complexity_high" in labels
+    task_too_large = next(
+        classification
+        for classification in classifications
+        if classification.label == "task_too_large"
+    )
+    assert "unresolved_ending_signal" in task_too_large.metadata["contributing_features"]
+    assert task_too_large.metadata["extra_thresholds"] == {
+        "friction_score": 0.35,
+        "unresolved_ending_signal": 1,
+        "broad_surface_edited_file_count": 6,
+        "broad_surface_command_count": 8,
+    }
+
+
+def test_user_stuck_requires_user_facing_stuck_evidence() -> None:
+    bundle = tooling_loop_without_user_stuck_bundle()
+    features = analyze_features(bundle, analysis_run_id="analysis-1")
+
+    classifications = classify_session(
+        bundle,
+        analysis_run_id="analysis-1",
+        message_features=features.message_features,
+        session_features=features.session_features,
+    )
+
+    labels = {classification.label for classification in classifications}
+    assert "tooling_blocked" in labels
+    assert "agent_looping" in labels
+    assert "user_stuck" not in labels
 
 
 def test_classify_session_emits_abandoned_or_stopped_for_late_stop_marker() -> None:
@@ -1287,6 +1339,23 @@ def prompt_ambiguous_bundle() -> ParsedSessionBundle:
     return ParsedSessionBundle(session=session, raw_events=raw_events, messages=messages)
 
 
+def prompt_ambiguous_with_tool_failure_bundle() -> ParsedSessionBundle:
+    bundle = prompt_ambiguous_bundle()
+    assert bundle.session is not None
+    return bundle.model_copy(
+        update={
+            "tool_results": [
+                ToolResult(
+                    tool_result_id="tool-result-1",
+                    session_id=bundle.session.session_id,
+                    source_event_id="event-4",
+                    is_error=True,
+                )
+            ]
+        }
+    )
+
+
 def complex_high_friction_bundle() -> ParsedSessionBundle:
     session = Session(
         session_id="session-1",
@@ -1351,6 +1420,55 @@ def complex_high_friction_bundle() -> ParsedSessionBundle:
         messages=messages,
         command_runs=command_runs,
         tool_results=tool_results,
+        file_activities=file_activities,
+    )
+
+
+def tooling_loop_without_user_stuck_bundle() -> ParsedSessionBundle:
+    session = Session(
+        session_id="session-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+    )
+    raw_events = [
+        RawEvent(
+            event_id=f"event-{index}",
+            source_id="source-1",
+            agent_name=AgentName.CODEX,
+            record_index=index,
+        )
+        for index in range(1, 15)
+    ]
+    messages = [
+        message("message-1", NormalizedRole.USER, "Please run the implementation.", "event-1")
+    ]
+    command_runs = [
+        CommandRun(
+            command_run_id=f"command-{index}",
+            session_id=session.session_id,
+            source_event_id=f"event-{index + 1}",
+            command=f"pytest shard {index}",
+            exit_code=1,
+            stderr_hash="shared-loop-failure",
+        )
+        for index in range(1, 6)
+    ]
+    file_activities = [
+        FileActivity(
+            file_activity_id=f"file-{path_index}-{edit_index}",
+            session_id=session.session_id,
+            source_event_id=f"event-{path_index + edit_index + 6}",
+            path=f"src/file_{path_index}.py",
+            operation="edit",
+        )
+        for path_index in range(1, 4)
+        for edit_index in range(1, 3)
+    ]
+    return ParsedSessionBundle(
+        session=session,
+        raw_events=raw_events,
+        messages=messages,
+        command_runs=command_runs,
         file_activities=file_activities,
     )
 
