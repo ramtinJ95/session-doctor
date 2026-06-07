@@ -411,6 +411,43 @@ def test_pi_parse_source_marks_tool_result_failed_from_recursive_details(
     assert bundle.tool_results[0].is_error is True
 
 
+@pytest.mark.parametrize(
+    ("details", "case_id"),
+    [
+        ({"metadata": {"status": "success"}}, "success-status"),
+        ({"metadata": {"ok": True}}, "ok-true"),
+        ({"metadata": {"success": True}}, "success-true"),
+        ({"events": [{"status": "completed"}]}, "completed-event"),
+    ],
+)
+def test_pi_parse_source_does_not_mark_successful_tool_details_failed(
+    tmp_path,
+    details: dict[str, object],
+    case_id: str,
+) -> None:
+    session_path = tmp_path / f"pi-tool-result-success-{case_id}.jsonl"
+    records = [
+        session_record(f"pi-session-tool-success-{case_id}"),
+        {
+            "type": "message",
+            "id": "tool-result-1",
+            "timestamp": "2026-05-07T10:00:01.000Z",
+            "message": {
+                "role": "toolResult",
+                "toolCallId": "call-1",
+                "toolName": "webfetch",
+                "isError": False,
+                "details": {"output": "request succeeded", **details},
+            },
+        },
+    ]
+    write_jsonl(session_path, records)
+
+    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+
+    assert bundle.tool_results[0].is_error is False
+
+
 def test_pi_parse_source_dedupes_non_adjacent_bash_execution(tmp_path) -> None:
     session_path = tmp_path / "pi-bash-non-adjacent.jsonl"
     records = [
