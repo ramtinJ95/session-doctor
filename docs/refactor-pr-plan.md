@@ -1,6 +1,6 @@
 # Refactor PR Plan: Split Large Modules Safely
 
-Status: PRs 1-7 complete; optional PR 8 planned.
+Status: PRs 1-7 complete; optional PR 8 complete.
 
 This plan breaks the current god-file cleanup into focused, reviewable PRs. The
 goal is to reduce module size and coupling without changing behavior, schemas,
@@ -518,6 +518,8 @@ uv run session-doctor analyze <session-id> --db /tmp/session-doctor-refactor.duc
 - Full validation passes.
 
 ## Optional PR 8 — Remove Temporary Compatibility Re-exports
+
+Status: complete.
 
 Risk: low-to-medium, depending on downstream import assumptions.
 
