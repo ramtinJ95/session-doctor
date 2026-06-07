@@ -731,6 +731,7 @@ def message_feature(
     feature_value: str,
     score: float = 1.0,
     evidence: dict[str, object] | None = None,
+    metadata: dict[str, object] | None = None,
 ) -> MessageFeature:
     return MessageFeature(
         message_feature_id=stable_id(
@@ -748,6 +749,7 @@ def message_feature(
         feature_value=feature_value,
         score=score,
         evidence=evidence or {},
+        metadata=metadata or {},
     )
 
 
@@ -759,6 +761,7 @@ def session_feature(
     *,
     score: float = 1.0,
     evidence: dict[str, object] | None = None,
+    metadata: dict[str, object] | None = None,
 ) -> SessionFeature:
     return SessionFeature(
         session_feature_id=stable_id("session_feature", analysis_run_id, session_id, feature_name),
@@ -770,4 +773,5 @@ def session_feature(
         ),
         score=score,
         evidence=evidence or {},
+        metadata=metadata or {},
     )
