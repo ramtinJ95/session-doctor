@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from session_doctor.analysis import REPEAT_REQUEST_SIMILARITY_THRESHOLD
-from session_doctor.analysis.features import request_similarity
+from session_doctor.analysis.similarity import (
+    REPEAT_REQUEST_SIMILARITY_THRESHOLD,
+    request_similarity,
+)
 
 
 def test_request_similarity_uses_fixture_calibrated_score_margins() -> None:
