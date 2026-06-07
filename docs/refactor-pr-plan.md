@@ -1,6 +1,6 @@
 # Refactor PR Plan: Split Large Modules Safely
 
-Status: PRs 1-5 complete; PRs 6-7 planned.
+Status: PRs 1-6 complete; PR 7 planned.
 
 This plan breaks the current god-file cleanup into focused, reviewable PRs. The
 goal is to reduce module size and coupling without changing behavior, schemas,
@@ -33,11 +33,14 @@ Items may be marked complete as the sequence lands.
   orchestration, validation, Rich rendering, artifact writing, and JSON payloads.
 - `src/session_doctor/adapters/codex.py` — 621 lines. Mixes source discovery,
   parse dispatch, metadata extraction, warning policy, fallback message de-dupe,
-  and Codex schema factories.
+  and Codex schema factories. Status: Codex metadata, records, messages, tools,
+  commands, and file helpers split into focused modules by PR 6.
 - `src/session_doctor/adapters/pi.py` — 430 lines and
   `src/session_doctor/adapters/pi_tools.py` — 528 lines. Pi parsing is partially
   extracted, but tool-call, tool-result, command, file, output/error, and usage
-  concerns remain bundled together.
+  concerns remain bundled together. Status: Pi metadata, records, correlation,
+  messages, tool calls/results, commands, files, usage, and result heuristics
+  split into focused modules by PR 6.
 - `tests/test_analysis.py` — 1,616 lines before PR 1. Mega-test covering
   similarity, scoring helpers, feature extraction, classification, unresolved
   endings, repeated failures, and fixture builders. Status: split into
@@ -370,6 +373,8 @@ uv run pytest tests/test_store.py tests/test_cli.py -q
 - Full validation passes.
 
 ## PR 6 — Split Codex and Pi Adapter Internals
+
+Status: complete.
 
 Risk: medium. Adapter parsing is fixture-heavy and source-format-sensitive.
 
