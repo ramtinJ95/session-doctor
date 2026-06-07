@@ -1,10 +1,21 @@
 from __future__ import annotations
 
-from collections import Counter
+import re
+from collections import Counter, defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timedelta
+from math import isfinite
 
 from session_doctor.adapters import ParsedSessionBundle
-from session_doctor.schemas import MessageFeature, SessionFeature
+from session_doctor.ids import stable_id
+from session_doctor.schemas import (
+    CommandRun,
+    Message,
+    MessageFeature,
+    NormalizedRole,
+    SessionFeature,
+    ToolResult,
+)
 
 from . import ending as ending_helpers
 from .feature_factories import (
@@ -88,6 +99,7 @@ ENDING_WINDOW_MINUTES = ending_helpers.ENDING_WINDOW_MINUTES
 __all__ = [
     "AMBIGUITY_MARKERS",
     "CORRECTION_MARKERS",
+    "CommandRun",
     "ENDING_WINDOW_FRACTION",
     "ENDING_WINDOW_MAX_EVENTS",
     "ENDING_WINDOW_MIN_EVENTS",
@@ -97,6 +109,10 @@ __all__ = [
     "FRUSTRATION_MARKERS",
     "MINIMUM_COMPARABLE_TOKEN_COUNT",
     "MUTATING_FILE_OPERATIONS",
+    "Message",
+    "MessageFeature",
+    "NormalizedRole",
+    "ParsedSessionBundle",
     "REPEAT_REQUEST_SIMILARITY_THRESHOLD",
     "RequestSignature",
     "SCOPE_BOUNDARY_MARKERS",
@@ -105,7 +121,9 @@ __all__ = [
     "STOP_OR_PAUSE_CONTEXT_PATTERN",
     "STOP_OR_PAUSE_MARKERS",
     "SYNONYMS",
+    "SessionFeature",
     "SessionFeatureContext",
+    "ToolResult",
     "analyze_features",
     "bool_session_feature",
     "canonical_token",
@@ -114,6 +132,8 @@ __all__ = [
     "clamp01",
     "command_session_features",
     "count_messages",
+    "dataclass",
+    "defaultdict",
     "ending_record_index_start",
     "ending_source_event_ids",
     "evidence_feature_names",
@@ -123,6 +143,7 @@ __all__ = [
     "float_session_feature",
     "has_later_final_answer",
     "int_session_feature",
+    "isfinite",
     "jaccard",
     "marker_features",
     "marker_matches",
@@ -134,6 +155,7 @@ __all__ = [
     "normalize_request_text",
     "normalized_marker_text",
     "ratio",
+    "re",
     "repeated_command_loop_failure_groups",
     "repeated_failure_groups",
     "repeated_failure_max_repeat_count",
@@ -153,6 +175,7 @@ __all__ = [
     "session_feature_context",
     "signature_similarity",
     "source_event_ids_for_session_features",
+    "stable_id",
     "timestamp_window_source_event_ids",
     "token_is_salient",
     "tool_result_session_features",
