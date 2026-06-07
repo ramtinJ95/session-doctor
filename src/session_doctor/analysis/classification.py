@@ -323,9 +323,7 @@ def agent_misunderstood_classification(
         label="agent_misunderstood",
         score=max(prompt_clarity_risk, 0.50 if direct_misunderstanding else 0.0),
         confidence=0.72 if direct_misunderstanding else 0.62,
-        evidence_event_ids=context.evidence_event_ids(
-            ["correction_marker", "prompt_clarity_risk"]
-        ),
+        evidence_event_ids=context.evidence_event_ids(["correction_marker", "prompt_clarity_risk"]),
         evidence_summary=joined_evidence_summary(
             "Session has misunderstanding evidence",
             [
@@ -558,8 +556,7 @@ def healthy_classification(
         confidence=0.55,
         evidence_event_ids=[],
         evidence_summary=(
-            "Session appears clean: no failure, repeat, correction, "
-            "or unresolved-ending evidence."
+            "Session appears clean: no failure, repeat, correction, or unresolved-ending evidence."
         ),
         metadata=classification_metadata(
             rule="healthy_v1",

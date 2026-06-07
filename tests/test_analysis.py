@@ -462,9 +462,7 @@ def test_classify_session_avoids_prompt_ambiguous_for_single_scope_boundary() ->
     )
     bundle = ParsedSessionBundle(
         session=session,
-        messages=[
-            message("message-1", NormalizedRole.USER, "Only update README.md.", "event-1")
-        ],
+        messages=[message("message-1", NormalizedRole.USER, "Only update README.md.", "event-1")],
     )
     features = analyze_features(bundle, analysis_run_id="analysis-1")
 
@@ -487,9 +485,7 @@ def test_classify_session_emits_size_and_complexity_labels_conservatively() -> N
         low_friction_features.session_features,
     )
 
-    low_friction_labels = {
-        classification.label for classification in low_friction_classifications
-    }
+    low_friction_labels = {classification.label for classification in low_friction_classifications}
     assert "task_too_large" not in low_friction_labels
 
     bundle = complex_high_friction_bundle()
