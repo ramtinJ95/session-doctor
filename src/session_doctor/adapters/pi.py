@@ -14,10 +14,19 @@ from .common import (
     warning_for_record,
     warning_for_source,
 )
-from .pi_commands import command_run_from_bash_execution, command_run_from_tool_result
+from .pi_commands import (
+    bash_execution_parent_record_ids,
+    command_run_from_bash_execution,
+    command_run_from_tool_result,
+)
 from .pi_correlation import PiCommandCorrelation
 from .pi_files import file_activities_from_tool_call
-from .pi_messages import message_from_record, normalize_pi_role, phase_from_content
+from .pi_messages import (
+    message_from_record,
+    normalize_pi_role,
+    phase_from_content,
+    phase_from_metadata,
+)
 from .pi_metadata import (
     PiSessionMetadata,
     extract_session_metadata,
@@ -26,7 +35,7 @@ from .pi_metadata import (
     session_id_from_filename,
 )
 from .pi_records import raw_event_for_record, read_pi_jsonl
-from .pi_tool_calls import tool_call_from_block
+from .pi_tool_calls import arguments_from_tool_call_block, tool_call_from_block
 from .pi_tool_results import tool_result_from_message
 from .pi_usage import model_usage_from_message
 
@@ -186,13 +195,22 @@ __all__ = [
     "PiAdapter",
     "PiCommandCorrelation",
     "PiSessionMetadata",
+    "arguments_from_tool_call_block",
+    "bash_execution_parent_record_ids",
+    "command_run_from_bash_execution",
+    "command_run_from_tool_result",
     "extract_session_metadata",
+    "file_activities_from_tool_call",
     "has_usable_session_record",
     "message_from_record",
+    "model_usage_from_message",
     "normalize_pi_role",
     "phase_from_content",
+    "phase_from_metadata",
     "project_hint_from_source_path",
     "raw_event_for_record",
     "read_pi_jsonl",
     "session_id_from_filename",
+    "tool_call_from_block",
+    "tool_result_from_message",
 ]
