@@ -35,6 +35,21 @@ Phase 4 adds Pi as the second native adapter:
 - `session-doctor ingest --agent pi`
 - existing `sessions list` and `analyze` behavior over Pi-derived records
 
+Phase 5 hardens deterministic feature evidence:
+
+- preserved analysis ordering and normalized timestamps
+- richer repeated-failure, repeated-edit, and unresolved-ending evidence
+- narrower command-loop classification behavior
+
+Phase 6 adds classification scoring:
+
+- reusable risk score features for friction, stuckness, prompt clarity, agent
+  fit, and project complexity
+- metadata-rich deterministic classifications
+- conservative labels such as `healthy`, `agent_misunderstood`,
+  `prompt_ambiguous`, `task_too_large`, `repo_complexity_high`, and
+  `abandoned_or_stopped`
+
 ## Usage
 
 Install dependencies:

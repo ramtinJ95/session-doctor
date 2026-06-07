@@ -1,6 +1,27 @@
 # Phase 6 Plan: Classification Scoring
 
-Status: planned.
+Status: complete.
+
+Implemented scope:
+
+- Added reusable `SessionFeature` score rows for `friction_score`,
+  `stuckness_score`, `prompt_clarity_risk`, `agent_fit_risk`, and
+  `project_complexity_signal`.
+- Added score formula metadata with component values, weights, contributions,
+  and contributing feature/source-event evidence.
+- Added narrow ambiguity and stop/pause marker features plus session counts used
+  by Phase 6 labels.
+- Preserved existing labels while adding metadata-rich v2 rules and more
+  specific evidence summaries.
+- Added conservative labels for `healthy`, `agent_misunderstood`,
+  `prompt_ambiguous`, `task_too_large`, `repo_complexity_high`, and
+  `abandoned_or_stopped` with regression tests for important boundaries.
+- Kept the existing `analyze` command and JSON artifact top-level shape while
+  exposing the new score features through `summary_metrics` and
+  `session_features`.
+- Kept Phase 6 local-only and deterministic, without schema migrations, LLM
+  calls, embeddings, ML dependencies, aggregate commands, reports, or graph
+  projection.
 
 ## Goal
 
@@ -20,7 +41,7 @@ project complexity signal. Session classifications should remain deterministic
 and explainable, but should be easier for the future `summary` and `trends`
 commands to rank and aggregate.
 
-## Current Starting Point
+## Starting Point Before Implementation
 
 Phases 1 through 5 provide:
 
@@ -49,7 +70,7 @@ Phases 1 through 5 provide:
 - tests for Codex/Pi adapters, store behavior, CLI ingest/list/analyze, and
   deterministic analysis
 
-The important missing pieces are:
+The important missing pieces at the start of Phase 6 were:
 
 - reusable score features such as `friction_score`, `stuckness_score`,
   `prompt_clarity_risk`, `agent_fit_risk`, and `project_complexity_signal`
