@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,41 @@ PI_METADATA_ONLY_TYPES = {
 }
 
 
+@dataclass
+class PiCommandCorrelation:
+    tool_call_arguments_by_id: dict[str, dict[str, Any]]
+    tool_call_id_by_tool_result_id: dict[str, str]
+    bash_execution_parent_ids: set[str]
+
+    @classmethod
+    def from_records(cls, records: list[JsonRecord]) -> PiCommandCorrelation:
+        return cls(
+            tool_call_arguments_by_id={},
+            tool_call_id_by_tool_result_id={},
+            bash_execution_parent_ids=bash_execution_parent_record_ids(records),
+        )
+
+    def remember_tool_call_arguments(
+        self,
+        native_tool_call_id: str | None,
+        block: dict[str, Any],
+    ) -> None:
+        if native_tool_call_id is None:
+            return
+        self.tool_call_arguments_by_id[native_tool_call_id] = arguments_from_tool_call_block(block)
+
+    def remember_tool_result_link(self, record: dict[str, Any]) -> None:
+        message_payload = dict_value(record.get("message"))
+        call_id = string_value(message_payload.get("toolCallId"))
+        native_tool_result_id = string_value(record.get("id"))
+        if call_id and native_tool_result_id:
+            self.tool_call_id_by_tool_result_id[native_tool_result_id] = call_id
+
+    def has_bash_execution_result(self, record: dict[str, Any]) -> bool:
+        native_tool_result_id = string_value(record.get("id"))
+        return native_tool_result_id in self.bash_execution_parent_ids
+
+
 class PiAdapter(BaseAdapter):
     name = AgentName.PI
     display_name = "Pi"
@@ -97,9 +133,7 @@ class PiAdapter(BaseAdapter):
                 )
             )
         metadata_only_counts: dict[str, int] = {}
-        tool_call_arguments_by_id: dict[str, dict[str, Any]] = {}
-        tool_call_id_by_tool_result_id: dict[str, str] = {}
-        bash_execution_parent_ids = bash_execution_parent_record_ids(valid_records)
+        command_correlation = PiCommandCorrelation.from_records(valid_records)
 
         for record_index, record in valid_records:
             record_type = string_value(record.get("type"))
@@ -134,10 +168,10 @@ class PiAdapter(BaseAdapter):
                             block_index,
                         )
                         bundle.tool_calls.append(tool_call)
-                        if tool_call.native_tool_call_id:
-                            tool_call_arguments_by_id[tool_call.native_tool_call_id] = (
-                                arguments_from_tool_call_block(block)
-                            )
+                        command_correlation.remember_tool_call_arguments(
+                            tool_call.native_tool_call_id,
+                            block,
+                        )
                         bundle.file_activities.extend(
                             file_activities_from_tool_call(
                                 session_metadata.session_id,
@@ -150,19 +184,16 @@ class PiAdapter(BaseAdapter):
                     if usage:
                         bundle.model_usage.append(usage)
                 elif string_value(message_payload.get("role")) == "toolResult":
-                    call_id = string_value(message_payload.get("toolCallId"))
-                    native_tool_result_id = string_value(record.get("id"))
-                    if call_id and native_tool_result_id:
-                        tool_call_id_by_tool_result_id[native_tool_result_id] = call_id
+                    command_correlation.remember_tool_result_link(record)
                     bundle.tool_results.append(
                         tool_result_from_message(session_metadata.session_id, event, record)
                     )
-                    if native_tool_result_id not in bash_execution_parent_ids:
+                    if not command_correlation.has_bash_execution_result(record):
                         command_run = command_run_from_tool_result(
                             session_metadata.session_id,
                             event,
                             record,
-                            tool_call_arguments_by_id,
+                            command_correlation.tool_call_arguments_by_id,
                         )
                         if command_run:
                             bundle.command_runs.append(command_run)
@@ -172,7 +203,7 @@ class PiAdapter(BaseAdapter):
                             session_metadata.session_id,
                             event,
                             record,
-                            tool_call_id_by_tool_result_id,
+                            command_correlation.tool_call_id_by_tool_result_id,
                         )
                     )
                 bundle.messages.append(
