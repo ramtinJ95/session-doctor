@@ -53,113 +53,132 @@ def classify_session(
         message_features=message_features,
         session_features={feature.feature_name: feature for feature in session_features},
     )
-    classifications: list[SessionClassification] = []
+    rules = (
+        user_stuck_classification,
+        tooling_blocked_classification,
+        agent_looping_classification,
+        resolved_after_corrections_classification,
+    )
+    return [classification for rule in rules if (classification := rule(context)) is not None]
 
+
+def user_stuck_classification(context: ClassificationContext) -> SessionClassification | None:
     repeat_request_count = context.int_feature("repeat_request_count")
     correction_count = context.int_feature("correction_count")
     frustration_count = context.int_feature("frustration_count")
-    failed_command_ratio = context.float_feature("failed_command_ratio")
-    repeated_failure_count = context.int_feature("repeated_failure_count")
-    repeated_command_failure_count = context.int_feature("repeated_command_failure_count")
-    same_file_repeated_count = context.int_feature("same_file_edited_repeatedly_count")
     unresolved_ending_signal = context.bool_feature("unresolved_ending_signal")
-
-    if (
+    if not (
         repeat_request_count >= 2
         or correction_count >= 2
         or (unresolved_ending_signal and (correction_count > 0 or frustration_count > 0))
     ):
-        classifications.append(
-            classification(
-                analysis_run_id=context.analysis_run_id,
-                session_id=context.session_id,
-                label="user_stuck",
-                score=min(
-                    1.0,
-                    0.40
-                    + 0.15 * repeat_request_count
-                    + 0.15 * correction_count
-                    + 0.10 * frustration_count
-                    + (0.20 if unresolved_ending_signal else 0.0),
-                ),
-                confidence=0.75,
-                evidence_event_ids=context.evidence_event_ids(
-                    [
-                        "repeat_request_similarity",
-                        "correction_marker",
-                        "frustration_marker",
-                        "unresolved_ending_signal",
-                    ],
-                ),
-                evidence_summary=(
-                    "Session shows repeated request, correction, frustration, "
-                    "or unresolved-ending evidence."
-                ),
-                metadata={"rule": "user_stuck_v1"},
-            )
-        )
+        return None
 
-    if failed_command_ratio >= 0.50 or repeated_failure_count >= 2:
-        classifications.append(
-            classification(
-                analysis_run_id=context.analysis_run_id,
-                session_id=context.session_id,
-                label="tooling_blocked",
-                score=max(failed_command_ratio, min(1.0, 0.50 + 0.10 * repeated_failure_count)),
-                confidence=0.80,
-                evidence_event_ids=context.evidence_event_ids(
-                    ["failed_command_count", "failed_tool_result_count", "repeated_failure_count"],
-                ),
-                evidence_summary="Session has failed command/tool evidence or repeated failures.",
-                metadata={"rule": "tooling_blocked_v1"},
-            )
-        )
+    return classification(
+        analysis_run_id=context.analysis_run_id,
+        session_id=context.session_id,
+        label="user_stuck",
+        score=min(
+            1.0,
+            0.40
+            + 0.15 * repeat_request_count
+            + 0.15 * correction_count
+            + 0.10 * frustration_count
+            + (0.20 if unresolved_ending_signal else 0.0),
+        ),
+        confidence=0.75,
+        evidence_event_ids=context.evidence_event_ids(
+            [
+                "repeat_request_similarity",
+                "correction_marker",
+                "frustration_marker",
+                "unresolved_ending_signal",
+            ],
+        ),
+        evidence_summary=(
+            "Session shows repeated request, correction, frustration, "
+            "or unresolved-ending evidence."
+        ),
+        metadata={"rule": "user_stuck_v1"},
+    )
 
-    if (repeat_request_count >= 2 and same_file_repeated_count >= 1) or (
-        repeated_command_failure_count >= 2
+
+def tooling_blocked_classification(context: ClassificationContext) -> SessionClassification | None:
+    failed_command_ratio = context.float_feature("failed_command_ratio")
+    repeated_failure_count = context.int_feature("repeated_failure_count")
+    if failed_command_ratio < 0.50 and repeated_failure_count < 2:
+        return None
+
+    return classification(
+        analysis_run_id=context.analysis_run_id,
+        session_id=context.session_id,
+        label="tooling_blocked",
+        score=max(failed_command_ratio, min(1.0, 0.50 + 0.10 * repeated_failure_count)),
+        confidence=0.80,
+        evidence_event_ids=context.evidence_event_ids(
+            ["failed_command_count", "failed_tool_result_count", "repeated_failure_count"],
+        ),
+        evidence_summary="Session has failed command/tool evidence or repeated failures.",
+        metadata={"rule": "tooling_blocked_v1"},
+    )
+
+
+def agent_looping_classification(context: ClassificationContext) -> SessionClassification | None:
+    repeat_request_count = context.int_feature("repeat_request_count")
+    repeated_command_failure_count = context.int_feature("repeated_command_failure_count")
+    same_file_repeated_count = context.int_feature("same_file_edited_repeatedly_count")
+    if not (
+        (repeat_request_count >= 2 and same_file_repeated_count >= 1)
+        or repeated_command_failure_count >= 2
     ):
-        classifications.append(
-            classification(
-                analysis_run_id=context.analysis_run_id,
-                session_id=context.session_id,
-                label="agent_looping",
-                score=min(
-                    1.0,
-                    0.45
-                    + 0.15 * repeat_request_count
-                    + 0.15 * same_file_repeated_count
-                    + 0.10 * repeated_command_failure_count,
-                ),
-                confidence=0.65,
-                evidence_event_ids=context.evidence_event_ids(
-                    [
-                        "repeat_request_similarity",
-                        "same_file_edited_repeatedly_count",
-                        "repeated_command_failure_count",
-                    ],
-                ),
-                evidence_summary=(
-                    "Session has repeated request/file-edit evidence or repeated command failures."
-                ),
-                metadata={"rule": "agent_looping_v1"},
-            )
-        )
+        return None
 
-    if correction_count >= 1 and resolved_after_last_correction(bundle, message_features):
-        classifications.append(
-            classification(
-                analysis_run_id=context.analysis_run_id,
-                session_id=context.session_id,
-                label="resolved_after_corrections",
-                score=0.70,
-                confidence=0.60,
-                evidence_event_ids=context.evidence_event_ids(["correction_marker"]),
-                evidence_summary="Session ends with a final answer after correction evidence.",
-                metadata={"rule": "resolved_after_corrections_v1"},
-            )
-        )
+    return classification(
+        analysis_run_id=context.analysis_run_id,
+        session_id=context.session_id,
+        label="agent_looping",
+        score=min(
+            1.0,
+            0.45
+            + 0.15 * repeat_request_count
+            + 0.15 * same_file_repeated_count
+            + 0.10 * repeated_command_failure_count,
+        ),
+        confidence=0.65,
+        evidence_event_ids=context.evidence_event_ids(
+            [
+                "repeat_request_similarity",
+                "same_file_edited_repeatedly_count",
+                "repeated_command_failure_count",
+            ],
+        ),
+        evidence_summary=(
+            "Session has repeated request/file-edit evidence or repeated command failures."
+        ),
+        metadata={"rule": "agent_looping_v1"},
+    )
 
-    return classifications
+
+def resolved_after_corrections_classification(
+    context: ClassificationContext,
+) -> SessionClassification | None:
+    correction_count = context.int_feature("correction_count")
+    if correction_count < 1 or not resolved_after_last_correction(
+        context.bundle,
+        context.message_features,
+    ):
+        return None
+
+    return classification(
+        analysis_run_id=context.analysis_run_id,
+        session_id=context.session_id,
+        label="resolved_after_corrections",
+        score=0.70,
+        confidence=0.60,
+        evidence_event_ids=context.evidence_event_ids(["correction_marker"]),
+        evidence_summary="Session ends with a final answer after correction evidence.",
+        metadata={"rule": "resolved_after_corrections_v1"},
+    )
 
 
 def resolved_after_last_correction(
