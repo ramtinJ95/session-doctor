@@ -383,6 +383,23 @@ def test_classify_session_emits_initial_deterministic_labels() -> None:
         if classification.label == "tooling_blocked"
     )
     assert tooling_blocked.evidence_event_ids
+    assert tooling_blocked.metadata["rule"] == "tooling_blocked_v2"
+    assert tooling_blocked.metadata["score_feature"] == "friction_score"
+    assert tooling_blocked.metadata["threshold"] == 0.5
+    assert tooling_blocked.evidence_summary.startswith("Session has tooling blocker evidence")
+
+    user_stuck = next(
+        classification for classification in classifications if classification.label == "user_stuck"
+    )
+    assert user_stuck.metadata["rule"] == "user_stuck_v2"
+    assert user_stuck.metadata["score_feature"] == "stuckness_score"
+    assert user_stuck.metadata["contributing_features"] == [
+        "repeat_request_count",
+        "correction_count",
+        "frustration_count",
+        "unresolved_ending_signal",
+    ]
+    assert "repeated user request" in user_stuck.evidence_summary
 
 
 def test_classify_session_detects_resolution_after_correction() -> None:
