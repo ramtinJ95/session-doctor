@@ -1,6 +1,6 @@
 # Refactor PR Plan: Split Large Modules Safely
 
-Status: PRs 1-4 complete; PRs 5-7 planned.
+Status: PRs 1-5 complete; PRs 6-7 planned.
 
 This plan breaks the current god-file cleanup into focused, reviewable PRs. The
 goal is to reduce module size and coupling without changing behavior, schemas,
@@ -21,7 +21,9 @@ Items may be marked complete as the sequence lands.
   evidence. Status: timeline and ending helpers extracted by PR 2; feature
   extraction internals split into focused modules by PR 3.
 - `src/session_doctor/store/duckdb.py` — 1,012 lines. Contains a 686-line
-  `DuckDBStore` class plus row serializers and JSON/DB helpers.
+  `DuckDBStore` class plus row serializers and JSON/DB helpers. Status: store
+  connection helpers, readers, writers, row mappers/loaders, JSON helpers, and
+  store dataclasses split into focused modules by PR 5.
 - `src/session_doctor/analysis/classification.py` — 791 lines. Owns threshold
   constants, rule orchestration, rule implementations, evidence summaries, and
   final-answer/stop-pause ending helpers. Status: timeline and ending helpers
@@ -307,6 +309,8 @@ uv run pytest tests/analysis/test_classification.py tests/analysis/test_endings.
 - Full validation passes.
 
 ## PR 5 — Split DuckDB Store Into Repositories and Mappers
+
+Status: complete.
 
 Risk: medium-to-high. Store behavior is central to ingest, list, analyze, and
 artifact workflows.
