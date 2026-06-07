@@ -119,13 +119,19 @@ def user_stuck_classification(context: ClassificationContext) -> SessionClassifi
     correction_count = context.int_feature("correction_count")
     frustration_count = context.int_feature("frustration_count")
     unresolved_ending_signal = context.bool_feature("unresolved_ending_signal")
+    repeated_command_failure_count = context.int_feature("repeated_command_failure_count")
+    same_file_repeated_count = context.int_feature("same_file_edited_repeatedly_count")
     stuckness_score = context.float_feature("stuckness_score")
-    if not (
+    has_user_facing_stuck_evidence = (
         repeat_request_count >= 2
         or correction_count >= 2
         or (unresolved_ending_signal and (correction_count > 0 or frustration_count > 0))
-        or stuckness_score >= USER_STUCK_STUCKNESS_THRESHOLD
-    ):
+        or (
+            stuckness_score >= USER_STUCK_STUCKNESS_THRESHOLD
+            and (repeat_request_count > 0 or correction_count > 0 or frustration_count > 0)
+        )
+    )
+    if not has_user_facing_stuck_evidence:
         return None
 
     return classification(
@@ -149,6 +155,8 @@ def user_stuck_classification(context: ClassificationContext) -> SessionClassifi
                 "repeat_request_similarity",
                 "correction_marker",
                 "frustration_marker",
+                "repeated_command_failure_count",
+                "same_file_edited_repeatedly_count",
                 "unresolved_ending_signal",
             ],
         ),
@@ -158,6 +166,8 @@ def user_stuck_classification(context: ClassificationContext) -> SessionClassifi
                 count_phrase(repeat_request_count, "repeated user request"),
                 count_phrase(correction_count, "correction"),
                 count_phrase(frustration_count, "frustration marker"),
+                count_phrase(repeated_command_failure_count, "repeated command failure"),
+                count_phrase(same_file_repeated_count, "repeatedly edited file"),
                 "unresolved-ending evidence" if unresolved_ending_signal else "",
             ],
         ),
@@ -169,6 +179,8 @@ def user_stuck_classification(context: ClassificationContext) -> SessionClassifi
                 "repeat_request_count",
                 "correction_count",
                 "frustration_count",
+                "repeated_command_failure_count",
+                "same_file_edited_repeatedly_count",
                 "unresolved_ending_signal",
             ],
         ),
@@ -355,10 +367,12 @@ def prompt_ambiguous_classification(context: ClassificationContext) -> SessionCl
     scope_boundary_count = context.int_feature("scope_boundary_count")
     ambiguity_count = context.int_feature("ambiguity_count")
     failed_command_ratio = context.float_feature("failed_command_ratio")
+    failed_tool_result_ratio = context.float_feature("failed_tool_result_ratio")
     if not (
         prompt_clarity_risk >= PROMPT_AMBIGUOUS_THRESHOLD
         and (scope_boundary_count >= 2 or ambiguity_count >= 1)
         and failed_command_ratio < TOOLING_BLOCKED_FAILED_COMMAND_RATIO_THRESHOLD
+        and failed_tool_result_ratio < TOOLING_BLOCKED_FAILED_TOOL_RESULT_RATIO_THRESHOLD
     ):
         return None
 
@@ -389,6 +403,10 @@ def prompt_ambiguous_classification(context: ClassificationContext) -> SessionCl
                 "repeat_request_count",
                 "ambiguity_count",
             ],
+            extra_thresholds={
+                "failed_command_ratio": TOOLING_BLOCKED_FAILED_COMMAND_RATIO_THRESHOLD,
+                "failed_tool_result_ratio": TOOLING_BLOCKED_FAILED_TOOL_RESULT_RATIO_THRESHOLD,
+            },
         ),
     )
 
@@ -442,8 +460,14 @@ def task_too_large_classification(context: ClassificationContext) -> SessionClas
                 "friction_score",
                 "edited_file_count",
                 "command_count",
+                "unresolved_ending_signal",
             ],
-            extra_thresholds={"friction_score": TASK_TOO_LARGE_FRICTION_THRESHOLD},
+            extra_thresholds={
+                "friction_score": TASK_TOO_LARGE_FRICTION_THRESHOLD,
+                "unresolved_ending_signal": 1,
+                "broad_surface_edited_file_count": 6,
+                "broad_surface_command_count": 8,
+            },
         ),
     )
 

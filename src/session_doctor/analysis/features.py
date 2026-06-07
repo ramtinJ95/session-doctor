@@ -168,6 +168,7 @@ class SessionFeatureContext:
     repeated_command_failures: list[dict[str, object]]
     repeated_command_failure_count: int
     file_edit_counts: Counter[str]
+    file_edit_events: dict[str, list[str]]
     repeated_file_edits: dict[str, int]
     repeated_file_edit_events: dict[str, list[str]]
     unresolved_evidence: dict[str, object]
@@ -308,6 +309,7 @@ def session_feature_context(
         for activity in bundle.file_activities
         if activity.operation in MUTATING_FILE_OPERATIONS
     )
+    file_edit_events = file_edit_source_events(bundle)
     repeated_file_edits = {path: count for path, count in file_edit_counts.items() if count > 1}
     return SessionFeatureContext(
         session_id=bundle.session.session_id,
@@ -321,8 +323,12 @@ def session_feature_context(
             repeated_command_failures,
         ),
         file_edit_counts=file_edit_counts,
+        file_edit_events=file_edit_events,
         repeated_file_edits=repeated_file_edits,
-        repeated_file_edit_events=repeated_file_edit_source_events(bundle),
+        repeated_file_edit_events=repeated_file_edit_source_events(
+            file_edit_events,
+            file_edit_counts,
+        ),
         unresolved_evidence=unresolved_ending_evidence(bundle, message_features),
     )
 
@@ -398,7 +404,18 @@ def command_session_features(
     failed_command_ratio = ratio(len(context.failed_commands), len(bundle.command_runs))
     return [
         session_feature(
-            analysis_run_id, context.session_id, "command_count", len(bundle.command_runs)
+            analysis_run_id,
+            context.session_id,
+            "command_count",
+            len(bundle.command_runs),
+            evidence={
+                "command_run_ids": [command.command_run_id for command in bundle.command_runs],
+                "source_event_ids": [
+                    command.source_event_id
+                    for command in bundle.command_runs
+                    if command.source_event_id
+                ],
+            },
         ),
         session_feature(
             analysis_run_id,
@@ -436,6 +453,14 @@ def tool_result_session_features(
             context.session_id,
             "tool_result_count",
             len(bundle.tool_results),
+            evidence={
+                "tool_result_ids": [result.tool_result_id for result in bundle.tool_results],
+                "source_event_ids": [
+                    result.source_event_id
+                    for result in bundle.tool_results
+                    if result.source_event_id
+                ],
+            },
         ),
         session_feature(
             analysis_run_id,
@@ -503,7 +528,17 @@ def file_activity_session_features(
             context.session_id,
             "edited_file_count",
             len(context.file_edit_counts),
-            evidence={"paths": sorted(context.file_edit_counts)},
+            evidence={
+                "paths": sorted(context.file_edit_counts),
+                "source_event_ids_by_path": context.file_edit_events,
+                "source_event_ids": sorted(
+                    {
+                        source_event_id
+                        for source_event_ids in context.file_edit_events.values()
+                        for source_event_id in source_event_ids
+                    }
+                ),
+            },
         ),
         session_feature(
             analysis_run_id,
@@ -527,6 +562,7 @@ def file_activity_session_features(
             context.session_id,
             "max_edits_to_single_file",
             max(context.file_edit_counts.values(), default=0),
+            evidence=max_file_edit_evidence(context),
         ),
     ]
 
@@ -865,18 +901,49 @@ def repeated_failure_max_repeat_count(groups: list[dict[str, object]]) -> int:
     return max((count for count in repeat_counts if isinstance(count, int)), default=0)
 
 
-def repeated_file_edit_source_events(bundle: ParsedSessionBundle) -> dict[str, list[str]]:
+def max_file_edit_evidence(context: SessionFeatureContext) -> dict[str, object]:
+    max_edit_count = max(context.file_edit_counts.values(), default=0)
+    if max_edit_count == 0:
+        return {"paths": [], "source_event_ids_by_path": {}, "source_event_ids": []}
+    max_edit_paths = sorted(
+        path for path, count in context.file_edit_counts.items() if count == max_edit_count
+    )
+    source_event_ids_by_path = {
+        path: context.file_edit_events.get(path, []) for path in max_edit_paths
+    }
+    return {
+        "paths": max_edit_paths,
+        "source_event_ids_by_path": source_event_ids_by_path,
+        "source_event_ids": sorted(
+            {
+                source_event_id
+                for source_event_ids in source_event_ids_by_path.values()
+                for source_event_id in source_event_ids
+            }
+        ),
+    }
+
+
+def file_edit_source_events(bundle: ParsedSessionBundle) -> dict[str, list[str]]:
     source_events_by_path: defaultdict[str, set[str]] = defaultdict(set)
-    edit_counts_by_path: Counter[str] = Counter()
     for activity in bundle.file_activities:
         if activity.operation not in MUTATING_FILE_OPERATIONS:
             continue
-        edit_counts_by_path[activity.path] += 1
         if activity.source_event_id:
             source_events_by_path[activity.path].add(activity.source_event_id)
     return {
-        path: sorted(source_events_by_path[path])
-        for path, count in edit_counts_by_path.items()
+        path: sorted(source_event_ids)
+        for path, source_event_ids in sorted(source_events_by_path.items())
+    }
+
+
+def repeated_file_edit_source_events(
+    file_edit_events: dict[str, list[str]],
+    file_edit_counts: Counter[str],
+) -> dict[str, list[str]]:
+    return {
+        path: file_edit_events.get(path, [])
+        for path, count in file_edit_counts.items()
         if count > 1
     }
 
