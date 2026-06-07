@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from session_doctor.adapters import ParsedSessionBundle
 from session_doctor.ids import stable_id
 from session_doctor.schemas import (
@@ -8,6 +10,31 @@ from session_doctor.schemas import (
     SessionClassification,
     SessionFeature,
 )
+
+
+@dataclass(frozen=True)
+class ClassificationContext:
+    bundle: ParsedSessionBundle
+    analysis_run_id: str
+    message_features: list[MessageFeature]
+    session_features: dict[str, SessionFeature]
+
+    @property
+    def session_id(self) -> str:
+        assert self.bundle.session is not None
+        return self.bundle.session.session_id
+
+    def int_feature(self, name: str) -> int:
+        return int_feature(self.session_features, name)
+
+    def float_feature(self, name: str) -> float:
+        return float_feature(self.session_features, name)
+
+    def bool_feature(self, name: str) -> bool:
+        return bool_feature(self.session_features, name)
+
+    def evidence_event_ids(self, feature_names: list[str]) -> list[str]:
+        return evidence_event_ids(self.message_features, self.session_features, feature_names)
 
 
 def classify_session(
@@ -20,17 +47,22 @@ def classify_session(
         msg = "Cannot classify a bundle without a session record."
         raise ValueError(msg)
 
-    feature_values = {feature.feature_name: feature for feature in session_features}
+    context = ClassificationContext(
+        bundle=bundle,
+        analysis_run_id=analysis_run_id,
+        message_features=message_features,
+        session_features={feature.feature_name: feature for feature in session_features},
+    )
     classifications: list[SessionClassification] = []
 
-    repeat_request_count = int_feature(feature_values, "repeat_request_count")
-    correction_count = int_feature(feature_values, "correction_count")
-    frustration_count = int_feature(feature_values, "frustration_count")
-    failed_command_ratio = float_feature(feature_values, "failed_command_ratio")
-    repeated_failure_count = int_feature(feature_values, "repeated_failure_count")
-    repeated_command_failure_count = int_feature(feature_values, "repeated_command_failure_count")
-    same_file_repeated_count = int_feature(feature_values, "same_file_edited_repeatedly_count")
-    unresolved_ending_signal = bool_feature(feature_values, "unresolved_ending_signal")
+    repeat_request_count = context.int_feature("repeat_request_count")
+    correction_count = context.int_feature("correction_count")
+    frustration_count = context.int_feature("frustration_count")
+    failed_command_ratio = context.float_feature("failed_command_ratio")
+    repeated_failure_count = context.int_feature("repeated_failure_count")
+    repeated_command_failure_count = context.int_feature("repeated_command_failure_count")
+    same_file_repeated_count = context.int_feature("same_file_edited_repeatedly_count")
+    unresolved_ending_signal = context.bool_feature("unresolved_ending_signal")
 
     if (
         repeat_request_count >= 2
@@ -39,8 +71,8 @@ def classify_session(
     ):
         classifications.append(
             classification(
-                analysis_run_id=analysis_run_id,
-                session_id=bundle.session.session_id,
+                analysis_run_id=context.analysis_run_id,
+                session_id=context.session_id,
                 label="user_stuck",
                 score=min(
                     1.0,
@@ -51,9 +83,7 @@ def classify_session(
                     + (0.20 if unresolved_ending_signal else 0.0),
                 ),
                 confidence=0.75,
-                evidence_event_ids=evidence_event_ids(
-                    message_features,
-                    feature_values,
+                evidence_event_ids=context.evidence_event_ids(
                     [
                         "repeat_request_similarity",
                         "correction_marker",
@@ -72,14 +102,12 @@ def classify_session(
     if failed_command_ratio >= 0.50 or repeated_failure_count >= 2:
         classifications.append(
             classification(
-                analysis_run_id=analysis_run_id,
-                session_id=bundle.session.session_id,
+                analysis_run_id=context.analysis_run_id,
+                session_id=context.session_id,
                 label="tooling_blocked",
                 score=max(failed_command_ratio, min(1.0, 0.50 + 0.10 * repeated_failure_count)),
                 confidence=0.80,
-                evidence_event_ids=evidence_event_ids(
-                    message_features,
-                    feature_values,
+                evidence_event_ids=context.evidence_event_ids(
                     ["failed_command_count", "failed_tool_result_count", "repeated_failure_count"],
                 ),
                 evidence_summary="Session has failed command/tool evidence or repeated failures.",
@@ -92,8 +120,8 @@ def classify_session(
     ):
         classifications.append(
             classification(
-                analysis_run_id=analysis_run_id,
-                session_id=bundle.session.session_id,
+                analysis_run_id=context.analysis_run_id,
+                session_id=context.session_id,
                 label="agent_looping",
                 score=min(
                     1.0,
@@ -103,9 +131,7 @@ def classify_session(
                     + 0.10 * repeated_command_failure_count,
                 ),
                 confidence=0.65,
-                evidence_event_ids=evidence_event_ids(
-                    message_features,
-                    feature_values,
+                evidence_event_ids=context.evidence_event_ids(
                     [
                         "repeat_request_similarity",
                         "same_file_edited_repeatedly_count",
@@ -122,16 +148,12 @@ def classify_session(
     if correction_count >= 1 and resolved_after_last_correction(bundle, message_features):
         classifications.append(
             classification(
-                analysis_run_id=analysis_run_id,
-                session_id=bundle.session.session_id,
+                analysis_run_id=context.analysis_run_id,
+                session_id=context.session_id,
                 label="resolved_after_corrections",
                 score=0.70,
                 confidence=0.60,
-                evidence_event_ids=evidence_event_ids(
-                    message_features,
-                    feature_values,
-                    ["correction_marker"],
-                ),
+                evidence_event_ids=context.evidence_event_ids(["correction_marker"]),
                 evidence_summary="Session ends with a final answer after correction evidence.",
                 metadata={"rule": "resolved_after_corrections_v1"},
             )
