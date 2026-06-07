@@ -11,7 +11,13 @@ from session_doctor.schemas import (
 )
 
 from .ending import unresolved_stop_or_pause_evidence
-from .timeline import has_assistant_final_answer, resolved_after_last_correction
+from .timeline import (
+    has_assistant_final_answer,
+    resolved_after_last_correction,
+)
+from .timeline import (
+    has_later_final_answer as timeline_has_later_final_answer,
+)
 
 USER_STUCK_STUCKNESS_THRESHOLD = 0.45
 TOOLING_BLOCKED_FAILED_COMMAND_RATIO_THRESHOLD = 0.50
@@ -654,6 +660,10 @@ def families_phrase(families: set[str], label: str) -> str:
     if not families:
         return ""
     return f"{label} families {', '.join(sorted(families))}"
+
+
+def has_later_final_answer(record_index: int | None, final_answer_indexes: list[int]) -> bool:
+    return timeline_has_later_final_answer(record_index, final_answer_indexes)
 
 
 def int_feature(features: dict[str, SessionFeature], name: str) -> int:

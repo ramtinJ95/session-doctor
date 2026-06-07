@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from math import isfinite
 
 from session_doctor.adapters import ParsedSessionBundle
@@ -975,15 +976,41 @@ def has_later_final_answer(
 
 
 def ending_source_event_ids(bundle: ParsedSessionBundle) -> set[str]:
-    return ending_helpers.ending_source_event_ids(bundle)
+    start_index = ending_record_index_start(bundle)
+    event_ids = {
+        event.event_id
+        for event in bundle.raw_events
+        if event.record_index >= start_index and event.event_id is not None
+    }
+    event_ids.update(timestamp_window_source_event_ids(bundle))
+    return event_ids
 
 
 def ending_record_index_start(bundle: ParsedSessionBundle) -> int:
-    return ending_helpers.ending_record_index_start(bundle)
+    if not bundle.raw_events:
+        return 0
+    event_count = len(bundle.raw_events)
+    window_size = min(
+        ENDING_WINDOW_MAX_EVENTS,
+        max(ENDING_WINDOW_MIN_EVENTS, int(event_count * ENDING_WINDOW_FRACTION)),
+    )
+    max_index = max(event.record_index for event in bundle.raw_events)
+    return max(0, max_index - window_size + 1)
 
 
 def timestamp_window_source_event_ids(bundle: ParsedSessionBundle) -> set[str]:
-    return ending_helpers.timestamp_window_source_event_ids(bundle)
+    timestamps = [event.timestamp for event in bundle.raw_events if event.timestamp is not None]
+    if not timestamps:
+        return set()
+    latest_timestamp = max(timestamps)
+    if not isinstance(latest_timestamp, datetime):
+        return set()
+    cutoff = latest_timestamp - timedelta(minutes=ENDING_WINDOW_MINUTES)
+    return {
+        event.event_id
+        for event in bundle.raw_events
+        if event.timestamp is not None and event.timestamp >= cutoff
+    }
 
 
 def request_similarity(first: str, second: str) -> float:
