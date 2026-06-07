@@ -49,6 +49,11 @@ from .classification_rules import (
     tooling_blocked_classification,
     user_stuck_classification,
 )
+from .ending import unresolved_stop_or_pause_evidence
+from .timeline import (
+    has_assistant_final_answer,
+    resolved_after_last_correction,
+)
 from .timeline import (
     has_later_final_answer as timeline_has_later_final_answer,
 )
@@ -69,6 +74,7 @@ __all__ = [
     "TOOLING_BLOCKED_FAILED_TOOL_RESULT_RATIO_THRESHOLD",
     "TOOLING_BLOCKED_REPEATED_FAILURE_THRESHOLD",
     "USER_STUCK_STUCKNESS_THRESHOLD",
+    "abandoned_or_stopped_classification",
     "agent_looping_classification",
     "agent_misunderstood_classification",
     "bool_feature",
@@ -79,6 +85,7 @@ __all__ = [
     "evidence_event_ids",
     "families_phrase",
     "float_feature",
+    "has_assistant_final_answer",
     "has_later_final_answer",
     "healthy_classification",
     "int_feature",
@@ -87,8 +94,10 @@ __all__ = [
     "ratio_phrase",
     "repo_complexity_high_classification",
     "resolved_after_corrections_classification",
+    "resolved_after_last_correction",
     "task_too_large_classification",
     "tooling_blocked_classification",
+    "unresolved_stop_or_pause_evidence",
     "user_stuck_classification",
 ]
 
