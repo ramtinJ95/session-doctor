@@ -50,6 +50,13 @@ Phase 6 adds classification scoring:
   `prompt_ambiguous`, `task_too_large`, `repo_complexity_high`, and
   `abandoned_or_stopped`
 
+Phase 7 adds aggregate summaries:
+
+- `session-doctor summary` over all ingested sessions
+- optional `--agent` and `--project` filters
+- terminal and JSON views over analysis coverage, labels, risky sessions,
+  failed commands, repeated files, and next-step recommendations
+
 ## Usage
 
 Install dependencies:
@@ -130,6 +137,20 @@ By default, `analyze` writes a JSON artifact beside the DuckDB file:
 Use `--no-artifact` to skip artifact writing or `--artifact <path>` to choose a
 specific output path.
 
+Summarize the local store after ingesting and optionally analyzing sessions:
+
+```bash
+uv run session-doctor summary --db /tmp/session-doctor-test.duckdb
+uv run session-doctor summary --db /tmp/session-doctor-test.duckdb --format json
+uv run session-doctor summary --db /tmp/session-doctor-test.duckdb --agent pi
+uv run session-doctor summary \
+  --db /tmp/session-doctor-test.duckdb \
+  --project /tmp/session-doctor
+```
+
+`summary --limit` controls the maximum rows shown in ranked/detail sections,
+such as risky sessions, failed commands, and repeated files.
+
 Run the quality gate:
 
 ```bash
@@ -148,3 +169,4 @@ Design references:
 - [Phase 4 Plan](docs/phase-4-plan.md)
 - [Phase 5 Plan](docs/phase-5-plan.md)
 - [Phase 6 Plan](docs/phase-6-plan.md)
+- [Phase 7 Plan](docs/phase-7-plan.md)

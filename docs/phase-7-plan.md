@@ -1,6 +1,22 @@
 # Phase 7 Plan: Aggregate Summary MVP
 
-Status: planned.
+Status: complete.
+
+Implemented scope:
+
+- Added a read-only `session-doctor summary` command.
+- Added terminal and JSON aggregate summary output.
+- Added optional `--agent`, `--project`, and global `--limit` filters.
+- Added DuckDB aggregate queries for session totals, analysis coverage, agent
+  counts, project/cwd counts, classification counts, recent risky sessions,
+  failed commands, and repeated files in problematic sessions.
+- Added deterministic next-step recommendations.
+- Required an existing database for summary runs.
+- Kept project filtering tied to normalized `sessions.project_path` and
+  `sessions.cwd` rather than source log paths.
+- Kept Phase 7 read-only: no artifacts, derived writes, schema migration,
+  graph projection, project trends, Markdown reports, LLM calls, embeddings, or
+  ML dependencies.
 
 ## Goal
 
