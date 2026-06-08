@@ -12,6 +12,7 @@ from .ids import source_id_for_path
 from .schemas import SourceKind
 from .schemas.common import AgentName
 from .schemas.sessions import SessionSource
+from .store.models import SummaryFilters
 
 console = Console()
 
@@ -60,6 +61,41 @@ def require_analysis_output_format(output_format: str) -> None:
         return
     console.print("[red]Invalid --format:[/red] expected terminal or json")
     raise typer.Exit(2)
+
+
+def require_summary_output_format(output_format: str) -> None:
+    if output_format in {"terminal", "json"}:
+        return
+    console.print("[red]Invalid --format:[/red] expected terminal or json")
+    raise typer.Exit(2)
+
+
+def summary_filters_from_options(
+    agent: str | None,
+    project: Path | None,
+    limit: int,
+) -> SummaryFilters:
+    if limit < 1:
+        console.print("[red]Invalid --limit:[/red] expected a positive integer")
+        raise typer.Exit(2)
+
+    agent_name = None
+    if agent is not None:
+        try:
+            agent_name = AgentName(agent).value
+        except ValueError:
+            console.print(f"[red]Unsupported --agent:[/red] {agent}")
+            raise typer.Exit(2) from None
+
+    project_path = None
+    if project is not None:
+        expanded_project = project.expanduser()
+        if expanded_project.is_absolute():
+            project_path = str(expanded_project)
+        else:
+            project_path = str(expanded_project.resolve(strict=False))
+
+    return SummaryFilters(agent_name=agent_name, project_path=project_path, limit=limit)
 
 
 def adapter_for_ingest(agent: str) -> BaseAdapter:
