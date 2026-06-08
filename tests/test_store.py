@@ -25,7 +25,7 @@ from session_doctor.schemas import (
     ToolCall,
     ToolResult,
 )
-from session_doctor.store import SCHEMA_VERSION, TABLE_NAMES, DuckDBStore
+from session_doctor.store import SCHEMA_VERSION, TABLE_NAMES, DuckDBStore, SummaryFilters
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "codex"
 
@@ -495,9 +495,200 @@ def test_store_insert_parsed_bundle_deletes_existing_analysis_rows(tmp_path) -> 
     assert store.table_count("session_features") == 0
 
 
+def test_store_aggregate_summary_counts_sessions_and_analysis(tmp_path) -> None:
+    codex_path = FIXTURE_DIR / "repeated-failure-session.jsonl"
+    pi_path = Path(__file__).parent / "fixtures" / "pi" / "repeated-failure-session.jsonl"
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    codex_source = source_for_fixture(codex_path)
+    pi_source = SessionSource(
+        source_id=source_id_for_path(AgentName.PI, pi_path),
+        agent_name=AgentName.PI,
+        source_path=str(pi_path),
+    )
+    codex_bundle = CodexAdapter().parse_source(codex_source)
+    from session_doctor.adapters.pi import PiAdapter
+
+    pi_bundle = PiAdapter().parse_source(pi_source)
+    assert codex_bundle.session is not None
+    assert pi_bundle.session is not None
+    store.insert_parsed_bundle(codex_source, codex_bundle)
+    store.insert_parsed_bundle(pi_source, pi_bundle)
+
+    initial_summary = store.aggregate_summary(SummaryFilters())
+
+    assert initial_summary.total_sessions == 2
+    assert initial_summary.analyzed_sessions == 0
+    assert initial_summary.unanalyzed_sessions == 2
+    assert {row.agent_name for row in initial_summary.agent_counts} == {"codex", "pi"}
+
+    add_summary_analysis_rows(store, codex_bundle.session.session_id, "user_stuck", 0.8)
+    add_summary_analysis_rows(store, pi_bundle.session.session_id, "tooling_blocked", 0.7)
+
+    summary = store.aggregate_summary(SummaryFilters())
+
+    assert summary.total_sessions == 2
+    assert summary.analyzed_sessions == 2
+    assert summary.unanalyzed_sessions == 0
+    assert {row.label: row.session_count for row in summary.classification_counts} == {
+        "tooling_blocked": 1,
+        "user_stuck": 1,
+    }
+    assert [row.session_id for row in summary.recent_risk_sessions] == [
+        codex_bundle.session.session_id,
+        pi_bundle.session.session_id,
+    ]
+    assert summary.failed_commands
+    assert "Inspect the top failed commands" in " ".join(summary.recommendations)
+
+
+def test_store_aggregate_summary_filters_by_agent_and_project(tmp_path) -> None:
+    codex_path = FIXTURE_DIR / "basic-session.jsonl"
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    source = source_for_fixture(codex_path)
+    bundle = CodexAdapter().parse_source(source)
+    assert bundle.session is not None
+    store.insert_parsed_bundle(source, bundle)
+    add_summary_analysis_rows(store, bundle.session.session_id, "healthy", 0.1)
+
+    codex_summary = store.aggregate_summary(SummaryFilters(agent_name="codex"))
+    pi_summary = store.aggregate_summary(SummaryFilters(agent_name="pi"))
+    project_summary = store.aggregate_summary(SummaryFilters(project_path="/tmp/session-doctor"))
+    other_project_summary = store.aggregate_summary(SummaryFilters(project_path="/tmp/other"))
+
+    assert codex_summary.total_sessions == 1
+    assert pi_summary.total_sessions == 0
+    assert project_summary.total_sessions == 1
+    assert other_project_summary.total_sessions == 0
+
+
+def test_store_aggregate_summary_redacts_commands_and_home_paths(tmp_path) -> None:
+    home_file = Path.home() / "project" / "src" / "app.py"
+    source = SessionSource(
+        source_id="source-summary-redaction",
+        agent_name=AgentName.CODEX,
+        source_path="/tmp/source.jsonl",
+    )
+    session = Session(
+        session_id="session-summary-redaction",
+        source_id=source.source_id,
+        agent_name=AgentName.CODEX,
+        cwd=str(Path.home() / "project"),
+        started_at=datetime(2026, 5, 6, 8, 0),
+    )
+    bundle = ParsedSessionBundle(
+        session=session,
+        raw_events=[
+            RawEvent(
+                event_id="event-command",
+                source_id=source.source_id,
+                agent_name=AgentName.CODEX,
+                record_index=1,
+            ),
+            RawEvent(
+                event_id="event-file-1",
+                source_id=source.source_id,
+                agent_name=AgentName.CODEX,
+                record_index=2,
+            ),
+            RawEvent(
+                event_id="event-file-2",
+                source_id=source.source_id,
+                agent_name=AgentName.CODEX,
+                record_index=3,
+            ),
+        ],
+        command_runs=[
+            CommandRun(
+                command_run_id="command-secret",
+                session_id=session.session_id,
+                source_event_id="event-command",
+                command="TOKEN=supersecret pytest -q",
+                exit_code=1,
+            )
+        ],
+        file_activities=[
+            FileActivity(
+                file_activity_id="file-1",
+                session_id=session.session_id,
+                source_event_id="event-file-1",
+                path=str(home_file),
+                operation="edit",
+            ),
+            FileActivity(
+                file_activity_id="file-2",
+                session_id=session.session_id,
+                source_event_id="event-file-2",
+                path=str(home_file),
+                operation="edit",
+            ),
+        ],
+    )
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    store.insert_parsed_bundle(source, bundle)
+    add_summary_analysis_rows(store, session.session_id, "tooling_blocked", 0.9)
+
+    summary = store.aggregate_summary(SummaryFilters())
+
+    assert summary.failed_commands[0].command == "TOKEN=<redacted> pytest -q"
+    assert "supersecret" not in summary.failed_commands[0].command
+    assert summary.project_counts[0].project_path.startswith("~/")
+    assert summary.repeated_files[0].path.startswith("~/")
+
+
 def source_for_fixture(path: Path) -> SessionSource:
     return SessionSource(
         source_id=source_id_for_path(AgentName.CODEX, path),
         agent_name=AgentName.CODEX,
         source_path=str(path),
     )
+
+
+def add_summary_analysis_rows(
+    store: DuckDBStore,
+    session_id: str,
+    label: str,
+    risk_score: float,
+) -> None:
+    analysis_run = AnalysisRun(
+        analysis_run_id=f"analysis-{session_id}",
+        session_id=session_id,
+        analyzer_version="phase6",
+        started_at=datetime(2026, 5, 8, 8, 0),
+        completed_at=datetime(2026, 5, 8, 8, 1),
+    )
+    session_features = [
+        SessionFeature(
+            session_feature_id=f"feature-friction-{session_id}",
+            analysis_run_id=analysis_run.analysis_run_id,
+            session_id=session_id,
+            feature_name="friction_score",
+            feature_value=f"{risk_score:.3f}",
+            score=risk_score,
+        ),
+        SessionFeature(
+            session_feature_id=f"feature-stuckness-{session_id}",
+            analysis_run_id=analysis_run.analysis_run_id,
+            session_id=session_id,
+            feature_name="stuckness_score",
+            feature_value=f"{risk_score:.3f}",
+            score=risk_score,
+        ),
+        SessionFeature(
+            session_feature_id=f"feature-agent-fit-{session_id}",
+            analysis_run_id=analysis_run.analysis_run_id,
+            session_id=session_id,
+            feature_name="agent_fit_risk",
+            feature_value=f"{risk_score:.3f}",
+            score=risk_score,
+        ),
+    ]
+    classification = SessionClassification(
+        session_classification_id=f"classification-{session_id}-{label}",
+        analysis_run_id=analysis_run.analysis_run_id,
+        session_id=session_id,
+        label=label,
+        score=risk_score,
+        confidence=0.8,
+        evidence_summary=f"Synthetic {label} evidence.",
+    )
+    store.replace_analysis_rows(analysis_run, [], session_features, [classification])
