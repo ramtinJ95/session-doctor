@@ -11,7 +11,7 @@ from .adapters import BaseAdapter
 from .ingest_workflow import IngestSummary
 from .schemas import AnalysisRun, SessionClassification, SessionFeature, SourceKind
 from .store import TABLE_NAMES
-from .store.models import SessionSummary, StoreInfo
+from .store.models import AggregateSummary, SessionSummary, StoreInfo
 
 ANALYSIS_SUMMARY_FEATURES = (
     "friction_score",
@@ -197,3 +197,132 @@ def render_analysis_summary(
             classification.evidence_summary,
         )
     console.print(classification_table)
+
+
+def render_summary(summary: AggregateSummary, database_path: Path, console: Console) -> None:
+    overview_table = Table(title="Aggregate summary")
+    overview_table.add_column("Metric")
+    overview_table.add_column("Value")
+    overview_table.add_row("Database", str(database_path))
+    overview_table.add_row("Agent filter", summary.filters.agent_name or "all")
+    overview_table.add_row("Project filter", summary.filters.project_path or "all")
+    overview_table.add_row("Limit", str(summary.filters.limit))
+    overview_table.add_row("Sessions", str(summary.total_sessions))
+    overview_table.add_row("Analyzed", str(summary.analyzed_sessions))
+    overview_table.add_row("Unanalyzed", str(summary.unanalyzed_sessions))
+    console.print(overview_table)
+
+    agents_table = Table(title="Agents")
+    agents_table.add_column("Agent")
+    agents_table.add_column("Sessions")
+    agents_table.add_column("Analyzed")
+    if summary.agent_counts:
+        for row in summary.agent_counts:
+            agents_table.add_row(
+                row.agent_name,
+                str(row.session_count),
+                str(row.analyzed_session_count),
+            )
+    else:
+        agents_table.add_row("none", "0", "0")
+    console.print(agents_table)
+
+    projects_table = Table(title="Projects")
+    projects_table.add_column("Project/CWD")
+    projects_table.add_column("Sessions")
+    projects_table.add_column("Analyzed")
+    if summary.project_counts:
+        for row in summary.project_counts:
+            projects_table.add_row(
+                row.project_path,
+                str(row.session_count),
+                str(row.analyzed_session_count),
+            )
+    else:
+        projects_table.add_row("none", "0", "0")
+    console.print(projects_table)
+
+    classifications_table = Table(title="Classifications")
+    classifications_table.add_column("Label")
+    classifications_table.add_column("Sessions")
+    if summary.classification_counts:
+        for row in summary.classification_counts:
+            classifications_table.add_row(row.label, str(row.session_count))
+    else:
+        classifications_table.add_row("no analyzed classifications", "0")
+    console.print(classifications_table)
+
+    risk_table = Table(title="Recent risky sessions")
+    risk_table.add_column("Session ID")
+    risk_table.add_column("Agent")
+    risk_table.add_column("Started")
+    risk_table.add_column("Labels")
+    risk_table.add_column("Stuck")
+    risk_table.add_column("Friction")
+    risk_table.add_column("Fit")
+    risk_table.add_column("Project/CWD")
+    if summary.recent_risk_sessions:
+        for row in summary.recent_risk_sessions:
+            risk_table.add_row(
+                row.session_id,
+                row.agent_name,
+                row.started_at or "",
+                ", ".join(row.labels) or "none",
+                format_optional_score(row.stuckness_score),
+                format_optional_score(row.friction_score),
+                format_optional_score(row.agent_fit_risk),
+                row.project_path or "",
+            )
+    else:
+        risk_table.add_row("none", "", "", "", "", "", "", "")
+    console.print(risk_table)
+
+    commands_table = Table(title="Failed commands")
+    commands_table.add_column("Command")
+    commands_table.add_column("Failures")
+    commands_table.add_column("Sessions")
+    commands_table.add_column("Agents")
+    commands_table.add_column("Recent")
+    commands_table.add_column("Example session")
+    if summary.failed_commands:
+        for row in summary.failed_commands:
+            commands_table.add_row(
+                row.command,
+                str(row.failure_count),
+                str(row.session_count),
+                ", ".join(row.agents),
+                row.most_recent_at or "",
+                row.example_session_id,
+            )
+    else:
+        commands_table.add_row("none", "0", "0", "", "", "")
+    console.print(commands_table)
+
+    files_table = Table(title="Repeated files in problematic sessions")
+    files_table.add_column("Path")
+    files_table.add_column("Activities")
+    files_table.add_column("Sessions")
+    files_table.add_column("Agents")
+    files_table.add_column("Recent")
+    files_table.add_column("Example session")
+    if summary.repeated_files:
+        for row in summary.repeated_files:
+            files_table.add_row(
+                row.path,
+                str(row.activity_count),
+                str(row.session_count),
+                ", ".join(row.agents),
+                row.most_recent_at or "",
+                row.example_session_id,
+            )
+    else:
+        files_table.add_row("none", "0", "0", "", "", "")
+    console.print(files_table)
+
+    console.print("[bold]Where to look next[/bold]")
+    for recommendation in summary.recommendations:
+        console.print(f"- {recommendation}")
+
+
+def format_optional_score(value: float | None) -> str:
+    return "" if value is None else f"{value:.2f}"

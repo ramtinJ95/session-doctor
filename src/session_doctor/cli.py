@@ -21,8 +21,10 @@ from .cli_options import (
     path_can_be_created,
     require_analysis_output_format,
     require_existing_database_path,
+    require_summary_output_format,
     require_valid_database_path,
     sources_for_ingest,
+    summary_filters_from_options,
 )
 from .cli_renderers import (
     ANALYSIS_SUMMARY_FEATURES,
@@ -30,6 +32,7 @@ from .cli_renderers import (
     render_database_info,
     render_doctor_table,
     render_sessions_table,
+    render_summary,
     scan_adapter_summary,
 )
 from .cli_renderers import (
@@ -42,6 +45,7 @@ from .config import supports_current_python
 from .ingest_workflow import IngestSummary, ingest_sources
 from .schemas import AnalysisRun, SessionClassification, SessionFeature
 from .store import TABLE_NAMES, DuckDBStore
+from .summary_payload import summary_payload
 
 console = Console()
 
@@ -62,10 +66,13 @@ __all__ = [
     "os_access_writable",
     "path_can_be_created",
     "require_valid_database_path",
+    "render_summary",
     "render_analysis_summary",
     "render_ingest_summary",
     "scan_adapter_summary",
     "sources_for_ingest",
+    "summary_filters_from_options",
+    "summary_payload",
     "write_analysis_artifact",
 ]
 
@@ -273,6 +280,60 @@ def analyze(
         result.session_features,
         result.classifications,
     )
+
+
+@app.command()
+def summary(
+    db: Annotated[
+        Path | None,
+        typer.Option(
+            "--db",
+            help="DuckDB path to inspect. Defaults to SESSION_DOCTOR_DB or app data.",
+        ),
+    ] = None,
+    project: Annotated[
+        Path | None,
+        typer.Option(
+            "--project",
+            help="Only include sessions whose project_path or cwd is under this path.",
+        ),
+    ] = None,
+    agent: Annotated[
+        str | None,
+        typer.Option(
+            "--agent",
+            help="Only include sessions from this agent, for example codex or pi.",
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        typer.Option(
+            "--limit",
+            help="Maximum rows for ranked/detail sections.",
+        ),
+    ] = 10,
+    output_format: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            help="Output format: terminal or json.",
+        ),
+    ] = "terminal",
+) -> None:
+    """Summarize aggregate session and analysis data in DuckDB."""
+    require_summary_output_format(output_format)
+    database_path = database_path_from_option(db)
+    require_valid_database_path(database_path)
+    require_existing_database_path(database_path)
+
+    filters = summary_filters_from_options(agent, project, limit)
+    aggregate = DuckDBStore(database_path).aggregate_summary(filters)
+
+    if output_format == "json":
+        typer.echo(json.dumps(summary_payload(aggregate), indent=2, sort_keys=True, default=str))
+        return
+
+    render_summary(aggregate, database_path, console)
 
 
 @app.command()
