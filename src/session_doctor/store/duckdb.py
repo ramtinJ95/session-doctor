@@ -13,7 +13,7 @@ from session_doctor.schemas import (
 
 from .connection import initialize_database
 from .json_values import duckdb_value, metadata_json, parse_metadata, parse_string_list
-from .models import SessionSummary, StoreInfo
+from .models import AggregateSummary, SessionSummary, StoreInfo, SummaryFilters
 from .readers import (
     list_session_summaries,
     load_session_bundle,
@@ -35,6 +35,7 @@ from .row_mappers import (
     tool_call_rows,
     tool_result_rows,
 )
+from .summary_readers import aggregate_summary as read_aggregate_summary
 from .writers import (
     insert_parsed_bundle as write_parsed_bundle,
 )
@@ -44,8 +45,10 @@ from .writers import (
 
 __all__ = [
     "DuckDBStore",
+    "AggregateSummary",
     "SessionSummary",
     "StoreInfo",
+    "SummaryFilters",
     "analysis_run_rows",
     "command_run_rows",
     "duckdb_value",
@@ -101,6 +104,9 @@ class DuckDBStore:
 
     def list_session_summaries(self) -> tuple[SessionSummary, ...]:
         return list_session_summaries(self.database_path)
+
+    def aggregate_summary(self, filters: SummaryFilters) -> AggregateSummary:
+        return read_aggregate_summary(self.database_path, filters)
 
     def load_session_bundle(self, session_id: str) -> ParsedSessionBundle | None:
         return load_session_bundle(self.database_path, session_id)
