@@ -40,6 +40,7 @@ session-doctor ingest --agent codex [--source PATH] [--db PATH]
 session-doctor ingest --agent pi [--source PATH] [--db PATH]
 session-doctor sessions list
 session-doctor analyze <session-id> [--format terminal|json] [--artifact PATH] [--no-artifact]
+session-doctor summary [--format terminal|json] [--project PATH] [--agent AGENT] [--limit N]
 session-doctor report <session-id>
 session-doctor graph <session-id>
 ```
@@ -72,8 +73,9 @@ straightforward, but they are not part of the first implementation slice.
 
 ## Current Repository State
 
-As of the current repository state, Phase 5 deterministic feature hardening and
-Phase 6 classification scoring are implemented.
+As of the current repository state, Phase 5 deterministic feature hardening,
+Phase 6 classification scoring, and Phase 7 aggregate summaries are
+implemented.
 The repository has a working local CLI for ingesting and analyzing Codex and Pi
 session logs. It has discovery support for Claude Code, but Claude parsing
 remains intentionally unimplemented. The implemented vertical slice is:
@@ -87,6 +89,7 @@ Codex/Pi JSONL source
   -> deterministic feature extraction
   -> deterministic classification
   -> persisted analysis rows + optional JSON artifact
+  -> aggregate summary queries over ingested/analyzed sessions
 ```
 
 ### Implemented Capabilities
@@ -109,6 +112,10 @@ The tool can currently:
   classifications
 - write machine-readable JSON analysis artifacts by default, or print the same
   payload with `analyze --format json`
+- summarize all ingested sessions with optional agent/project filters
+- print aggregate summaries as terminal tables or JSON, including analysis
+  coverage, labels, risky sessions, failed commands, repeated files, and
+  deterministic next-step recommendations
 
 Implemented commands:
 
@@ -124,6 +131,8 @@ session-doctor ingest --agent pi [--source PATH] [--db PATH]
 session-doctor sessions list [--db PATH]
 session-doctor analyze <session-id> [--db PATH] [--format terminal|json]
 session-doctor analyze <session-id> [--artifact PATH | --no-artifact]
+session-doctor summary [--db PATH] [--format terminal|json]
+session-doctor summary [--agent codex|pi] [--project PATH] [--limit N]
 ```
 
 Reserved commands that exist but exit as not implemented:
@@ -287,7 +296,7 @@ where applicable.
   implemented.
 - Graph tables and Pydantic graph schemas exist, but no graph projection writer
   or reader is implemented yet.
-- Aggregate summary and project-trend commands are not implemented yet.
+- Project-trend commands are not implemented yet.
 - Export commands are not implemented.
 - The tool is local-only and deterministic; it does not call LLMs or external
   APIs.
@@ -300,13 +309,13 @@ where applicable.
 The repository also has synthetic tests for CLI behavior, schema validation,
 DuckDB initialization and round-tripping, adapter discovery, Codex parsing, Pi
 parsing, ingest behavior, session listing, feature extraction, classification,
-analysis persistence, analysis artifacts, and privacy helpers.
+analysis persistence, analysis artifacts, aggregate summaries, and privacy
+helpers.
 
-This means the next useful implementation slice is aggregate summaries over all
-sessions and over a specific project/folder, followed by deeper project-level
-trend work. Human-readable reports and graph projection should come after those
-summary views exist, so they can reuse the same aggregate queries and evidence
-model rather than inventing a parallel reporting layer.
+This means the next useful implementation slice is deeper project-level trend
+work. Human-readable reports and graph projection should come after those trend
+views exist, so they can reuse the same aggregate queries and evidence model
+rather than inventing a parallel reporting layer.
 
 ## Local Session Inspection Findings
 
@@ -1880,8 +1889,8 @@ Detailed plan: `docs/phase-6-plan.md`.
 
 ### Phase 7: Aggregate Summary MVP
 
-Add the first aggregate view over the local DuckDB store before investing in
-graph or polished report surfaces.
+Implemented the first aggregate view over the local DuckDB store before
+investing in graph or polished report surfaces.
 
 The MVP should answer:
 
@@ -1895,16 +1904,22 @@ The MVP should answer:
 - which files are repeatedly edited in problematic sessions?
 - where should a user or agent look next?
 
-Likely command shape:
+Command shape:
 
 ```bash
-session-doctor summary
-session-doctor summary --project /path/to/project
-session-doctor summary --agent pi
+session-doctor summary [--db PATH]
+session-doctor summary [--db PATH] --format json
+session-doctor summary [--db PATH] --project /path/to/project
+session-doctor summary [--db PATH] --agent pi
+session-doctor summary [--db PATH] --limit 10
 ```
 
-This phase should primarily query existing normalized and analysis tables. It
-should avoid graph projection and avoid writing a polished Markdown report.
+Status: complete. The command queries existing normalized and analysis tables,
+requires an existing database, supports terminal and JSON output, filters by
+stored `project_path`/`cwd` and agent, redacts displayed commands and home paths,
+and avoids graph projection or polished Markdown reports.
+
+Detailed plan: `docs/phase-7-plan.md`.
 
 ### Phase 8: Project-Level Trends
 
