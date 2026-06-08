@@ -412,6 +412,162 @@ def test_analyze_no_artifact_skips_default_artifact(tmp_path) -> None:
     assert not (tmp_path / "artifacts" / f"{session_id}-analysis.json").exists()
 
 
+def test_summary_rejects_missing_database(tmp_path) -> None:
+    result = runner.invoke(app, ["summary", "--db", str(tmp_path / "missing.duckdb")])
+
+    assert result.exit_code == 1
+    assert "Database does not exist" in result.stdout
+
+
+def test_summary_empty_initialized_database_prints_zero_totals(tmp_path) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    init_result = runner.invoke(app, ["db", "init", "--db", str(database_path)])
+    assert init_result.exit_code == 0
+
+    result = runner.invoke(app, ["summary", "--db", str(database_path)])
+
+    assert result.exit_code == 0
+    assert "Aggregate summary" in result.stdout
+    assert "Sessions" in result.stdout
+    assert "0" in result.stdout
+
+
+def test_summary_json_counts_analyzed_codex_and_pi_sessions(tmp_path) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    codex_path = CODEX_FIXTURE_DIR / "repeated-failure-session.jsonl"
+    pi_path = PI_FIXTURE_DIR / "repeated-failure-session.jsonl"
+
+    for agent, fixture_path in (("codex", codex_path), ("pi", pi_path)):
+        ingest_result = runner.invoke(
+            app,
+            [
+                "ingest",
+                "--agent",
+                agent,
+                "--source",
+                str(fixture_path),
+                "--db",
+                str(database_path),
+            ],
+        )
+        assert ingest_result.exit_code == 0
+
+    session_ids = [
+        summary.session_id for summary in DuckDBStore(database_path).list_session_summaries()
+    ]
+    for session_id in session_ids:
+        analyze_result = runner.invoke(
+            app,
+            ["analyze", session_id, "--db", str(database_path), "--no-artifact"],
+        )
+        assert analyze_result.exit_code == 0
+
+    result = runner.invoke(
+        app,
+        ["summary", "--db", str(database_path), "--format", "json"],
+    )
+
+    assert result.exit_code == 0
+    payload = cast("dict[str, Any]", json.loads(result.stdout))
+    assert payload["totals"] == {
+        "sessions": 2,
+        "analyzed_sessions": 2,
+        "unanalyzed_sessions": 0,
+    }
+    assert {row["agent"] for row in payload["agents"]} == {"codex", "pi"}
+    assert payload["classifications"]
+    assert payload["recent_risk_sessions"]
+    assert payload["failed_commands"]
+    assert payload["recommendations"]
+
+
+def test_summary_filters_by_agent_and_project(tmp_path) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    codex_path = CODEX_FIXTURE_DIR / "basic-session.jsonl"
+    pi_path = PI_FIXTURE_DIR / "basic-session.jsonl"
+
+    for agent, fixture_path in (("codex", codex_path), ("pi", pi_path)):
+        result = runner.invoke(
+            app,
+            [
+                "ingest",
+                "--agent",
+                agent,
+                "--source",
+                str(fixture_path),
+                "--db",
+                str(database_path),
+            ],
+        )
+        assert result.exit_code == 0
+
+    agent_result = runner.invoke(
+        app,
+        ["summary", "--db", str(database_path), "--agent", "pi", "--format", "json"],
+    )
+    project_result = runner.invoke(
+        app,
+        [
+            "summary",
+            "--db",
+            str(database_path),
+            "--project",
+            "/tmp/session-doctor",
+            "--format",
+            "json",
+        ],
+    )
+    missing_project_result = runner.invoke(
+        app,
+        [
+            "summary",
+            "--db",
+            str(database_path),
+            "--project",
+            "/tmp/not-session-doctor",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert agent_result.exit_code == 0
+    assert project_result.exit_code == 0
+    assert missing_project_result.exit_code == 0
+    agent_payload = cast("dict[str, Any]", json.loads(agent_result.stdout))
+    project_payload = cast("dict[str, Any]", json.loads(project_result.stdout))
+    missing_project_payload = cast("dict[str, Any]", json.loads(missing_project_result.stdout))
+    assert agent_payload["totals"]["sessions"] == 1
+    assert agent_payload["agents"] == [{"agent": "pi", "sessions": 1, "analyzed_sessions": 0}]
+    assert project_payload["totals"]["sessions"] == 2
+    assert missing_project_payload["totals"]["sessions"] == 0
+
+
+def test_summary_rejects_invalid_options(tmp_path) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    init_result = runner.invoke(app, ["db", "init", "--db", str(database_path)])
+    assert init_result.exit_code == 0
+
+    invalid_format = runner.invoke(
+        app,
+        ["summary", "--db", str(database_path), "--format", "yaml"],
+    )
+    invalid_agent = runner.invoke(
+        app,
+        ["summary", "--db", str(database_path), "--agent", "nonsense"],
+    )
+    invalid_limit = runner.invoke(
+        app,
+        ["summary", "--db", str(database_path), "--limit", "0"],
+    )
+
+    assert invalid_format.exit_code == 2
+    assert "Invalid --format" in invalid_format.stdout
+    assert invalid_agent.exit_code == 2
+    assert "Unsupported --agent" in invalid_agent.stdout
+    assert invalid_limit.exit_code == 2
+    assert "Invalid --limit" in invalid_limit.stdout
+
+
 def payload_feature(
     payload: dict[str, Any],
     collection_name: str,
