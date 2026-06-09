@@ -512,7 +512,7 @@ def test_summary_filters_by_agent_and_project(tmp_path) -> None:
             "--db",
             str(database_path),
             "--project",
-            "/tmp/session-doctor",
+            "/tmp/../tmp/session-doctor",
             "--format",
             "json",
         ],
@@ -555,6 +555,10 @@ def test_summary_rejects_invalid_options(tmp_path) -> None:
         app,
         ["summary", "--db", str(database_path), "--agent", "nonsense"],
     )
+    unknown_agent = runner.invoke(
+        app,
+        ["summary", "--db", str(database_path), "--agent", "unknown"],
+    )
     invalid_limit = runner.invoke(
         app,
         ["summary", "--db", str(database_path), "--limit", "0"],
@@ -564,6 +568,8 @@ def test_summary_rejects_invalid_options(tmp_path) -> None:
     assert "Invalid --format" in invalid_format.stdout
     assert invalid_agent.exit_code == 2
     assert "Unsupported --agent" in invalid_agent.stdout
+    assert unknown_agent.exit_code == 2
+    assert "Unsupported --agent" in unknown_agent.stdout
     assert invalid_limit.exit_code == 2
     assert "Invalid --limit" in invalid_limit.stdout
 

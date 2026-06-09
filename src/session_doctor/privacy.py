@@ -47,4 +47,6 @@ def redact_command_for_display(command: str) -> str:
             r"\1<redacted>",
             redacted_command,
         )
-    return redacted_command
+    home = str(Path.home())
+    redacted_command = redacted_command.replace(f"{home}/", "~/")
+    return redact_home(redacted_command)

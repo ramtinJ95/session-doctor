@@ -31,7 +31,7 @@ RISK_LABELS = (
 )
 
 PRIMARY_RISK_LABELS = ("user_stuck", "tooling_blocked", "agent_looping")
-RISK_SCORE_THRESHOLD = 0.25
+RISK_SCORE_THRESHOLD = 0.55
 PROBLEMATIC_SESSION_SCORE_THRESHOLD = 0.55
 MUTATING_FILE_OPERATIONS = ("edit", "update", "write", "patch", "move", "delete")
 
@@ -62,6 +62,11 @@ def aggregate_summary(database_path: Path, filters: SummaryFilters) -> Aggregate
     with read_connection(database_path) as connection:
         total_sessions = count_sessions(connection, normalized_filters)
         analyzed_sessions = count_analyzed_sessions(connection, normalized_filters)
+        uncapped_classification_counts = classification_counts(
+            connection,
+            normalized_filters,
+            limit=None,
+        )
         summary = AggregateSummary(
             filters=normalized_filters,
             total_sessions=total_sessions,
@@ -69,14 +74,21 @@ def aggregate_summary(database_path: Path, filters: SummaryFilters) -> Aggregate
             unanalyzed_sessions=max(total_sessions - analyzed_sessions, 0),
             agent_counts=agent_counts(connection, normalized_filters),
             project_counts=project_counts(connection, normalized_filters),
-            classification_counts=classification_counts(connection, normalized_filters),
+            classification_counts=classification_counts(
+                connection,
+                normalized_filters,
+                limit=normalized_filters.limit,
+            ),
             recent_risk_sessions=recent_risk_sessions(connection, normalized_filters),
             failed_commands=failed_commands(connection, normalized_filters),
             repeated_files=repeated_files(connection, normalized_filters),
             recommendations=(),
         )
 
-    return replace(summary, recommendations=recommendations_for_summary(summary))
+    return replace(
+        summary,
+        recommendations=recommendations_for_summary(summary, uncapped_classification_counts),
+    )
 
 
 def empty_summary(filters: SummaryFilters) -> AggregateSummary:
@@ -178,8 +190,11 @@ def project_counts(
 def classification_counts(
     connection: duckdb.DuckDBPyConnection,
     filters: SummaryFilters,
+    limit: int | None = None,
 ) -> tuple[ClassificationCount, ...]:
     base_sessions_sql, params = base_sessions_cte(filters)
+    limit_sql = "" if limit is None else "LIMIT ?"
+    query_params = params if limit is None else [*params, limit]
     rows = connection.execute(
         f"""
         WITH {base_sessions_sql},
@@ -192,9 +207,9 @@ def classification_counts(
         JOIN base_sessions AS b ON b.session_id = sc.session_id
         GROUP BY sc.label
         ORDER BY session_count DESC, sc.label
-        LIMIT ?
+        {limit_sql}
         """,
-        [*params, filters.limit],
+        query_params,
     ).fetchall()
     return tuple(ClassificationCount(str(row[0]), int(row[1])) for row in rows)
 
@@ -399,8 +414,15 @@ def repeated_files(
     return tuple(summaries[: filters.limit])
 
 
-def recommendations_for_summary(summary: AggregateSummary) -> tuple[str, ...]:
+def recommendations_for_summary(
+    summary: AggregateSummary,
+    classification_counts: tuple[ClassificationCount, ...] | None = None,
+) -> tuple[str, ...]:
     if summary.total_sessions == 0:
+        if summary.filters.agent_name or summary.filters.project_path:
+            return (
+                "No sessions match the current filters; adjust filters or ingest more sessions.",
+            )
         return ("Ingest Codex or Pi sessions before running summary.",)
 
     recommendations: list[str] = []
@@ -409,9 +431,8 @@ def recommendations_for_summary(summary: AggregateSummary) -> tuple[str, ...]:
             f"Analyze {summary.unanalyzed_sessions} unanalyzed session(s) to improve rankings."
         )
 
-    classification_counts_by_label = {
-        row.label: row.session_count for row in summary.classification_counts
-    }
+    label_counts = classification_counts or summary.classification_counts
+    classification_counts_by_label = {row.label: row.session_count for row in label_counts}
     if classification_counts_by_label.get("tooling_blocked", 0):
         recommendations.append("Inspect the top failed commands for tooling blockers.")
     if classification_counts_by_label.get("agent_looping", 0):

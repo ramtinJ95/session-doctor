@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .privacy import redact_home
 from .store.models import AggregateSummary
 
 
@@ -7,7 +8,9 @@ def summary_payload(summary: AggregateSummary) -> dict[str, object]:
     return {
         "filters": {
             "agent": summary.filters.agent_name,
-            "project": summary.filters.project_path,
+            "project": (
+                redact_home(summary.filters.project_path) if summary.filters.project_path else None
+            ),
             "limit": summary.filters.limit,
         },
         "totals": {

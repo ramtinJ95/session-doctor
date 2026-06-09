@@ -9,6 +9,7 @@ from rich.table import Table
 
 from .adapters import BaseAdapter
 from .ingest_workflow import IngestSummary
+from .privacy import redact_home
 from .schemas import AnalysisRun, SessionClassification, SessionFeature, SourceKind
 from .store import TABLE_NAMES
 from .store.models import AggregateSummary, SessionSummary, StoreInfo
@@ -203,9 +204,12 @@ def render_summary(summary: AggregateSummary, database_path: Path, console: Cons
     overview_table = Table(title="Aggregate summary")
     overview_table.add_column("Metric")
     overview_table.add_column("Value")
-    overview_table.add_row("Database", str(database_path))
+    overview_table.add_row("Database", redact_home(database_path))
     overview_table.add_row("Agent filter", summary.filters.agent_name or "all")
-    overview_table.add_row("Project filter", summary.filters.project_path or "all")
+    overview_table.add_row(
+        "Project filter",
+        redact_home(summary.filters.project_path) if summary.filters.project_path else "all",
+    )
     overview_table.add_row("Limit", str(summary.filters.limit))
     overview_table.add_row("Sessions", str(summary.total_sessions))
     overview_table.add_row("Analyzed", str(summary.analyzed_sessions))
