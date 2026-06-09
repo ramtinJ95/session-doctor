@@ -82,18 +82,22 @@ def summary_filters_from_options(
     agent_name = None
     if agent is not None:
         try:
-            agent_name = AgentName(agent).value
+            parsed_agent_name = AgentName(agent)
         except ValueError:
             console.print(f"[red]Unsupported --agent:[/red] {agent}")
             raise typer.Exit(2) from None
+        if parsed_agent_name is AgentName.UNKNOWN:
+            console.print(f"[red]Unsupported --agent:[/red] {agent}")
+            raise typer.Exit(2)
+        agent_name = parsed_agent_name.value
 
     project_path = None
     if project is not None:
         expanded_project = project.expanduser()
         if expanded_project.is_absolute():
-            project_path = str(expanded_project)
+            project_path = os.path.normpath(str(expanded_project))
         else:
-            project_path = str(expanded_project.resolve(strict=False))
+            project_path = os.path.normpath(str(Path.cwd() / expanded_project))
 
     return SummaryFilters(agent_name=agent_name, project_path=project_path, limit=limit)
 

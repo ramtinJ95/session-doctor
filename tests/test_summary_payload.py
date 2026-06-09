@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from session_doctor.store.models import (
     AgentSessionCount,
     AggregateSummary,
@@ -14,8 +16,9 @@ from session_doctor.summary_payload import summary_payload
 
 
 def test_summary_payload_uses_stable_machine_readable_keys() -> None:
+    home_project = str(Path.home() / "project")
     summary = AggregateSummary(
-        filters=SummaryFilters(agent_name="codex", project_path="/tmp/project", limit=5),
+        filters=SummaryFilters(agent_name="codex", project_path=home_project, limit=5),
         total_sessions=2,
         analyzed_sessions=1,
         unanalyzed_sessions=1,
@@ -57,7 +60,7 @@ def test_summary_payload_uses_stable_machine_readable_keys() -> None:
         "repeated_files",
         "recommendations",
     }
-    assert payload["filters"] == {"agent": "codex", "project": "/tmp/project", "limit": 5}
+    assert payload["filters"] == {"agent": "codex", "project": "~/project", "limit": 5}
     assert payload["totals"] == {
         "sessions": 2,
         "analyzed_sessions": 1,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -168,6 +170,7 @@ def test_privacy_helpers() -> None:
     assert redact_home("relative/path") == "relative/path"
     assert looks_sensitive_key("OPENAI_API_KEY")
     assert "secret=<redacted>" in redact_command_for_display("run secret=value")
+    assert "~/project/.env" in redact_command_for_display(f"cat {Path.home()}/project/.env")
 
 
 def test_source_kind_has_claude_discovery_categories() -> None:

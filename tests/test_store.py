@@ -602,7 +602,7 @@ def test_store_aggregate_summary_redacts_commands_and_home_paths(tmp_path) -> No
                 command_run_id="command-secret",
                 session_id=session.session_id,
                 source_event_id="event-command",
-                command="TOKEN=supersecret pytest -q",
+                command=f"TOKEN=supersecret cat {Path.home()}/project/.env",
                 exit_code=1,
             )
         ],
@@ -629,10 +629,58 @@ def test_store_aggregate_summary_redacts_commands_and_home_paths(tmp_path) -> No
 
     summary = store.aggregate_summary(SummaryFilters())
 
-    assert summary.failed_commands[0].command == "TOKEN=<redacted> pytest -q"
+    assert summary.failed_commands[0].command == "TOKEN=<redacted> cat ~/project/.env"
     assert "supersecret" not in summary.failed_commands[0].command
+    assert str(Path.home()) not in summary.failed_commands[0].command
     assert summary.project_counts[0].project_path.startswith("~/")
     assert summary.repeated_files[0].path.startswith("~/")
+
+
+def test_store_aggregate_summary_recommendations_use_uncapped_labels(tmp_path) -> None:
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    sessions = [
+        Session(
+            session_id="session-abandoned",
+            source_id="source-abandoned",
+            agent_name=AgentName.CODEX,
+            started_at=datetime(2026, 5, 6, 8, 0),
+        ),
+        Session(
+            session_id="session-tooling",
+            source_id="source-tooling",
+            agent_name=AgentName.CODEX,
+            started_at=datetime(2026, 5, 6, 9, 0),
+        ),
+    ]
+    for session in sessions:
+        source = SessionSource(
+            source_id=session.source_id,
+            agent_name=AgentName.CODEX,
+            source_path=f"/tmp/{session.source_id}.jsonl",
+        )
+        store.insert_parsed_bundle(source, ParsedSessionBundle(session=session))
+
+    add_summary_analysis_rows(store, "session-abandoned", "abandoned_or_stopped", 0.8)
+    add_summary_analysis_rows(store, "session-tooling", "tooling_blocked", 0.8)
+
+    summary = store.aggregate_summary(SummaryFilters(limit=1))
+
+    assert [row.label for row in summary.classification_counts] == ["abandoned_or_stopped"]
+    assert "Inspect the top failed commands for tooling blockers." in summary.recommendations
+
+
+def test_store_aggregate_summary_empty_filter_recommendation_is_filter_specific(tmp_path) -> None:
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    source = source_for_fixture(FIXTURE_DIR / "basic-session.jsonl")
+    bundle = CodexAdapter().parse_source(source)
+    store.insert_parsed_bundle(source, bundle)
+
+    summary = store.aggregate_summary(SummaryFilters(agent_name="pi"))
+
+    assert summary.total_sessions == 0
+    assert summary.recommendations == (
+        "No sessions match the current filters; adjust filters or ingest more sessions.",
+    )
 
 
 def source_for_fixture(path: Path) -> SessionSource:
