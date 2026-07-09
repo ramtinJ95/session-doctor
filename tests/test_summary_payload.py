@@ -34,7 +34,9 @@ def test_summary_payload_uses_stable_machine_readable_keys() -> None:
                 labels=("user_stuck",),
                 friction_score=0.5,
                 stuckness_score=0.7,
+                prompt_clarity_risk=0.333333333333,
                 agent_fit_risk=0.4,
+                project_complexity_signal=0.2,
                 max_risk_score=0.7,
             ),
         ),
@@ -75,7 +77,9 @@ def test_summary_payload_uses_stable_machine_readable_keys() -> None:
             "labels": ["user_stuck"],
             "friction_score": 0.5,
             "stuckness_score": 0.7,
+            "prompt_clarity_risk": 0.333,
             "agent_fit_risk": 0.4,
+            "project_complexity_signal": 0.2,
             "max_risk_score": 0.7,
         }
     ]

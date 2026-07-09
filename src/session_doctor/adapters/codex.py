@@ -70,6 +70,7 @@ class CodexAdapter(BaseAdapter):
         event_msg_fallback_count = 0
         compacted_record_count = 0
         expected_ignored_counts: dict[str, int] = {}
+        current_cwd = session_metadata.session.cwd
 
         for record_index, record in valid_records:
             record_type = string_value(record.get("type"))
@@ -126,6 +127,8 @@ class CodexAdapter(BaseAdapter):
                             session_metadata.session_id,
                             event,
                             payload,
+                            cwd=current_cwd,
+                            project_path=session_metadata.session.project_path,
                         )
                     )
                 elif payload_type in {"user_message", "agent_message"}:
@@ -160,7 +163,10 @@ class CodexAdapter(BaseAdapter):
                             {"payload_type": payload_type},
                         )
                     )
-            elif record_type in {"session_meta", "turn_context"}:
+            elif record_type == "turn_context":
+                current_cwd = string_value(payload.get("cwd")) or current_cwd
+                continue
+            elif record_type == "session_meta":
                 continue
             elif record_type == "compacted":
                 compacted_record_count += 1

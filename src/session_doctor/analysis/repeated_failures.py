@@ -18,7 +18,9 @@ def repeated_failure_groups(bundle: ParsedSessionBundle) -> list[dict[str, objec
             group_values[("command_stdout_hash", f"stdout_hash:{command.stdout_hash}")].append(
                 (command.command_run_id, command.source_event_id),
             )
-        group_values[("failed_command_text", f"failed_command:{command.command}")].append(
+        group_values[
+            ("failed_command_identity", f"failed_command:{command.command_identity_hash}")
+        ].append(
             (command.command_run_id, command.source_event_id),
         )
 
@@ -48,7 +50,7 @@ def repeated_command_loop_failure_groups(
     groups: list[dict[str, object]],
 ) -> list[dict[str, object]]:
     command_loop_group_types = {
-        "failed_command_text",
+        "failed_command_identity",
         "command_stdout_hash",
         "command_stderr_hash",
     }

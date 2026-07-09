@@ -10,6 +10,7 @@ from .feature_factories import message_feature_counts
 from .feature_models import ExtractedFeatures, SessionFeatureContext
 from .file_features import (
     MUTATING_FILE_OPERATIONS,
+    file_activity_identity,
     file_activity_session_features,
     file_edit_source_events,
     repeated_file_edit_source_events,
@@ -92,7 +93,7 @@ def session_feature_context(
     repeated_failures = repeated_failure_groups(bundle)
     repeated_command_failures = repeated_command_loop_failure_groups(repeated_failures)
     file_edit_counts = Counter(
-        activity.path
+        file_activity_identity(activity)
         for activity in bundle.file_activities
         if activity.operation in MUTATING_FILE_OPERATIONS
     )

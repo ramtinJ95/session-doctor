@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from session_doctor.ids import stable_id
 from session_doctor.privacy import hash_text
 from session_doctor.schemas import ParseWarning, SessionSource
+
+from .errors import SourceReadError
 
 JsonRecord = tuple[int, dict[str, Any]]
 
@@ -17,7 +19,6 @@ def read_jsonl_records(
     source_path: Path,
     *,
     agent_display_name: str,
-    open_error: Literal["raise", "warn"] = "warn",
 ) -> tuple[list[JsonRecord], list[ParseWarning]]:
     records: list[JsonRecord] = []
     warnings: list[ParseWarning] = []
@@ -50,16 +51,9 @@ def read_jsonl_records(
                     continue
                 records.append((record_index, parsed))
     except OSError as exc:
-        if open_error == "raise":
-            raise
-        warnings.append(
-            warning_for_source(
-                source,
-                "source_open_error",
-                f"Unable to read {agent_display_name} source: {exc}",
-                {"source_path": str(source_path)},
-            )
-        )
+        raise SourceReadError(
+            source_path, f"Unable to read {agent_display_name} source: {exc}"
+        ) from exc
     return records, warnings
 
 

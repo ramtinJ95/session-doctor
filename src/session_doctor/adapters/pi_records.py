@@ -24,7 +24,6 @@ def read_pi_jsonl(
         source,
         source_path,
         agent_display_name="Pi",
-        open_error="raise",
     )
 
 

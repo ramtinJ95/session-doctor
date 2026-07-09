@@ -9,10 +9,10 @@ from session_doctor.schemas import Message, MessageFeature, SessionFeature
 def feature_evidence(features: list[MessageFeature], feature_name: str) -> dict[str, object]:
     matched_features = [feature for feature in features if feature.feature_name == feature_name]
     return {
-        "message_ids": [feature.message_id for feature in matched_features],
-        "source_event_ids": [
-            feature.source_event_id for feature in matched_features if feature.source_event_id
-        ],
+        "message_ids": sorted({feature.message_id for feature in matched_features}),
+        "source_event_ids": sorted(
+            {feature.source_event_id for feature in matched_features if feature.source_event_id}
+        ),
     }
 
 

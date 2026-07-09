@@ -36,6 +36,10 @@ def test_analyze_features_detects_message_and_session_signals() -> None:
     assert session_features["correction_count"].feature_value == "1"
     assert session_features["frustration_count"].feature_value == "1"
     assert session_features["scope_boundary_count"].feature_value == "1"
+    assert session_features["correction_count"].evidence == {
+        "message_ids": ["message-4"],
+        "source_event_ids": ["event-8"],
+    }
     assert session_features["command_count"].feature_value == "2"
     assert session_features["failed_command_count"].feature_value == "2"
     assert session_features["failed_command_ratio"].feature_value == "1.0"
@@ -57,7 +61,7 @@ def test_analyze_features_detects_message_and_session_signals() -> None:
     repeated_failure_groups = session_features["repeated_failure_count"].evidence["groups"]
     assert {
         group["group_type"] for group in repeated_failure_groups if isinstance(group, dict)
-    } == {"command_stdout_hash", "failed_command_text"}
+    } == {"command_stdout_hash", "failed_command_identity"}
 
 
 def test_analyze_features_emits_phase6_risk_scores_with_metadata() -> None:

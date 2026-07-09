@@ -6,15 +6,50 @@ from pathlib import Path
 from shutil import copyfile
 from typing import Any, cast
 
+import pytest
 from typer.testing import CliRunner
 
 from session_doctor import __version__
+from session_doctor.adapters import BaseAdapter, ParsedSessionBundle, SourceReadError
 from session_doctor.cli import app
+from session_doctor.ids import source_id_for_path
+from session_doctor.schemas import AgentName, Session, SessionSource
 from session_doctor.store import DuckDBStore
 
 runner = CliRunner()
 CODEX_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "codex"
 PI_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "pi"
+
+
+class RecoverableFailureAdapter(BaseAdapter):
+    name = AgentName.CODEX
+    display_name = "Recoverable test adapter"
+
+    def default_roots(self) -> tuple[Path, ...]:
+        return (Path("/unused"),)
+
+    def discover(self, root: Path | None = None) -> list[SessionSource]:
+        assert root is not None
+        return [
+            SessionSource(
+                source_id=source_id_for_path(self.name, path),
+                agent_name=self.name,
+                source_path=str(path),
+            )
+            for path in sorted(root.glob("*.jsonl"))
+        ]
+
+    def parse_source(self, source: SessionSource) -> ParsedSessionBundle:
+        source_path = Path(source.source_path)
+        if source_path.stem.startswith("bad"):
+            raise SourceReadError(source_path, "synthetic read failure")
+        return ParsedSessionBundle(
+            session=Session(
+                session_id=f"session-{source_path.stem}",
+                source_id=source.source_id,
+                agent_name=self.name,
+            )
+        )
 
 
 def test_cli_help() -> None:
@@ -153,6 +188,168 @@ def test_ingest_rejects_unsupported_agent(tmp_path) -> None:
 
     assert result.exit_code == 2
     assert "--agent claude is discovered but parsing is not implemented" in result.stdout
+
+
+def test_ingest_single_file_fails_immediately_on_recoverable_source_error(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "bad.jsonl"
+    source_path.touch()
+    monkeypatch.setattr(
+        "session_doctor.cli.adapter_for_ingest",
+        lambda agent: RecoverableFailureAdapter(),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "codex",
+            "--source",
+            str(source_path),
+            "--db",
+            str(tmp_path / "session-doctor.duckdb"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Source failed" in result.stdout
+    assert "source_read_error" in result.stdout
+    assert "Skipped source" not in result.stdout
+
+
+def test_ingest_directory_keeps_valid_sources_but_exits_nonzero_after_skip(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_dir = tmp_path / "sessions"
+    source_dir.mkdir()
+    (source_dir / "bad.jsonl").touch()
+    (source_dir / "good.jsonl").touch()
+    database_path = tmp_path / "session-doctor.duckdb"
+    monkeypatch.setattr(
+        "session_doctor.cli.adapter_for_ingest",
+        lambda agent: RecoverableFailureAdapter(),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "codex",
+            "--source",
+            str(source_dir),
+            "--db",
+            str(database_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Skipped source" in result.stdout
+    assert "source_read_error" in result.stdout
+    assert "Sessions" in result.stdout
+    assert DuckDBStore(database_path).table_count("sessions") == 1
+
+
+def test_ingest_directory_total_recoverable_failure_exits_nonzero(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_dir = tmp_path / "sessions"
+    source_dir.mkdir()
+    (source_dir / "bad.jsonl").touch()
+    monkeypatch.setattr(
+        "session_doctor.cli.adapter_for_ingest",
+        lambda agent: RecoverableFailureAdapter(),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "codex",
+            "--source",
+            str(source_dir),
+            "--db",
+            str(tmp_path / "session-doctor.duckdb"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Skipped sources" in result.stdout
+    assert "Sessions" in result.stdout
+
+
+def test_ingest_persistence_failure_aborts_without_skipping(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "good.jsonl"
+    source_path.touch()
+    monkeypatch.setattr(
+        "session_doctor.cli.adapter_for_ingest",
+        lambda agent: RecoverableFailureAdapter(),
+    )
+
+    def fail_persistence(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("synthetic persistence failure")
+
+    monkeypatch.setattr(DuckDBStore, "insert_parsed_bundle", fail_persistence)
+
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "codex",
+            "--source",
+            str(source_path),
+            "--db",
+            str(tmp_path / "session-doctor.duckdb"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, RuntimeError)
+    assert "Skipped source" not in result.stdout
+    assert "Source failed" not in result.stdout
+
+
+def test_ingest_unexpected_parser_failure_aborts_without_skipping(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "good.jsonl"
+    source_path.touch()
+    adapter = RecoverableFailureAdapter()
+
+    def fail_parse(source: SessionSource) -> ParsedSessionBundle:
+        raise RuntimeError("synthetic parser bug")
+
+    monkeypatch.setattr(adapter, "parse_source", fail_parse)
+    monkeypatch.setattr("session_doctor.cli.adapter_for_ingest", lambda agent: adapter)
+
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "codex",
+            "--source",
+            str(source_path),
+            "--db",
+            str(tmp_path / "session-doctor.duckdb"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, RuntimeError)
+    assert "Skipped source" not in result.stdout
+    assert "Source failed" not in result.stdout
 
 
 def test_ingest_pi_fixture_writes_database_and_prints_summary(tmp_path) -> None:
@@ -477,6 +674,20 @@ def test_summary_json_counts_analyzed_codex_and_pi_sessions(tmp_path) -> None:
     assert {row["agent"] for row in payload["agents"]} == {"codex", "pi"}
     assert payload["classifications"]
     assert payload["recent_risk_sessions"]
+    for risk_row in payload["recent_risk_sessions"]:
+        assert {
+            "friction_score",
+            "stuckness_score",
+            "prompt_clarity_risk",
+            "agent_fit_risk",
+            "project_complexity_signal",
+            "max_risk_score",
+        }.issubset(risk_row)
+        assert all(
+            value is None or value == round(value, 3)
+            for key, value in risk_row.items()
+            if key.endswith(("_score", "_risk", "_signal"))
+        )
     assert payload["failed_commands"]
     assert payload["recommendations"]
 
