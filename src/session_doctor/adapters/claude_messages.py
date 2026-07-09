@@ -15,6 +15,9 @@ def message_from_record(
     record: dict[str, Any],
 ) -> Message | None:
     record_type = string_value(record.get("type"))
+    record_subtype = string_value(record.get("subtype"))
+    if record_type == "system" and record_subtype == "local_command":
+        return None
     role = normalize_claude_role(record_type)
     message = dict_value(record.get("message"))
     content = message.get("content") if message else record.get("content")
@@ -42,6 +45,21 @@ def message_from_record(
         else None
     )
     native_message_id = string_value(record.get("uuid")) or string_value(message.get("id"))
+    stop_reason = string_value(message.get("stop_reason"))
+    metadata: dict[str, Any] = {
+        "claude_record_type": record_type,
+        "api_message_id": string_value(message.get("id")),
+        "model": string_value(message.get("model")),
+        "provider": string_value(message.get("provider")),
+        "stop_reason": stop_reason,
+        "stop_sequence_present": message.get("stop_sequence") is not None,
+        "is_sidechain": record.get("isSidechain")
+        if isinstance(record.get("isSidechain"), bool)
+        else None,
+        "thinking_block_count": content_block_types.count("thinking"),
+    }
+    if role is NormalizedRole.ASSISTANT and stop_reason == "end_turn":
+        metadata["phase"] = "final_answer"
     return Message(
         message_id=stable_id("message", session_id, event.event_id),
         session_id=session_id,
@@ -54,18 +72,7 @@ def message_from_record(
         text_hash=hash_text(text) if text is not None else None,
         text_length=text_length(text),
         content_block_types=content_block_types,
-        metadata={
-            "claude_record_type": record_type,
-            "api_message_id": string_value(message.get("id")),
-            "model": string_value(message.get("model")),
-            "provider": string_value(message.get("provider")),
-            "stop_reason": string_value(message.get("stop_reason")),
-            "stop_sequence_present": message.get("stop_sequence") is not None,
-            "is_sidechain": record.get("isSidechain")
-            if isinstance(record.get("isSidechain"), bool)
-            else None,
-            "thinking_block_count": content_block_types.count("thinking"),
-        },
+        metadata=metadata,
     )
 
 
