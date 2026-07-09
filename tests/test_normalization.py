@@ -8,6 +8,7 @@ def test_command_identity_unwraps_only_recognized_shell_payloads() -> None:
 
     for wrapped in (
         "/bin/zsh -lc 'pytest tests/test_cli.py -q'",
+        "/usr/bin/bash -lc 'pytest tests/test_cli.py -q'",
         "bash -c 'pytest tests/test_cli.py -q'",
         "sh -lc 'pytest tests/test_cli.py -q'",
     ):
@@ -27,6 +28,9 @@ def test_command_identity_keeps_near_miss_wrappers_separate() -> None:
         "fish -c 'pytest -q'",
         "bash -x 'pytest -q'",
         "bash -lc 'pytest -q",
+        "./bash -c 'pytest -q'",
+        "/tmp/bash -lc 'pytest -q'",
+        "/usr/local/bin/zsh -lc 'pytest -q'",
     ):
         assert canonical_command_identity(near_miss).identity_hash != plain.identity_hash
 

@@ -6,9 +6,9 @@ import duckdb
 
 from session_doctor.adapters import ParsedSessionBundle
 
-from .connection import read_connection
+from .connection import inspection_connection, read_connection
 from .json_values import parse_metadata
-from .migrations import TABLE_NAMES
+from .migrations import TABLE_NAMES, database_schema_version, database_tables
 from .models import SessionSummary, StoreInfo
 from .row_loaders import (
     load_command_runs,
@@ -118,19 +118,9 @@ def store_info(database_path: Path) -> StoreInfo:
             tables=(),
         )
 
-    with read_connection(database_path) as connection:
-        tables = tuple(
-            row[0]
-            for row in connection.execute(
-                """
-                SELECT table_name
-                FROM information_schema.tables
-                WHERE table_schema = 'main'
-                ORDER BY table_name
-                """
-            ).fetchall()
-        )
-        schema_version = latest_schema_version(connection, tables)
+    with inspection_connection(database_path) as connection:
+        tables = database_tables(connection)
+        schema_version = database_schema_version(connection, tables)
 
     return StoreInfo(
         database_path=database_path,
@@ -138,18 +128,6 @@ def store_info(database_path: Path) -> StoreInfo:
         schema_version=schema_version,
         tables=tables,
     )
-
-
-def latest_schema_version(
-    connection: duckdb.DuckDBPyConnection,
-    tables: tuple[str, ...],
-) -> int | None:
-    if "schema_migrations" not in tables:
-        return None
-    row = connection.execute(
-        "SELECT MAX(version) FROM schema_migrations",
-    ).fetchone()
-    return int(row[0]) if row and row[0] is not None else None
 
 
 def message_source_counts_by_session(

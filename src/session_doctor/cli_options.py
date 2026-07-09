@@ -12,6 +12,7 @@ from .ids import source_id_for_path
 from .schemas import SourceKind
 from .schemas.common import AgentName
 from .schemas.sessions import SessionSource
+from .store import DuckDBStore, SchemaMismatchError
 from .store.models import SummaryFilters
 
 console = Console()
@@ -54,6 +55,17 @@ def require_existing_database_path(path: Path) -> None:
         return
     console.print(f"[red]Database does not exist:[/red] {path}")
     raise typer.Exit(1)
+
+
+def require_current_database_schema(path: Path, *, allow_empty: bool = False) -> None:
+    if not path.exists():
+        return
+    try:
+        DuckDBStore(path).validate_schema(allow_empty=allow_empty)
+    except SchemaMismatchError as exc:
+        console.print(f"[red]Incompatible database:[/red] {path} ({exc})")
+        console.print(f"Delete it and recreate it with: session-doctor db init --db {path}")
+        raise typer.Exit(1) from exc
 
 
 def require_analysis_output_format(output_format: str) -> None:

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import duckdb
 
-from session_doctor.normalization import canonical_command_identity, canonical_file_identity
-
 SCHEMA_VERSION = 3
 
 TABLE_NAMES = (
@@ -27,7 +25,27 @@ TABLE_NAMES = (
 )
 
 
-def apply_migrations(connection: duckdb.DuckDBPyConnection) -> None:
+class SchemaMismatchError(RuntimeError):
+    def __init__(
+        self,
+        actual_version: int | None,
+        *,
+        missing_tables: tuple[str, ...] = (),
+    ) -> None:
+        self.actual_version = actual_version
+        self.missing_tables = missing_tables
+        actual = "missing" if actual_version is None else str(actual_version)
+        detail = f"database schema version is {actual}; expected {SCHEMA_VERSION}"
+        if missing_tables:
+            detail = f"{detail}; missing tables: {', '.join(missing_tables)}"
+        super().__init__(f"{detail}. Rebuild the database.")
+
+
+def initialize_schema(connection: duckdb.DuckDBPyConnection) -> None:
+    if database_tables(connection):
+        require_current_schema(connection)
+        return
+
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -40,12 +58,49 @@ def apply_migrations(connection: duckdb.DuckDBPyConnection) -> None:
     for statement in CREATE_TABLE_STATEMENTS:
         connection.execute(statement)
 
-    migrate_canonical_identity_columns(connection)
-
     connection.execute(
         "INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)",
         [SCHEMA_VERSION],
     )
+
+
+def require_current_schema(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    allow_empty: bool = False,
+) -> None:
+    tables = database_tables(connection)
+    if allow_empty and not tables:
+        return
+    actual_version = database_schema_version(connection, tables)
+    missing_tables = tuple(sorted(set(TABLE_NAMES) - set(tables)))
+    if actual_version != SCHEMA_VERSION or missing_tables:
+        raise SchemaMismatchError(actual_version, missing_tables=missing_tables)
+
+
+def database_tables(connection: duckdb.DuckDBPyConnection) -> tuple[str, ...]:
+    return tuple(
+        str(row[0])
+        for row in connection.execute(
+            """
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'main'
+            ORDER BY table_name
+            """
+        ).fetchall()
+    )
+
+
+def database_schema_version(
+    connection: duckdb.DuckDBPyConnection,
+    tables: tuple[str, ...] | None = None,
+) -> int | None:
+    known_tables = tables if tables is not None else database_tables(connection)
+    if "schema_migrations" not in known_tables:
+        return None
+    row = connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
+    return int(row[0]) if row and row[0] is not None else None
 
 
 CREATE_TABLE_STATEMENTS = (
@@ -271,81 +326,3 @@ CREATE_TABLE_STATEMENTS = (
     )
     """,
 )
-
-
-def migrate_canonical_identity_columns(connection: duckdb.DuckDBPyConnection) -> None:
-    add_column_if_missing(connection, "command_runs", "command_identity_hash", "VARCHAR")
-    add_column_if_missing(connection, "command_runs", "command_display", "VARCHAR")
-    add_column_if_missing(connection, "command_runs", "command_normalization", "VARCHAR")
-    add_column_if_missing(connection, "file_activities", "normalized_path", "VARCHAR")
-    add_column_if_missing(connection, "file_activities", "canonical_path", "VARCHAR")
-    add_column_if_missing(connection, "file_activities", "project_relative_path", "VARCHAR")
-    add_column_if_missing(connection, "file_activities", "path_resolution", "VARCHAR")
-
-    command_rows = connection.execute(
-        """
-        SELECT command_run_id, command
-        FROM command_runs
-        WHERE command_identity_hash IS NULL
-           OR command_display IS NULL
-           OR command_normalization IS NULL
-        """
-    ).fetchall()
-    for command_run_id, command in command_rows:
-        identity = canonical_command_identity(str(command))
-        connection.execute(
-            """
-            UPDATE command_runs
-            SET command_identity_hash = ?, command_display = ?, command_normalization = ?
-            WHERE command_run_id = ?
-            """,
-            [identity.identity_hash, identity.display, identity.normalization, command_run_id],
-        )
-
-    file_rows = connection.execute(
-        """
-        SELECT f.file_activity_id, f.path, s.cwd, s.project_path
-        FROM file_activities AS f
-        JOIN sessions AS s ON s.session_id = f.session_id
-        WHERE f.normalized_path IS NULL OR f.path_resolution IS NULL
-        """
-    ).fetchall()
-    for file_activity_id, path, cwd, project_path in file_rows:
-        identity = canonical_file_identity(
-            str(path),
-            cwd=str(cwd) if cwd else None,
-            project_path=str(project_path) if project_path else None,
-        )
-        connection.execute(
-            """
-            UPDATE file_activities
-            SET normalized_path = ?, canonical_path = ?, project_relative_path = ?,
-                path_resolution = ?
-            WHERE file_activity_id = ?
-            """,
-            [
-                identity.normalized_path,
-                identity.canonical_path,
-                identity.project_relative_path,
-                identity.resolution,
-                file_activity_id,
-            ],
-        )
-
-
-def add_column_if_missing(
-    connection: duckdb.DuckDBPyConnection,
-    table_name: str,
-    column_name: str,
-    column_type: str,
-) -> None:
-    existing = connection.execute(
-        """
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_name = ? AND column_name = ?
-        """,
-        [table_name, column_name],
-    ).fetchone()
-    if existing is None:
-        connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")

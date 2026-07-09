@@ -11,8 +11,9 @@ from session_doctor.schemas import (
     SessionSource,
 )
 
-from .connection import initialize_database
+from .connection import initialize_database, inspection_connection
 from .json_values import duckdb_value, metadata_json, parse_metadata, parse_string_list
+from .migrations import require_current_schema
 from .models import AggregateSummary, SessionSummary, StoreInfo, SummaryFilters
 from .readers import (
     list_session_summaries,
@@ -76,6 +77,10 @@ class DuckDBStore:
     def initialize(self) -> StoreInfo:
         initialize_database(self.database_path)
         return self.info()
+
+    def validate_schema(self, *, allow_empty: bool = False) -> None:
+        with inspection_connection(self.database_path) as connection:
+            require_current_schema(connection, allow_empty=allow_empty)
 
     def insert_parsed_bundle(
         self,

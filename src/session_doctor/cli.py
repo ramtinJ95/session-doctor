@@ -20,6 +20,7 @@ from .cli_options import (
     os_access_writable,
     path_can_be_created,
     require_analysis_output_format,
+    require_current_database_schema,
     require_existing_database_path,
     require_summary_output_format,
     require_valid_database_path,
@@ -65,6 +66,7 @@ __all__ = [
     "database_path_is_valid",
     "os_access_writable",
     "path_can_be_created",
+    "require_current_database_schema",
     "require_valid_database_path",
     "render_summary",
     "render_analysis_summary",
@@ -154,6 +156,7 @@ def init_database(
     """Create the local DuckDB database and schema tables."""
     database_path = database_path_from_option(db)
     require_valid_database_path(database_path)
+    require_current_database_schema(database_path, allow_empty=True)
     store = DuckDBStore(database_path)
     info = store.initialize()
     console.print(f"Initialized DuckDB store: {info.database_path}")
@@ -191,6 +194,7 @@ def list_sessions(
     """List sessions stored in DuckDB."""
     database_path = database_path_from_option(db)
     require_valid_database_path(database_path)
+    require_current_database_schema(database_path)
     store = DuckDBStore(database_path)
     render_sessions_table(store.list_session_summaries(), console)
 
@@ -223,6 +227,7 @@ def ingest(
     adapter = adapter_for_ingest(agent)
     database_path = database_path_from_option(db)
     require_valid_database_path(database_path)
+    require_current_database_schema(database_path, allow_empty=True)
     sources = sources_for_ingest(adapter, source)
     store = DuckDBStore(database_path)
     continue_on_source_error = source is None or source.expanduser().is_dir()
@@ -279,6 +284,7 @@ def analyze(
     database_path = database_path_from_option(db)
     require_valid_database_path(database_path)
     require_existing_database_path(database_path)
+    require_current_database_schema(database_path)
 
     store = DuckDBStore(database_path)
     result = analyze_session(store, session_id, database_path, artifact, no_artifact, console)
@@ -338,6 +344,7 @@ def summary(
     database_path = database_path_from_option(db)
     require_valid_database_path(database_path)
     require_existing_database_path(database_path)
+    require_current_database_schema(database_path)
 
     filters = summary_filters_from_options(agent, project, limit)
     aggregate = DuckDBStore(database_path).aggregate_summary(filters)
