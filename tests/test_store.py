@@ -644,6 +644,67 @@ def test_store_aggregate_summary_filters_by_agent_and_project(tmp_path) -> None:
     assert other_project_summary.total_sessions == 0
 
 
+def test_store_repeated_files_groups_canonical_path_when_project_metadata_differs(
+    tmp_path,
+) -> None:
+    canonical_path = "/tmp/project/src/app.py"
+    sessions = (
+        Session(
+            session_id="session-with-project",
+            source_id="source-with-project",
+            agent_name=AgentName.CODEX,
+            cwd="/tmp/project",
+            project_path="/tmp/project",
+        ),
+        Session(
+            session_id="session-without-project",
+            source_id="source-without-project",
+            agent_name=AgentName.PI,
+        ),
+    )
+    activities = (
+        FileActivity(
+            file_activity_id="file-with-project",
+            session_id=sessions[0].session_id,
+            path="src/app.py",
+            normalized_path="src/app.py",
+            canonical_path=canonical_path,
+            project_relative_path="src/app.py",
+            path_resolution="cwd",
+            operation="edit",
+        ),
+        FileActivity(
+            file_activity_id="file-without-project",
+            session_id=sessions[1].session_id,
+            path=canonical_path,
+            normalized_path=canonical_path,
+            canonical_path=canonical_path,
+            path_resolution="absolute",
+            operation="edit",
+        ),
+    )
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    for session, activity in zip(sessions, activities, strict=True):
+        source = SessionSource(
+            source_id=session.source_id,
+            agent_name=session.agent_name,
+            source_path=f"/tmp/{session.source_id}.jsonl",
+        )
+        store.insert_parsed_bundle(
+            source,
+            ParsedSessionBundle(session=session, file_activities=[activity]),
+        )
+        add_summary_analysis_rows(store, session.session_id, "tooling_blocked", 0.9)
+
+    summary = store.aggregate_summary(SummaryFilters())
+
+    assert len(summary.repeated_files) == 1
+    assert summary.repeated_files[0].path == canonical_path
+    assert summary.repeated_files[0].activity_count == 2
+    assert summary.repeated_files[0].session_count == 2
+    assert summary.repeated_files[0].agents == ("codex", "pi")
+
+
 def test_store_aggregate_summary_redacts_commands_and_home_paths(tmp_path) -> None:
     home_file = Path.home() / "project" / "src" / "app.py"
     source = SessionSource(

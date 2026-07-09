@@ -9,7 +9,7 @@ from session_doctor.ids import stable_id
 from session_doctor.privacy import hash_text
 from session_doctor.schemas import ParseWarning, SessionSource
 
-from .errors import SourceReadError
+from .errors import SourceFormatError, SourceReadError
 
 JsonRecord = tuple[int, dict[str, Any]]
 
@@ -50,6 +50,11 @@ def read_jsonl_records(
                     )
                     continue
                 records.append((record_index, parsed))
+    except UnicodeDecodeError as exc:
+        raise SourceFormatError(
+            source_path,
+            f"Unable to decode {agent_display_name} source as UTF-8 at byte {exc.start}",
+        ) from exc
     except OSError as exc:
         raise SourceReadError(
             source_path, f"Unable to read {agent_display_name} source: {exc}"

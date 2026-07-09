@@ -401,17 +401,19 @@ def repeated_files(
         project_path,
         activity_at,
     ) in rows:
-        if project_relative_path and project_path:
-            identity = (
-                "project",
-                posixpath.normpath(str(project_path)),
-                str(project_relative_path),
+        canonical_group_path: str | None = None
+        if canonical_path:
+            canonical_group_path = posixpath.normpath(str(canonical_path))
+        elif project_relative_path and project_path:
+            canonical_group_path = posixpath.normpath(
+                posixpath.join(str(project_path), str(project_relative_path))
             )
-        elif canonical_path:
-            identity = ("absolute", str(canonical_path))
+
+        if canonical_group_path is not None:
+            identity = ("canonical", canonical_group_path)
         else:
             identity = ("unresolved", str(session_id), str(normalized_path))
-        display_path = redact_home(str(canonical_path or normalized_path))
+        display_path = redact_home(canonical_group_path or str(normalized_path))
         group = grouped.setdefault(
             identity,
             FileGroup(display_path=display_path, example_session_id=str(session_id)),
