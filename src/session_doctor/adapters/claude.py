@@ -314,7 +314,7 @@ def parse_assistant_record(
         )
     message = dict_value(record.get("message"))
     stop_reason = string_value(message.get("stop_reason"))
-    if stop_reason in {"max_tokens", "stop_sequence"}:
+    if stop_reason == "max_tokens":
         bundle.parse_warnings.append(
             warning_for_record(
                 source,
@@ -440,7 +440,7 @@ def is_claude_tool_result_path(
 ) -> bool:
     if parent_name != "tool-results":
         return False
-    if root is None or path.parent == root or len(relative_path.parts) >= 3:
+    if root is not None and (path.parent == root or len(relative_path.parts) >= 3):
         return True
     session_dir = path.parent.parent
     root_transcript = session_dir.parent / f"{session_dir.name}.jsonl"
