@@ -346,6 +346,49 @@ def test_ingest_claude_rejects_explicit_subagent_source(tmp_path) -> None:
     assert "subsession" in result.stdout
 
 
+@pytest.mark.parametrize(
+    ("directory_name", "filename", "content"),
+    [
+        (
+            "subagents",
+            "agent-a.jsonl",
+            '{"type":"user","message":{"role":"user","content":"PRIVATE_SUBAGENT"}}\n',
+        ),
+        (
+            "tool-results",
+            "result.jsonl",
+            '{"type":"system","content":"PRIVATE_SIDECAR_OUTPUT"}\n',
+        ),
+    ],
+)
+def test_ingest_claude_direct_sidecar_directory_selects_no_root_sources(
+    tmp_path,
+    directory_name: str,
+    filename: str,
+    content: str,
+) -> None:
+    source_dir = tmp_path / "session-1" / directory_name
+    source_dir.mkdir(parents=True)
+    (source_dir / filename).write_text(content)
+    database_path = tmp_path / f"{directory_name}.duckdb"
+
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "claude",
+            "--source",
+            str(source_dir),
+            "--db",
+            str(database_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert not database_path.exists()
+
+
 def test_ingest_single_file_fails_immediately_on_recoverable_source_error(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,

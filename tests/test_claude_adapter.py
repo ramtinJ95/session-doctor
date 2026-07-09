@@ -156,6 +156,46 @@ def test_claude_end_turn_marks_final_answer_and_resolves_correction(tmp_path) ->
     assert "user_stuck" not in labels
 
 
+@pytest.mark.parametrize("stop_reason", ["max_tokens", "stop_sequence"])
+def test_claude_truncated_assistant_stop_is_unresolved_evidence(
+    tmp_path,
+    stop_reason: str,
+) -> None:
+    source_path = tmp_path / f"{stop_reason}.jsonl"
+    source_path.write_text(
+        json.dumps(
+            {
+                "type": "assistant",
+                "sessionId": "session-1",
+                "uuid": "assistant-1",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Incomplete response"}],
+                    "stop_reason": stop_reason,
+                    "stop_sequence": "END" if stop_reason == "stop_sequence" else None,
+                },
+            }
+        )
+    )
+
+    bundle = ClaudeCodeAdapter().parse_source(source_for_fixture(source_path))
+
+    warning = next(
+        warning
+        for warning in bundle.parse_warnings
+        if warning.metadata["code"] == "claude_assistant_truncated"
+    )
+    assert warning.metadata["stop_reason"] == stop_reason
+    features = analyze_features(bundle, "analysis-run")
+    feature_values = {feature.feature_name: feature for feature in features.session_features}
+    assert feature_values["unresolved_ending_signal"].feature_value == "true"
+    assert (
+        warning.warning_id
+        in feature_values["unresolved_ending_signal"].evidence["late_parse_warning_ids"]
+    )
+
+
 def test_claude_local_command_output_is_hashed_but_not_persisted_as_message_text(
     tmp_path,
 ) -> None:
@@ -512,6 +552,8 @@ def test_claude_discovery_classifies_all_sources_but_ingests_only_roots(tmp_path
         SourceKind.ROOT_SESSION
     ]
     assert sources_for_ingest(adapter, session_dir) == []
+    assert sources_for_ingest(adapter, subagents_dir) == []
+    assert sources_for_ingest(adapter, tool_results_dir) == []
 
 
 def test_claude_rejects_non_root_source_kind() -> None:

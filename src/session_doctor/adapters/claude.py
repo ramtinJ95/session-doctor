@@ -312,6 +312,21 @@ def parse_assistant_record(
                 safe_error_metadata(record),
             )
         )
+    message = dict_value(record.get("message"))
+    stop_reason = string_value(message.get("stop_reason"))
+    if stop_reason in {"max_tokens", "stop_sequence"}:
+        bundle.parse_warnings.append(
+            warning_for_record(
+                source,
+                record_index,
+                "claude_assistant_truncated",
+                "Claude Code assistant response ended with a truncation signal",
+                {
+                    "stop_reason": stop_reason,
+                    "stop_sequence_present": message.get("stop_sequence") is not None,
+                },
+            )
+        )
 
 
 def parse_user_tool_results(
@@ -392,9 +407,9 @@ def safe_error_metadata(record: dict[str, Any]) -> dict[str, Any]:
 
 def classify_claude_path(path: Path, root: Path | None = None) -> SourceKind:
     relative_path = path.relative_to(root) if root and path.is_relative_to(root) else path
-    parent_name = relative_path.parent.name
+    parent_name = claude_source_parent_name(path, relative_path, root)
     is_subagent_file = parent_name == "subagents" and path.name.startswith("agent-")
-    if is_claude_tool_result_path(path, relative_path, root):
+    if is_claude_tool_result_path(path, relative_path, root, parent_name):
         return SourceKind.TOOL_RESULT
     if is_subagent_file and path.name.endswith(".meta.json"):
         return SourceKind.SUBAGENT_METADATA
@@ -407,14 +422,25 @@ def classify_claude_path(path: Path, root: Path | None = None) -> SourceKind:
     return SourceKind.AUXILIARY
 
 
+def claude_source_parent_name(
+    path: Path,
+    relative_path: Path,
+    root: Path | None,
+) -> str:
+    if root is not None and path.parent == root and root.name in {"subagents", "tool-results"}:
+        return root.name
+    return relative_path.parent.name
+
+
 def is_claude_tool_result_path(
     path: Path,
     relative_path: Path,
     root: Path | None,
+    parent_name: str,
 ) -> bool:
-    if relative_path.parent.name != "tool-results":
+    if parent_name != "tool-results":
         return False
-    if root is None or len(relative_path.parts) >= 3:
+    if root is None or path.parent == root or len(relative_path.parts) >= 3:
         return True
     session_dir = path.parent.parent
     root_transcript = session_dir.parent / f"{session_dir.name}.jsonl"
