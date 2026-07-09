@@ -24,6 +24,7 @@ def file_activity_from_tool_use(
     session_id: str,
     event: RawEvent,
     block: dict[str, Any],
+    block_index: int,
     *,
     cwd: str | None,
     project_path: str | None,
@@ -44,12 +45,13 @@ def file_activity_from_tool_use(
         if content_fields
         else None
     )
+    native_tool_call_id = string_value(block.get("id"))
     return FileActivity(
         file_activity_id=stable_id(
             "file_activity",
             session_id,
             event.event_id,
-            string_value(block.get("id")),
+            native_tool_call_id if native_tool_call_id is not None else block_index,
             tool_name,
             path,
         ),
@@ -65,13 +67,20 @@ def file_activity_from_tool_use(
         content_hash=hash_text(content_payload) if content_payload is not None else None,
         metadata={
             "native_tool_name": tool_name,
-            "native_tool_call_id": string_value(block.get("id")),
+            "native_tool_call_id": native_tool_call_id,
             "argument_keys": sorted(arguments.keys()),
             "content_lengths": {key: len(value) for key, value in content_fields.items()},
-            "replace_all": bool_value(arguments.get("replace_all"))
-            or bool_value(arguments.get("replaceAll")),
+            "replace_all": first_bool(arguments, "replace_all", "replaceAll"),
         },
     )
+
+
+def first_bool(arguments: dict[str, Any], *keys: str) -> bool | None:
+    for key in keys:
+        value = bool_value(arguments.get(key))
+        if value is not None:
+            return value
+    return None
 
 
 def content_fields_for_tool(tool_name: str, arguments: dict[str, Any]) -> dict[str, str]:

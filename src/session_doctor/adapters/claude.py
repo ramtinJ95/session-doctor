@@ -280,6 +280,7 @@ def parse_assistant_record(
             session_metadata.session_id,
             event,
             block,
+            block_index,
             cwd=record_cwd,
             project_path=session_metadata.session.project_path,
         )
@@ -392,16 +393,12 @@ def safe_error_metadata(record: dict[str, Any]) -> dict[str, Any]:
 def classify_claude_path(path: Path, root: Path | None = None) -> SourceKind:
     relative_path = path.relative_to(root) if root and path.is_relative_to(root) else path
     parent_name = relative_path.parent.name
-    has_nested_session_layout = root is None or len(relative_path.parts) >= 4
-    if has_nested_session_layout and parent_name == "tool-results":
+    is_subagent_file = parent_name == "subagents" and path.name.startswith("agent-")
+    if parent_name == "tool-results" and path.suffix != ".jsonl":
         return SourceKind.TOOL_RESULT
-    if (
-        has_nested_session_layout
-        and parent_name == "subagents"
-        and path.name.endswith(".meta.json")
-    ):
+    if is_subagent_file and path.name.endswith(".meta.json"):
         return SourceKind.SUBAGENT_METADATA
-    if has_nested_session_layout and parent_name == "subagents" and path.suffix == ".jsonl":
+    if is_subagent_file and path.suffix == ".jsonl":
         return SourceKind.SUBSESSION
     if path.suffix == ".jsonl":
         return SourceKind.ROOT_SESSION

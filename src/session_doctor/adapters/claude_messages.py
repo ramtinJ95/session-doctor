@@ -25,6 +25,12 @@ def message_from_record(
         content,
         text_block_types={"text"},
     )
+    if (
+        record_type == "user"
+        and content_block_types
+        and set(content_block_types) == {"tool_result"}
+    ):
+        role = NormalizedRole.TOOL
     text = (
         raw_text
         if role
