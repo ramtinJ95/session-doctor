@@ -64,6 +64,16 @@ Pre-Phase-8 PR 1 hardens that foundation:
 - all five risk scores in aggregate output with stable JSON precision
 - deduplicated aggregate evidence IDs
 
+Pre-Phase-8 PR 2 adds the Claude Code root-session vertical slice:
+
+- tolerant Claude root JSONL parsing into the existing normalized models
+- `session-doctor ingest --agent claude` for root transcripts
+- existing `sessions list`, `analyze`, and `summary` behavior over Claude roots
+- hashed tool/command output and edit/write bodies without persisted thinking text
+
+Claude subagents, metadata and tool-result sidecars, and copied-local validation
+remain deliberately deferred to Pre-Phase-8 PR 3.
+
 ## Usage
 
 Install dependencies:
@@ -130,6 +140,19 @@ If `--source` is omitted, Pi ingestion scans the default Pi session root:
 uv run session-doctor ingest --agent pi --db /tmp/session-doctor-test.duckdb
 ```
 
+Ingest a Claude Code root session:
+
+```bash
+uv run session-doctor ingest --agent claude \
+  --source tests/fixtures/claude/basic-session.jsonl \
+  --db /tmp/session-doctor-test.duckdb
+```
+
+If `--source` is omitted, Claude ingestion scans `~/.claude/projects` but
+selects only root-session JSONL files. Subagents, metadata, persisted tool
+results, memory files, and auxiliary files are classified but not ingested in
+this root-session MVP.
+
 Analyze an ingested session:
 
 ```bash
@@ -154,6 +177,7 @@ Summarize the local store after ingesting and optionally analyzing sessions:
 uv run session-doctor summary --db /tmp/session-doctor-test.duckdb
 uv run session-doctor summary --db /tmp/session-doctor-test.duckdb --format json
 uv run session-doctor summary --db /tmp/session-doctor-test.duckdb --agent pi
+uv run session-doctor summary --db /tmp/session-doctor-test.duckdb --agent claude
 uv run session-doctor summary \
   --db /tmp/session-doctor-test.duckdb \
   --project /tmp/session-doctor

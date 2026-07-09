@@ -66,8 +66,9 @@ The first complete product iteration should support:
 - deterministic features and explainable scoring
 - a planned graph command and graph projection model
 
-The current implementation already parses Codex and Pi sessions. Claude Code is
-discoverable but not parseable yet. OpenCode and other agents should be
+The current implementation parses Codex and Pi sessions plus ordinary Claude
+Code root transcripts. Claude subagent and sidecar correlation remains part of
+the next pre-Phase-8 pull request. OpenCode and other agents should be
 considered future adapters. The architecture should make adding them
 straightforward, but they are not part of the first implementation slice.
 
@@ -76,12 +77,14 @@ straightforward, but they are not part of the first implementation slice.
 As of the current repository state, Phase 5 deterministic feature hardening,
 Phase 6 classification scoring, and Phase 7 aggregate summaries are
 implemented.
-The repository has a working local CLI for ingesting and analyzing Codex and Pi
-session logs. It has discovery support for Claude Code, but Claude parsing
-remains intentionally unimplemented. The implemented vertical slice is:
+The repository has a working local CLI for ingesting and analyzing Codex, Pi,
+and Claude Code root-session logs. Claude discovery also classifies subagents,
+metadata, persisted tool results, memory, and auxiliary files, but those source
+kinds remain deliberately unparsed until Pre-Phase-8 PR 3. The implemented
+vertical slice is:
 
 ```text
-Codex/Pi JSONL source
+Codex/Pi/Claude root JSONL source
   -> adapter-specific parser
   -> normalized Pydantic bundle
   -> DuckDB store
@@ -102,6 +105,8 @@ The tool can currently:
 - initialize and inspect a local DuckDB database
 - ingest Codex JSONL sessions from the default root, a directory, or one file
 - ingest Pi JSONL sessions from the default root, a directory, or one file
+- ingest Claude Code root-session JSONL from the default root, a directory, or
+  one file while excluding non-root Claude source kinds
 - delete and replace normalized rows for a source when that source is re-ingested
 - list ingested sessions with agent, start time, message count, command count,
   warning count, and source path
@@ -193,14 +198,27 @@ Pi parsing currently normalizes:
 - model usage/cost rows from assistant usage payloads
 - metadata-only record counts and parse warnings for unsupported roles/types
 
-Claude Code support currently includes discovery and source-kind classification
-for root sessions, subagent sessions, subagent metadata, persisted tool-result
-files, memory files, and auxiliary files. Claude parsing and ingestion are still
-rejected by `ingest` with a clear not-implemented error.
+Claude Code root-session parsing currently normalizes:
+
+- raw events for every valid native record, with malformed rows represented as
+  parse warnings
+- session IDs, chronological timestamps, the first trustworthy cwd, cwd/version
+  drift, git branches, entrypoints, model, and provider metadata
+- user, assistant, and system messages while excluding thinking and tool-result
+  text from message text
+- assistant tool calls and correlated user tool results with hashed arguments
+  and output
+- Bash command runs and Read/Edit/Write file activity through the shared
+  canonical identity contracts
+- model usage and deliberate metadata-only/unknown-shape counts and warnings
+
+Claude subagent JSONL, subagent metadata, persisted tool-result sidecars, memory
+files, and auxiliary files are classified but remain unparsed until
+Pre-Phase-8 PR 3.
 
 ### Storage And Analysis Coverage
 
-The current internal DuckDB schema marker is `2`. This marker is for local
+The current internal DuckDB schema marker is `3`. This marker is for local
 inspection and rebuild coordination only; before the first release, existing
 DuckDB files and JSON artifacts may be regenerated instead of migrated for
 compatibility. The current store creates these tables:
@@ -268,7 +286,8 @@ where applicable.
 
 ### Current Limitations
 
-- Claude Code parsing is not implemented.
+- Claude Code parsing is currently a root-session MVP; subagents and sidecars
+  are not correlated or ingested yet.
 - Markdown/terminal reports beyond the `analyze` summary tables are not
   implemented.
 - Graph tables and Pydantic graph schemas exist, but no graph projection writer
@@ -285,13 +304,14 @@ where applicable.
 
 The repository also has synthetic tests for CLI behavior, schema validation,
 DuckDB initialization and round-tripping, adapter discovery, Codex parsing, Pi
-parsing, ingest behavior, session listing, feature extraction, classification,
-analysis persistence, analysis artifacts, aggregate summaries, and privacy
-helpers.
+parsing, Claude root parsing, ingest behavior, session listing, feature
+extraction, classification, analysis persistence, analysis artifacts, aggregate
+summaries, and privacy helpers.
 
 The next milestone before project-level trends is the named Pre-Phase-8 work in
-`docs/pre-phase-8-plan.md`: harden cross-adapter identities and ingestion
-failures, then complete Claude Code parsing. Human-readable reports and graph
+`docs/pre-phase-8-plan.md`: PR 1 hardened cross-adapter identities and ingestion
+failures, PR 2 adds Claude root parsing, and PR 3 completes Claude subagents,
+sidecars, and copied-local validation. Human-readable reports and graph
 projection remain after trend views so they can reuse the same aggregate queries
 and evidence model rather than inventing a parallel reporting layer.
 
