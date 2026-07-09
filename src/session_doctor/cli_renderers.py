@@ -263,7 +263,9 @@ def render_summary(summary: AggregateSummary, database_path: Path, console: Cons
     risk_table.add_column("Labels")
     risk_table.add_column("Stuck")
     risk_table.add_column("Friction")
+    risk_table.add_column("Prompt")
     risk_table.add_column("Fit")
+    risk_table.add_column("Complexity")
     risk_table.add_column("Project/CWD")
     if summary.recent_risk_sessions:
         for row in summary.recent_risk_sessions:
@@ -274,11 +276,13 @@ def render_summary(summary: AggregateSummary, database_path: Path, console: Cons
                 ", ".join(row.labels) or "none",
                 format_optional_score(row.stuckness_score),
                 format_optional_score(row.friction_score),
+                format_optional_score(row.prompt_clarity_risk),
                 format_optional_score(row.agent_fit_risk),
+                format_optional_score(row.project_complexity_signal),
                 row.project_path or "",
             )
     else:
-        risk_table.add_row("none", "", "", "", "", "", "", "")
+        risk_table.add_row("none", "", "", "", "", "", "", "", "", "")
     console.print(risk_table)
 
     commands_table = Table(title="Failed commands")

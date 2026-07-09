@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from session_doctor.adapters import SourceReadError
 from session_doctor.adapters.pi import PiAdapter
 from session_doctor.ids import source_id_for_path
 from session_doctor.schemas import AgentName, NormalizedRole, SessionSource
@@ -83,7 +84,7 @@ def test_pi_parse_source_preserves_message_metadata_and_block_types() -> None:
 def test_pi_parse_source_raises_for_unreadable_source(tmp_path) -> None:
     missing_path = tmp_path / "missing.jsonl"
 
-    with pytest.raises(OSError):
+    with pytest.raises(SourceReadError, match="Unable to read Pi source"):
         PiAdapter().parse_source(source_for_fixture(missing_path))
 
 
@@ -146,6 +147,8 @@ def test_pi_parse_source_normalizes_tools_commands_files_and_usage() -> None:
     assert [(command.command, command.exit_code) for command in bundle.command_runs] == [
         ("pytest tests/test_cli.py -q", 1),
     ]
+    assert bundle.command_runs[0].command_display == "pytest tests/test_cli.py -q"
+    assert bundle.command_runs[0].command_normalization == "unchanged"
     assert bundle.command_runs[0].metadata["source"] == "bashExecution"
     assert bundle.command_runs[0].tool_call_id == bundle.tool_calls[0].tool_call_id
 
@@ -153,6 +156,15 @@ def test_pi_parse_source_normalizes_tools_commands_files_and_usage() -> None:
         ("tests/test_cli.py", "read"),
         ("tests/test_cli.py", "update"),
         ("scratch/output.txt", "write"),
+    ]
+    assert all(
+        activity.canonical_path == f"/tmp/session-doctor/{activity.normalized_path}"
+        for activity in bundle.file_activities
+    )
+    assert [activity.project_relative_path for activity in bundle.file_activities] == [
+        "tests/test_cli.py",
+        "tests/test_cli.py",
+        "scratch/output.txt",
     ]
     assert bundle.file_activities[1].content_hash is not None
     assert bundle.file_activities[1].metadata["content_length"] > 0

@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from session_doctor.ids import stable_id
+from session_doctor.normalization import canonical_file_identity
 from session_doctor.privacy import hash_text, text_length
 from session_doctor.schemas import FileActivity, RawEvent
 
@@ -17,18 +18,30 @@ def file_activities_from_tool_call(
     event: RawEvent,
     block: dict[str, Any],
     block_index: int,
+    *,
+    cwd: str | None,
+    project_path: str | None,
 ) -> list[FileActivity]:
     tool_name = string_value(block.get("name"))
     if tool_name not in {"apply_patch", "edit", "read", "write"}:
         return []
     arguments = arguments_from_tool_call_block(block)
     if tool_name == "apply_patch":
-        return file_activities_from_apply_patch(session_id, event, block, block_index, arguments)
+        return file_activities_from_apply_patch(
+            session_id,
+            event,
+            block,
+            block_index,
+            arguments,
+            cwd=cwd,
+            project_path=project_path,
+        )
     path = string_value(arguments.get("path"))
     if path is None:
         return []
     operation = file_activity_operation(tool_name)
     content_payload = file_content_payload(tool_name, arguments)
+    identity = canonical_file_identity(path, cwd=cwd, project_path=project_path)
     return [
         FileActivity(
             file_activity_id=stable_id(
@@ -42,6 +55,10 @@ def file_activities_from_tool_call(
             session_id=session_id,
             source_event_id=event.event_id,
             path=path,
+            normalized_path=identity.normalized_path,
+            canonical_path=identity.canonical_path,
+            project_relative_path=identity.project_relative_path,
+            path_resolution=identity.resolution,
             operation=operation,
             timestamp=event.timestamp,
             content_hash=hash_text(content_payload) if content_payload else None,
@@ -66,12 +83,20 @@ def file_activities_from_apply_patch(
     block: dict[str, Any],
     block_index: int,
     arguments: dict[str, Any],
+    *,
+    cwd: str | None,
+    project_path: str | None,
 ) -> list[FileActivity]:
     patch_text = string_value(arguments.get("input")) or string_value(arguments.get("patch"))
     if patch_text is None:
         return []
     activities: list[FileActivity] = []
     for change_index, change in enumerate(apply_patch_file_changes(patch_text)):
+        identity = canonical_file_identity(
+            change.path,
+            cwd=cwd,
+            project_path=project_path,
+        )
         content_payload = json.dumps(
             {
                 "added_lines": change.added_lines,
@@ -94,6 +119,10 @@ def file_activities_from_apply_patch(
                 session_id=session_id,
                 source_event_id=event.event_id,
                 path=change.path,
+                normalized_path=identity.normalized_path,
+                canonical_path=identity.canonical_path,
+                project_relative_path=identity.project_relative_path,
+                path_resolution=identity.resolution,
                 operation=change.operation,
                 timestamp=event.timestamp,
                 content_hash=hash_text(content_payload),

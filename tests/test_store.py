@@ -8,6 +8,7 @@ import duckdb
 from session_doctor.adapters import ParsedSessionBundle
 from session_doctor.adapters.codex import CodexAdapter
 from session_doctor.ids import source_id_for_path
+from session_doctor.normalization import canonical_command_identity
 from session_doctor.schemas import (
     AgentName,
     AnalysisRun,
@@ -61,6 +62,78 @@ def test_store_initialize_records_current_internal_schema_version(tmp_path) -> N
         row = connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
 
     assert row == (SCHEMA_VERSION,)
+
+
+def test_store_initialize_backfills_precanonical_identity_columns(tmp_path) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TIMESTAMP)"
+        )
+        connection.execute("INSERT INTO schema_migrations (version) VALUES (2)")
+        connection.execute(
+            """
+            CREATE TABLE sessions (
+                session_id VARCHAR PRIMARY KEY,
+                cwd VARCHAR,
+                project_path VARCHAR
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO sessions VALUES ('session-1', '/tmp/project', '/tmp/project')"
+        )
+        connection.execute(
+            """
+            CREATE TABLE command_runs (
+                command_run_id VARCHAR PRIMARY KEY,
+                session_id VARCHAR,
+                command VARCHAR
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO command_runs VALUES ('command-1', 'session-1', ?) ",
+            ["/bin/zsh -lc 'pytest -q'"],
+        )
+        connection.execute(
+            """
+            CREATE TABLE file_activities (
+                file_activity_id VARCHAR PRIMARY KEY,
+                session_id VARCHAR,
+                path VARCHAR
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO file_activities VALUES ('file-1', 'session-1', 'src/../README.md')"
+        )
+
+    DuckDBStore(database_path).initialize()
+
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        command_row = connection.execute(
+            """
+            SELECT command_identity_hash, command_display, command_normalization
+            FROM command_runs
+            """
+        ).fetchone()
+        file_row = connection.execute(
+            """
+            SELECT normalized_path, canonical_path, project_relative_path, path_resolution
+            FROM file_activities
+            """
+        ).fetchone()
+        version_row = connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
+
+    expected_command = canonical_command_identity("pytest -q")
+    assert command_row == (
+        expected_command.identity_hash,
+        expected_command.display,
+        "shell_wrapper:zsh:-lc",
+    )
+    assert file_row == ("README.md", "/tmp/project/README.md", "README.md", "cwd")
+    assert version_row == (SCHEMA_VERSION,)
 
 
 def test_store_insert_parsed_bundle_persists_normalized_records(tmp_path) -> None:
@@ -537,7 +610,17 @@ def test_store_aggregate_summary_counts_sessions_and_analysis(tmp_path) -> None:
         codex_bundle.session.session_id,
         pi_bundle.session.session_id,
     ]
+    assert all(row.prompt_clarity_risk is not None for row in summary.recent_risk_sessions)
+    assert all(row.project_complexity_signal is not None for row in summary.recent_risk_sessions)
     assert summary.failed_commands
+    assert len(summary.failed_commands) == 1
+    assert summary.failed_commands[0].failure_count == 4
+    assert summary.failed_commands[0].session_count == 2
+    assert summary.failed_commands[0].agents == ("codex", "pi")
+    assert len(summary.repeated_files) == 1
+    assert summary.repeated_files[0].activity_count == 4
+    assert summary.repeated_files[0].session_count == 2
+    assert summary.repeated_files[0].agents == ("codex", "pi")
     assert "Inspect the top failed commands" in " ".join(summary.recommendations)
 
 
@@ -722,10 +805,26 @@ def add_summary_analysis_rows(
             score=risk_score,
         ),
         SessionFeature(
+            session_feature_id=f"feature-prompt-clarity-{session_id}",
+            analysis_run_id=analysis_run.analysis_run_id,
+            session_id=session_id,
+            feature_name="prompt_clarity_risk",
+            feature_value=f"{risk_score:.3f}",
+            score=risk_score,
+        ),
+        SessionFeature(
             session_feature_id=f"feature-agent-fit-{session_id}",
             analysis_run_id=analysis_run.analysis_run_id,
             session_id=session_id,
             feature_name="agent_fit_risk",
+            feature_value=f"{risk_score:.3f}",
+            score=risk_score,
+        ),
+        SessionFeature(
+            session_feature_id=f"feature-project-complexity-{session_id}",
+            analysis_run_id=analysis_run.analysis_run_id,
+            session_id=session_id,
+            feature_name="project_complexity_signal",
             feature_value=f"{risk_score:.3f}",
             score=risk_score,
         ),

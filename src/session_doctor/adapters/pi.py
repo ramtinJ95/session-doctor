@@ -138,6 +138,8 @@ class PiAdapter(BaseAdapter):
                                 event,
                                 block,
                                 block_index,
+                                cwd=session_metadata.session.cwd,
+                                project_path=session_metadata.session.project_path,
                             )
                         )
                     usage = model_usage_from_message(session_metadata.session_id, event, record)

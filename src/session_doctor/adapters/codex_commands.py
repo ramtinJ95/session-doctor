@@ -4,6 +4,7 @@ import shlex
 from typing import Any
 
 from session_doctor.ids import stable_id
+from session_doctor.normalization import canonical_command_identity
 from session_doctor.privacy import hash_text
 from session_doctor.schemas import CommandRun, RawEvent
 
@@ -17,12 +18,17 @@ def command_run_from_event_msg(
 ) -> CommandRun:
     stdout, stderr, output_source = command_output_parts(payload)
     call_id = string_value(payload.get("call_id"))
+    command = command_text(payload.get("command"))
+    identity = canonical_command_identity(command)
     return CommandRun(
         command_run_id=stable_id("command_run", session_id, event.event_id),
         session_id=session_id,
         source_event_id=event.event_id,
         tool_call_id=stable_id("tool_call", session_id, call_id) if call_id else None,
-        command=command_text(payload.get("command")),
+        command=command,
+        command_identity_hash=identity.identity_hash,
+        command_display=identity.display,
+        command_normalization=identity.normalization,
         cwd=string_value(payload.get("cwd")),
         ended_at=event.timestamp,
         exit_code=int_value(payload.get("exit_code")),

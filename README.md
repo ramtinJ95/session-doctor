@@ -57,6 +57,13 @@ Phase 7 adds aggregate summaries:
 - terminal and JSON views over analysis coverage, labels, risky sessions,
   failed commands, repeated files, and next-step recommendations
 
+Pre-Phase-8 PR 1 hardens that foundation:
+
+- conservative canonical command and file identities shared by Codex and Pi
+- explicit non-zero ingestion failures without hiding persistence errors
+- all five risk scores in aggregate output with stable JSON precision
+- deduplicated aggregate evidence IDs
+
 ## Usage
 
 Install dependencies:
@@ -170,3 +177,4 @@ Design references:
 - [Phase 5 Plan](docs/phase-5-plan.md)
 - [Phase 6 Plan](docs/phase-6-plan.md)
 - [Phase 7 Plan](docs/phase-7-plan.md)
+- [Pre-Phase-8 Plan](docs/pre-phase-8-plan.md)

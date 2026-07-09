@@ -64,7 +64,9 @@ class RecentRiskSession:
     labels: tuple[str, ...]
     friction_score: float | None
     stuckness_score: float | None
+    prompt_clarity_risk: float | None
     agent_fit_risk: float | None
+    project_complexity_signal: float | None
     max_risk_score: float
 
 

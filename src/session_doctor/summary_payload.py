@@ -45,10 +45,12 @@ def summary_payload(summary: AggregateSummary) -> dict[str, object]:
                 "started_at": row.started_at,
                 "project": row.project_path,
                 "labels": list(row.labels),
-                "friction_score": row.friction_score,
-                "stuckness_score": row.stuckness_score,
-                "agent_fit_risk": row.agent_fit_risk,
-                "max_risk_score": row.max_risk_score,
+                "friction_score": rounded_score(row.friction_score),
+                "stuckness_score": rounded_score(row.stuckness_score),
+                "prompt_clarity_risk": rounded_score(row.prompt_clarity_risk),
+                "agent_fit_risk": rounded_score(row.agent_fit_risk),
+                "project_complexity_signal": rounded_score(row.project_complexity_signal),
+                "max_risk_score": rounded_score(row.max_risk_score),
             }
             for row in summary.recent_risk_sessions
         ],
@@ -76,3 +78,7 @@ def summary_payload(summary: AggregateSummary) -> dict[str, object]:
         ],
         "recommendations": list(summary.recommendations),
     }
+
+
+def rounded_score(value: float | None) -> float | None:
+    return None if value is None else round(value, 3)

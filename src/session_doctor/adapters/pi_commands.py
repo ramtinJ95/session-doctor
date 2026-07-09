@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from session_doctor.ids import stable_id
+from session_doctor.normalization import canonical_command_identity
 from session_doctor.privacy import hash_text
 from session_doctor.schemas import CommandRun, RawEvent
 
@@ -25,6 +26,7 @@ def command_run_from_tool_result(
     command = command_from_tool_arguments(tool_name, arguments)
     if command is None:
         return None
+    identity = canonical_command_identity(command)
     cwd = string_value(arguments.get("workdir")) or string_value(arguments.get("cwd"))
     output = tool_result_output(message_payload) or ""
     return CommandRun(
@@ -33,6 +35,9 @@ def command_run_from_tool_result(
         source_event_id=event.event_id,
         tool_call_id=stable_id("tool_call", session_id, call_id) if call_id else None,
         command=command,
+        command_identity_hash=identity.identity_hash,
+        command_display=identity.display,
+        command_normalization=identity.normalization,
         cwd=cwd,
         ended_at=event.timestamp,
         exit_code=exit_code_from_tool_result(message_payload),
@@ -62,12 +67,17 @@ def command_run_from_bash_execution(
     output = string_value(message_payload.get("output")) or ""
     parent_id = string_value(record.get("parentId"))
     call_id = tool_call_id_by_tool_result_id.get(parent_id or "")
+    command = string_value(message_payload.get("command")) or ""
+    identity = canonical_command_identity(command)
     return CommandRun(
         command_run_id=stable_id("command_run", session_id, event.event_id),
         session_id=session_id,
         source_event_id=event.event_id,
         tool_call_id=stable_id("tool_call", session_id, call_id) if call_id else None,
-        command=string_value(message_payload.get("command")) or "",
+        command=command,
+        command_identity_hash=identity.identity_hash,
+        command_display=identity.display,
+        command_normalization=identity.normalization,
         ended_at=event.timestamp,
         exit_code=int_value(message_payload.get("exitCode")),
         stdout_hash=hash_text(output) if output else None,

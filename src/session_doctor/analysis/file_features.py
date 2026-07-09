@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 
 from session_doctor.adapters import ParsedSessionBundle
-from session_doctor.schemas import SessionFeature
+from session_doctor.schemas import FileActivity, SessionFeature
 
 from .feature_factories import session_feature
 from .feature_models import SessionFeatureContext
@@ -11,6 +11,12 @@ from .feature_models import SessionFeatureContext
 MUTATING_FILE_OPERATIONS = frozenset(
     {"create", "delete", "edit", "move", "patch", "rename", "update", "write"}
 )
+
+
+def file_activity_identity(activity: FileActivity) -> str:
+    if activity.canonical_path is not None:
+        return activity.canonical_path
+    return activity.normalized_path
 
 
 def file_activity_session_features(
@@ -91,7 +97,7 @@ def file_edit_source_events(bundle: ParsedSessionBundle) -> dict[str, list[str]]
         if activity.operation not in MUTATING_FILE_OPERATIONS:
             continue
         if activity.source_event_id:
-            source_events_by_path[activity.path].add(activity.source_event_id)
+            source_events_by_path[file_activity_identity(activity)].add(activity.source_event_id)
     return {
         path: sorted(source_event_ids)
         for path, source_event_ids in sorted(source_events_by_path.items())

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import posixpath
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import duckdb
 
-from session_doctor.privacy import redact_command_for_display, redact_home
+from session_doctor.privacy import redact_home
 
 from .connection import read_connection
 from .models import (
@@ -38,6 +39,7 @@ MUTATING_FILE_OPERATIONS = ("edit", "update", "write", "patch", "move", "delete"
 
 @dataclass
 class CommandGroup:
+    display_command: str = ""
     failure_count: int = 0
     session_ids: set[str] = field(default_factory=set)
     agents: set[str] = field(default_factory=set)
@@ -47,6 +49,7 @@ class CommandGroup:
 
 @dataclass
 class FileGroup:
+    display_path: str = ""
     activity_count: int = 0
     session_ids: set[str] = field(default_factory=set)
     agents: set[str] = field(default_factory=set)
@@ -233,7 +236,9 @@ def recent_risk_sessions(
             COALESCE(lg.labels, '') AS labels,
             sf.friction_score,
             sf.stuckness_score,
+            sf.prompt_clarity_risk,
             sf.agent_fit_risk,
+            sf.project_complexity_signal,
             GREATEST(
                 COALESCE(sf.friction_score, 0),
                 COALESCE(sf.stuckness_score, 0),
@@ -273,8 +278,10 @@ def recent_risk_sessions(
             labels=split_labels(row[4]),
             friction_score=optional_float(row[5]),
             stuckness_score=optional_float(row[6]),
-            agent_fit_risk=optional_float(row[7]),
-            max_risk_score=float(row[8] or 0.0),
+            prompt_clarity_risk=optional_float(row[7]),
+            agent_fit_risk=optional_float(row[8]),
+            project_complexity_signal=optional_float(row[9]),
+            max_risk_score=float(row[10] or 0.0),
         )
         for row in rows
     )
@@ -289,7 +296,8 @@ def failed_commands(
         f"""
         WITH {base_sessions_sql}
         SELECT
-            c.command,
+            c.command_identity_hash,
+            c.command_display,
             c.session_id,
             b.agent_name,
             CAST(COALESCE(c.ended_at, c.started_at, b.started_at) AS VARCHAR) AS failed_at
@@ -303,11 +311,13 @@ def failed_commands(
     ).fetchall()
 
     grouped: dict[str, CommandGroup] = {}
-    for command, session_id, agent_name, failed_at in rows:
-        display_command = redact_command_for_display(str(command))
+    for command_identity, command_display, session_id, agent_name, failed_at in rows:
         group = grouped.setdefault(
-            display_command,
-            CommandGroup(example_session_id=str(session_id)),
+            str(command_identity),
+            CommandGroup(
+                display_command=str(command_display),
+                example_session_id=str(session_id),
+            ),
         )
         group.failure_count += 1
         group.session_ids.add(str(session_id))
@@ -318,14 +328,14 @@ def failed_commands(
 
     summaries = [
         FailedCommandSummary(
-            command=command,
+            command=group.display_command,
             failure_count=group.failure_count,
             session_count=len(group.session_ids),
             agents=tuple(sorted(group.agents)),
             most_recent_at=group.most_recent_at,
             example_session_id=group.example_session_id,
         )
-        for command, group in grouped.items()
+        for group in grouped.values()
     ]
     summaries.sort(
         key=lambda row: (
@@ -360,27 +370,51 @@ def repeated_files(
                OR GREATEST(
                     COALESCE(sf.friction_score, 0),
                     COALESCE(sf.stuckness_score, 0),
-                    COALESCE(sf.agent_fit_risk, 0)
+                    COALESCE(sf.agent_fit_risk, 0),
+                    COALESCE(sf.prompt_clarity_risk, 0),
+                    COALESCE(sf.project_complexity_signal, 0)
                 ) >= ?
         )
         SELECT
-            f.path,
+            f.normalized_path,
+            f.canonical_path,
+            f.project_relative_path,
             f.session_id,
             ps.agent_name,
+            COALESCE(NULLIF(b.project_path, ''), NULLIF(b.cwd, '')) AS project_path,
             CAST(COALESCE(f.timestamp, ps.started_at) AS VARCHAR) AS activity_at
         FROM file_activities AS f
         JOIN problematic_sessions AS ps ON ps.session_id = f.session_id
+        JOIN base_sessions AS b ON b.session_id = f.session_id
         WHERE lower(f.operation) IN ({operation_placeholders})
         """,
         [*params, PROBLEMATIC_SESSION_SCORE_THRESHOLD, *MUTATING_FILE_OPERATIONS],
     ).fetchall()
 
-    grouped: dict[str, FileGroup] = {}
-    for path, session_id, agent_name, activity_at in rows:
-        display_path = redact_home(str(path))
+    grouped: dict[tuple[str, ...], FileGroup] = {}
+    for (
+        normalized_path,
+        canonical_path,
+        project_relative_path,
+        session_id,
+        agent_name,
+        project_path,
+        activity_at,
+    ) in rows:
+        if project_relative_path and project_path:
+            identity = (
+                "project",
+                posixpath.normpath(str(project_path)),
+                str(project_relative_path),
+            )
+        elif canonical_path:
+            identity = ("absolute", str(canonical_path))
+        else:
+            identity = ("unresolved", str(session_id), str(normalized_path))
+        display_path = redact_home(str(canonical_path or normalized_path))
         group = grouped.setdefault(
-            display_path,
-            FileGroup(example_session_id=str(session_id)),
+            identity,
+            FileGroup(display_path=display_path, example_session_id=str(session_id)),
         )
         group.activity_count += 1
         group.session_ids.add(str(session_id))
@@ -393,14 +427,14 @@ def repeated_files(
 
     summaries = [
         RepeatedFileSummary(
-            path=path,
+            path=group.display_path,
             activity_count=group.activity_count,
             session_count=len(group.session_ids),
             agents=tuple(sorted(group.agents)),
             most_recent_at=group.most_recent_at,
             example_session_id=group.example_session_id,
         )
-        for path, group in grouped.items()
+        for group in grouped.values()
         if group.activity_count > 1 or len(group.session_ids) > 1
     ]
     summaries.sort(

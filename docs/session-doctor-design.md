@@ -148,41 +148,18 @@ Commands not currently present: `explain`, `export`.
 
 ```text
 src/session_doctor/
-  cli.py
-  config.py
-  constants.py
-  ids.py
-  privacy.py
-  analysis/
-    __init__.py
-    classification.py
-    features.py
-  adapters/
-    __init__.py
-    base.py
-    claude.py
-    codex.py
-    common.py
-    patches.py
-    pi.py
-    pi_tools.py
-  schemas/
-    __init__.py
-    analysis.py
-    common.py
-    events.py
-    files.py
-    graph.py
-    messages.py
-    sessions.py
-    tools.py
-    usage.py
-    warnings.py
-  store/
-    __init__.py
-    duckdb.py
-    migrations.py
+  cli.py, cli_options.py, cli_renderers.py
+  ingest_workflow.py, analysis_workflow.py, summary_payload.py
+  normalization.py, privacy.py, ids.py, config.py
+  adapters/   discovery plus agent-specific record/entity normalization
+  analysis/   deterministic features, scores, evidence, and classifications
+  schemas/    strict normalized Pydantic entities
+  store/      DuckDB migrations, mapping, persistence, loading, and summaries
 ```
+
+The map stays at responsibility level deliberately. Individual adapter,
+analysis, and store modules are split by concern and may continue to evolve
+without making this overview stale after every refactor.
 
 ### Adapter Coverage
 
@@ -312,10 +289,11 @@ parsing, ingest behavior, session listing, feature extraction, classification,
 analysis persistence, analysis artifacts, aggregate summaries, and privacy
 helpers.
 
-This means the next useful implementation slice is deeper project-level trend
-work. Human-readable reports and graph projection should come after those trend
-views exist, so they can reuse the same aggregate queries and evidence model
-rather than inventing a parallel reporting layer.
+The next milestone before project-level trends is the named Pre-Phase-8 work in
+`docs/pre-phase-8-plan.md`: harden cross-adapter identities and ingestion
+failures, then complete Claude Code parsing. Human-readable reports and graph
+projection remain after trend views so they can reuse the same aggregate queries
+and evidence model rather than inventing a parallel reporting layer.
 
 ## Local Session Inspection Findings
 
@@ -328,7 +306,7 @@ rediscover the same format details.
 Location:
 
 ```text
-/Users/ramtinjavanmardi/.codex/sessions
+~/.codex/sessions
 ```
 
 Layout:
@@ -346,9 +324,9 @@ Observed corpus:
 Representative paths:
 
 ```text
-/Users/ramtinjavanmardi/.codex/sessions/2026/05/03/rollout-2026-05-03T20-54-28-019def31-23cd-7e52-86c3-d8e0c47a7ae8.jsonl
-/Users/ramtinjavanmardi/.codex/sessions/2026/05/04/rollout-2026-05-04T18-51-19-019df3e6-c2f0-7313-bba5-cee83f873d26.jsonl
-/Users/ramtinjavanmardi/.codex/sessions/2026/04/30/rollout-2026-04-30T10-50-09-019ddd94-cd56-77c1-9b9c-bf9e575fc68e.jsonl
+~/.codex/sessions/2026/05/03/rollout-<timestamp>-<uuid>.jsonl
+~/.codex/sessions/2026/05/04/rollout-<timestamp>-<uuid>.jsonl
+~/.codex/sessions/2026/04/30/rollout-<timestamp>-<uuid>.jsonl
 ```
 
 Every inspected record had this top-level envelope:
@@ -544,7 +522,7 @@ Codex parser risks:
 Location:
 
 ```text
-/Users/ramtinjavanmardi/.claude/projects
+~/.claude/projects
 ```
 
 Layout:
@@ -573,9 +551,9 @@ Observed corpus:
 Representative paths:
 
 ```text
-/Users/ramtinjavanmardi/.claude/projects/-Users-ramtinjavanmardi/141e0878-0937-4e86-b7b6-3a4f2693992d.jsonl
-/Users/ramtinjavanmardi/.claude/projects/-Users-ramtinjavanmardi-workspace-prefect-data-flows/80a9fdd2-d73d-4863-a53d-2c54f695afe0/subagents/agent-ad008e9.jsonl
-/Users/ramtinjavanmardi/.claude/projects/-Users-ramtinjavanmardi-workspace-classification-poc/08f94311-c003-4b77-95f6-0856f0cd8bb0/tool-results/b1x1mos8g.txt
+~/.claude/projects/<encoded-cwd>/<session-id>.jsonl
+~/.claude/projects/<encoded-cwd>/<session-id>/subagents/agent-<id>.jsonl
+~/.claude/projects/<encoded-cwd>/<session-id>/tool-results/<result-id>.txt
 ```
 
 Each JSONL line is one event object. Main top-level event types observed:
@@ -762,7 +740,7 @@ Claude parser risks:
 Location:
 
 ```text
-/Users/ramtinjavanmardi/.pi/agent/sessions
+~/.pi/agent/sessions
 ```
 
 Layout:
@@ -781,9 +759,7 @@ Observed corpus:
 Representative paths:
 
 ```text
-/Users/ramtinjavanmardi/.pi/agent/sessions/--Users-ramtinjavanmardi--/2026-02-16T09-03-56-963Z_b298ea0b-59bc-4f77-bbac-aa487981e7a6.jsonl
-/Users/ramtinjavanmardi/.pi/agent/sessions/--Users-ramtinjavanmardi-workspace-classification_poc--/2026-04-05T20-13-46-802Z_e4ff0c98-d320-41fd-a0fa-d69c2503f901.jsonl
-/Users/ramtinjavanmardi/.pi/agent/sessions/--Users-ramtinjavanmardi-workspace-prefect-data-flows--/2026-04-16T12-12-41-020Z_019d9635-2ebb-768a-94e7-1a5c927c43de.jsonl
+~/.pi/agent/sessions/<cwd-derived-folder>/<timestamp>_<uuid>.jsonl
 ```
 
 Every line is one top-level object with stable common fields:
@@ -1503,6 +1479,25 @@ confidence
 The model should allow incomplete timestamps or missing fields, because agent
 logs will not all expose the same metadata.
 
+### Canonical Aggregate Identities
+
+`CommandRun.command` preserves the native command. A separate identity is
+derived from trimmed text and unwraps only an exact `sh`, `bash`, or `zsh`
+invocation with one payload passed through `-c` or `-lc`. The unredacted
+canonical text is hashed for grouping, while only a redacted canonical example
+is stored for display. Near-miss wrappers and commands that require shell
+interpretation remain distinct.
+
+`FileActivity.path` preserves the native path. Normalization removes `.` and
+`..` lexically, anchors a relative path to a trustworthy event/session cwd or
+project path, and records canonical absolute and project-relative forms when
+available. It never requires the file to exist or resolves symlinks. Relative
+paths without a trustworthy base remain explicitly unresolved and do not group
+across sessions.
+
+These fields are part of the normalized schema and DuckDB tables so analysis,
+summaries, and future trends share one identity contract.
+
 Confidence labels should be used consistently:
 
 ```text
@@ -1551,6 +1546,12 @@ Design requirements:
   compatibility starts only after a released schema contract exists
 - easy deletion/rebuild of derived tables
 - future export to JSONL and Parquet
+
+Ingestion continues a multi-source directory scan only for explicit recoverable
+source read/format errors and returns a failing exit status if anything was
+skipped. Explicit single-file failures stop immediately. Persistence errors,
+invariant failures, and unexpected exceptions abort and are never relabeled as
+parser skips.
 
 ## Layer 5: Feature Extraction
 

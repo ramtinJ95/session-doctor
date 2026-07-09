@@ -10,7 +10,7 @@ import typer
 from rich.console import Console
 
 from . import __version__
-from .adapters import built_in_adapters
+from .adapters import RecoverableSourceError, built_in_adapters
 from .analysis_workflow import analyze_session
 from .artifacts import analysis_payload, artifact_path_for_analysis, write_analysis_artifact
 from .cli_options import (
@@ -225,7 +225,20 @@ def ingest(
     require_valid_database_path(database_path)
     sources = sources_for_ingest(adapter, source)
     store = DuckDBStore(database_path)
-    summary = ingest_sources(adapter, sources, store, console)
+    continue_on_source_error = source is None or source.expanduser().is_dir()
+    try:
+        summary = ingest_sources(
+            adapter,
+            sources,
+            store,
+            console,
+            continue_on_source_error=continue_on_source_error,
+        )
+    except RecoverableSourceError as exc:
+        console.print(
+            f"[red]Source failed:[/red] {exc.source_path} (category={exc.category}) {exc.detail}"
+        )
+        raise typer.Exit(1) from exc
     render_ingest_summary(summary, database_path)
 
 

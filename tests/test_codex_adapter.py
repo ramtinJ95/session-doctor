@@ -79,6 +79,8 @@ def test_codex_parse_source_records_command_and_patch_metadata() -> None:
 
     command_run = bundle.command_runs[0]
     assert command_run.command == "/bin/zsh -lc 'pytest -q'"
+    assert command_run.command_display == "pytest -q"
+    assert command_run.command_normalization == "shell_wrapper:zsh:-lc"
     assert command_run.exit_code == 1
     assert command_run.output_length == len("failed")
     assert command_run.stdout_hash is not None
@@ -87,6 +89,9 @@ def test_codex_parse_source_records_command_and_patch_metadata() -> None:
 
     file_activity = bundle.file_activities[0]
     assert file_activity.path == "/tmp/session-doctor/src/example.py"
+    assert file_activity.canonical_path == "/tmp/session-doctor/src/example.py"
+    assert file_activity.project_relative_path == "src/example.py"
+    assert file_activity.path_resolution == "absolute"
     assert file_activity.operation == "update"
     assert file_activity.metadata["success"] is True
     assert file_activity.metadata["diff_length"] == len("@@\n-old\n+new\n")
