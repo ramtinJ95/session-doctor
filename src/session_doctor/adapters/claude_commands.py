@@ -76,8 +76,11 @@ def command_run_from_tool_use(
     top_level_result = dict_value(result.record.get("toolUseResult")) if result else {}
     stdout = first_string(top_level_result, "stdout", "output")
     stderr = first_string(top_level_result, "stderr")
+    stdout = None if stdout == "" else stdout
+    stderr = None if stderr == "" else stderr
     if stdout is None and result is not None and "content" in result.block:
         stdout = serialized_output(result.block.get("content"))
+        stdout = None if stdout == "" else stdout
     output_length = sum(len(value) for value in (stdout, stderr) if value is not None)
     is_error = None
     if result is not None:
