@@ -5,6 +5,7 @@ from pathlib import Path
 
 from pydantic import Field
 
+from session_doctor.ids import source_id_for_path
 from session_doctor.schemas import (
     AgentName,
     CommandRun,
@@ -19,6 +20,7 @@ from session_doctor.schemas import (
     ToolCall,
     ToolResult,
 )
+from session_doctor.schemas.common import SourceKind
 
 
 class ParsedSessionBundle(SessionDoctorModel):
@@ -37,6 +39,7 @@ class BaseAdapter(ABC):
     name: AgentName
     display_name: str
     version = "0.1.0"
+    ingestible_source_kinds = (SourceKind.ROOT_SESSION,)
 
     @abstractmethod
     def default_roots(self) -> tuple[Path, ...]:
@@ -49,6 +52,14 @@ class BaseAdapter(ABC):
     def parse_source(self, source: SessionSource) -> ParsedSessionBundle:
         msg = f"{self.display_name} parsing is not implemented yet."
         raise NotImplementedError(msg)
+
+    def source_for_path(self, path: Path) -> SessionSource:
+        return SessionSource(
+            source_id=source_id_for_path(self.name, path),
+            agent_name=self.name,
+            source_path=str(path),
+            source_kind=SourceKind.ROOT_SESSION,
+        )
 
     def root_for_discovery(self, root: Path | None = None) -> Path:
         if root is not None:

@@ -205,7 +205,7 @@ def ingest(
         str,
         typer.Option(
             "--agent",
-            help="Agent adapter to ingest. Supported values: codex, pi.",
+            help="Agent adapter to ingest. Supported values: codex, claude, pi.",
         ),
     ],
     source: Annotated[
@@ -321,7 +321,7 @@ def summary(
         str | None,
         typer.Option(
             "--agent",
-            help="Only include sessions from this agent, for example codex or pi.",
+            help="Only include sessions from this agent, for example codex, claude, or pi.",
         ),
     ] = None,
     limit: Annotated[

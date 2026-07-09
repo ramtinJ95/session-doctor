@@ -19,6 +19,7 @@ from session_doctor.store import SCHEMA_VERSION, DuckDBStore
 
 runner = CliRunner()
 CODEX_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "codex"
+CLAUDE_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "claude"
 PI_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "pi"
 
 
@@ -235,11 +236,111 @@ def test_ingest_resolves_source_path_before_deriving_ids(tmp_path) -> None:
 def test_ingest_rejects_unsupported_agent(tmp_path) -> None:
     result = runner.invoke(
         app,
-        ["ingest", "--agent", "claude", "--db", str(tmp_path / "session-doctor.duckdb")],
+        [
+            "ingest",
+            "--agent",
+            "unknown-agent",
+            "--db",
+            str(tmp_path / "session-doctor.duckdb"),
+        ],
     )
 
     assert result.exit_code == 2
-    assert "--agent claude is discovered but parsing is not implemented" in result.stdout
+    assert "Unsupported --agent" in result.stdout
+
+
+def test_ingest_claude_root_fixture_writes_and_replaces_normalized_rows(tmp_path) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    fixture_path = CLAUDE_FIXTURE_DIR / "basic-session.jsonl"
+    command = [
+        "ingest",
+        "--agent",
+        "claude",
+        "--source",
+        str(fixture_path),
+        "--db",
+        str(database_path),
+    ]
+
+    first_result = runner.invoke(app, command)
+    second_result = runner.invoke(app, command)
+
+    assert first_result.exit_code == 0
+    assert second_result.exit_code == 0
+    assert "Claude Code ingest" in second_result.stdout
+    assert "Messages" in second_result.stdout
+    assert "Tool calls" in second_result.stdout
+    assert "File activities" in second_result.stdout
+    store = DuckDBStore(database_path)
+    assert store.table_count("session_sources") == 1
+    assert store.table_count("sessions") == 1
+    assert store.table_count("raw_events") == 9
+    assert store.table_count("messages") == 6
+    assert store.table_count("tool_calls") == 5
+    assert store.table_count("tool_results") == 2
+    assert store.table_count("command_runs") == 1
+    assert store.table_count("file_activities") == 3
+    assert store.table_count("model_usage") == 2
+    assert store.table_count("parse_warnings") == 3
+
+
+def test_ingest_claude_directory_selects_only_root_sessions(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    claude_root = tmp_path / "projects"
+    project_dir = claude_root / "project"
+    session_dir = project_dir / "session-1"
+    subagents_dir = session_dir / "subagents"
+    tool_results_dir = session_dir / "tool-results"
+    subagents_dir.mkdir(parents=True)
+    tool_results_dir.mkdir()
+    copyfile(CLAUDE_FIXTURE_DIR / "basic-session.jsonl", project_dir / "root.jsonl")
+    (subagents_dir / "agent-a.jsonl").write_text("not a root transcript")
+    (subagents_dir / "agent-a.meta.json").write_text("{}")
+    (tool_results_dir / "result.txt").write_text("PRIVATE_SIDECAR_OUTPUT")
+    (project_dir / "memory.md").write_text("PRIVATE_MEMORY")
+    monkeypatch.setattr(
+        "session_doctor.adapters.claude.ClaudeCodeAdapter.default_roots",
+        lambda self: (claude_root,),
+    )
+    database_path = tmp_path / "session-doctor.duckdb"
+
+    result = runner.invoke(
+        app,
+        ["ingest", "--agent", "claude", "--db", str(database_path)],
+    )
+
+    assert result.exit_code == 0
+    assert "Sources" in result.stdout
+    store = DuckDBStore(database_path)
+    assert store.table_count("session_sources") == 1
+    assert store.table_count("sessions") == 1
+    assert store.table_count("raw_events") == 9
+
+
+def test_ingest_claude_rejects_explicit_subagent_source(tmp_path) -> None:
+    subagents_dir = tmp_path / "session" / "subagents"
+    subagents_dir.mkdir(parents=True)
+    source_path = subagents_dir / "agent-a.jsonl"
+    source_path.touch()
+
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "claude",
+            "--source",
+            str(source_path),
+            "--db",
+            str(tmp_path / "session-doctor.duckdb"),
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Unsupported source kind for Claude Code ingestion" in result.stdout
+    assert "subsession" in result.stdout
 
 
 def test_ingest_single_file_fails_immediately_on_recoverable_source_error(
@@ -627,6 +728,79 @@ def test_analyze_ingested_pi_session_writes_artifact_and_rows(tmp_path) -> None:
     assert store.table_count("analysis_runs") == 1
     assert store.table_count("session_features") > 0
     assert store.table_count("session_classifications") > 0
+
+
+def test_claude_root_session_lists_analyzes_and_summarizes_in_terminal_and_json(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    fixture_path = CLAUDE_FIXTURE_DIR / "basic-session.jsonl"
+    ingest_result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "claude",
+            "--source",
+            str(fixture_path),
+            "--db",
+            str(database_path),
+        ],
+    )
+    assert ingest_result.exit_code == 0
+    session_id = DuckDBStore(database_path).list_session_summaries()[0].session_id
+
+    sessions_result = runner.invoke(app, ["sessions", "list", "--db", str(database_path)])
+    terminal_analysis = runner.invoke(
+        app,
+        ["analyze", session_id, "--db", str(database_path), "--no-artifact"],
+    )
+    json_analysis = runner.invoke(
+        app,
+        [
+            "analyze",
+            session_id,
+            "--db",
+            str(database_path),
+            "--format",
+            "json",
+            "--no-artifact",
+        ],
+    )
+    terminal_summary = runner.invoke(
+        app,
+        ["summary", "--db", str(database_path), "--agent", "claude"],
+    )
+    json_summary = runner.invoke(
+        app,
+        ["summary", "--db", str(database_path), "--format", "json"],
+    )
+
+    assert sessions_result.exit_code == 0
+    assert "claude" in sessions_result.stdout
+    assert str(fixture_path) in sessions_result.stdout
+    assert "Messages" in sessions_result.stdout
+    assert "Commands" in sessions_result.stdout
+    assert terminal_analysis.exit_code == 0
+    assert "Session analysis" in terminal_analysis.stdout
+    assert "friction_score" in terminal_analysis.stdout
+    assert json_analysis.exit_code == 0
+    analysis_payload = cast("dict[str, Any]", json.loads(json_analysis.stdout))
+    assert analysis_payload["session"]["agent_name"] == "claude"
+    assert analysis_payload["session"]["session_id"] == session_id
+    assert terminal_summary.exit_code == 0
+    assert "Aggregate summary" in terminal_summary.stdout
+    assert "claude" in terminal_summary.stdout
+    assert json_summary.exit_code == 0
+    aggregate_payload = cast("dict[str, Any]", json.loads(json_summary.stdout))
+    assert aggregate_payload["totals"] == {
+        "sessions": 1,
+        "analyzed_sessions": 1,
+        "unanalyzed_sessions": 0,
+    }
+    assert aggregate_payload["agents"] == [
+        {"agent": "claude", "sessions": 1, "analyzed_sessions": 1}
+    ]
 
 
 def test_analyze_json_format_still_writes_default_artifact(tmp_path) -> None:

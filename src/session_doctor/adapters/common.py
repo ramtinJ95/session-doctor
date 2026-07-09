@@ -68,9 +68,14 @@ def warning_for_record(
     code: str,
     message: str,
     metadata: dict[str, Any] | None = None,
+    *,
+    identity: object | None = None,
 ) -> ParseWarning:
+    warning_id_parts = ("warning", source.source_id, record_index, code)
+    if identity is not None:
+        warning_id_parts = (*warning_id_parts, identity)
     return ParseWarning(
-        warning_id=stable_id("warning", source.source_id, record_index, code),
+        warning_id=stable_id(*warning_id_parts),
         source_id=source.source_id,
         record_index=record_index,
         message=message,
@@ -114,7 +119,7 @@ def string_value(value: object) -> str | None:
 
 
 def int_value(value: object) -> int | None:
-    return value if isinstance(value, int) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def bool_value(value: object) -> bool | None:
