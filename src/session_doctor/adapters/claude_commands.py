@@ -84,6 +84,8 @@ def command_run_from_tool_use(
         is_error = bool_value(result.block.get("is_error"))
         if is_error is None:
             is_error = bool_value(result.block.get("isError"))
+    native_exit_code = first_int(top_level_result, "exitCode", "exit_code", "code")
+    exit_code = 1 if native_exit_code is None and is_error is True else native_exit_code
     source_event = result.event if result is not None else tool_use.event
     return CommandRun(
         command_run_id=stable_id(
@@ -112,7 +114,7 @@ def command_run_from_tool_use(
         ),
         started_at=tool_use.event.timestamp,
         ended_at=result.event.timestamp if result is not None else None,
-        exit_code=first_int(top_level_result, "exitCode", "exit_code", "code"),
+        exit_code=exit_code,
         stdout_hash=hash_text(stdout) if stdout is not None else None,
         stderr_hash=hash_text(stderr) if stderr is not None else None,
         output_length=output_length if stdout is not None or stderr is not None else None,
@@ -120,6 +122,7 @@ def command_run_from_tool_use(
             "source": "claude_tool_use",
             "native_tool_call_id": native_tool_call_id,
             "is_error": is_error,
+            "exit_code_inferred_from_is_error": native_exit_code is None and is_error is True,
             "interrupted": bool_value(top_level_result.get("interrupted")),
             "duration_ms": first_int(top_level_result, "durationMs", "duration_ms"),
             "result_observed": result is not None,

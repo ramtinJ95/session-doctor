@@ -7,10 +7,12 @@ import pytest
 
 from session_doctor.adapters import SourceFormatError
 from session_doctor.adapters.claude import ClaudeCodeAdapter, classify_claude_path
+from session_doctor.analysis import analyze_features
 from session_doctor.cli_options import sources_for_ingest
 from session_doctor.ids import source_id_for_path
 from session_doctor.privacy import hash_text
-from session_doctor.schemas import AgentName, SessionSource, SourceKind
+from session_doctor.schemas import AgentName, NormalizedRole, SessionSource, SourceKind
+from session_doctor.store import DuckDBStore
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "claude"
 
@@ -87,11 +89,18 @@ def test_claude_messages_exclude_thinking_and_tool_result_text() -> None:
     assert assistant.text == "I will inspect the project."
     assert assistant.content_block_types == ["text", "thinking", "tool_use"]
     assert assistant.metadata["thinking_block_count"] == 1
+    assert command_result_message.role is NormalizedRole.TOOL
     assert command_result_message.text is None
     assert command_result_message.content_block_types == ["tool_result"]
+    assert mixed_result_message.role is NormalizedRole.USER
     assert mixed_result_message.text == "Please continue."
     assert mixed_result_message.content_block_types == ["tool_result", "text"]
     assert system_message.text == "Synthetic system notice."
+    features = analyze_features(bundle, "analysis-run")
+    feature_values = {
+        feature.feature_name: feature.feature_value for feature in features.session_features
+    }
+    assert feature_values["user_message_count"] == "2"
 
 
 def test_claude_normalizes_tools_commands_files_and_usage_without_raw_output() -> None:
@@ -133,6 +142,7 @@ def test_claude_normalizes_tools_commands_files_and_usage_without_raw_output() -
     assert activities["../../README.md"].operation == "read"
     assert activities["src/app.py"].operation == "update"
     assert activities["src/app.py"].content_hash is not None
+    assert activities["src/app.py"].metadata["replace_all"] is False
     assert activities["notes.txt"].operation == "write"
     assert activities["notes.txt"].content_hash is not None
 
@@ -274,6 +284,113 @@ def test_claude_idless_blocks_get_distinct_fallback_ids_and_boolean_usage_is_rej
     assert bundle.model_usage[0].total_tokens == 2
 
 
+def test_claude_bash_error_without_exit_code_is_visible_to_analysis(tmp_path) -> None:
+    source_path = tmp_path / "bash-error.jsonl"
+    source_path.write_text(
+        "\n".join(
+            (
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "sessionId": "session-1",
+                        "uuid": "assistant-1",
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "message": {
+                            "role": "assistant",
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "id": "bash-1",
+                                    "name": "Bash",
+                                    "input": {"command": "false"},
+                                }
+                            ],
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "user",
+                        "sessionId": "session-1",
+                        "uuid": "user-1",
+                        "timestamp": "2026-01-01T00:00:01Z",
+                        "message": {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": "bash-1",
+                                    "content": "failed",
+                                    "is_error": True,
+                                }
+                            ],
+                        },
+                    }
+                ),
+            )
+        )
+    )
+
+    bundle = ClaudeCodeAdapter().parse_source(source_for_fixture(source_path))
+
+    assert bundle.command_runs[0].exit_code == 1
+    assert bundle.command_runs[0].metadata["exit_code_inferred_from_is_error"] is True
+    features = analyze_features(bundle, "analysis-run")
+    feature_values = {
+        feature.feature_name: feature.feature_value for feature in features.session_features
+    }
+    assert feature_values["failed_command_count"] == "1"
+
+
+def test_claude_idless_duplicate_file_tools_persist_with_explicit_false(tmp_path) -> None:
+    source_path = tmp_path / "idless-files.jsonl"
+    source_path.write_text(
+        json.dumps(
+            {
+                "type": "assistant",
+                "sessionId": "session-1",
+                "uuid": "assistant-1",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "cwd": "/tmp/project",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Edit",
+                            "input": {
+                                "file_path": "same.py",
+                                "old_string": "one",
+                                "new_string": "two",
+                                "replace_all": False,
+                            },
+                        },
+                        {
+                            "type": "tool_use",
+                            "name": "Edit",
+                            "input": {
+                                "file_path": "same.py",
+                                "old_string": "two",
+                                "new_string": "three",
+                                "replace_all": False,
+                            },
+                        },
+                    ],
+                },
+            }
+        )
+    )
+    source = source_for_fixture(source_path)
+    bundle = ClaudeCodeAdapter().parse_source(source)
+
+    assert len(bundle.file_activities) == 2
+    assert len({activity.file_activity_id for activity in bundle.file_activities}) == 2
+    assert all(activity.metadata["replace_all"] is False for activity in bundle.file_activities)
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    store.insert_parsed_bundle(source, bundle)
+    assert store.table_count("file_activities") == 2
+
+
 def test_claude_discovery_classifies_all_sources_but_ingests_only_roots(tmp_path) -> None:
     project_dir = tmp_path / "project"
     session_dir = project_dir / "session-1"
@@ -301,6 +418,10 @@ def test_claude_discovery_classifies_all_sources_but_ingests_only_roots(tmp_path
     assert classify_claude_path(subagents_dir / "agent-a.jsonl", tmp_path) is (
         SourceKind.SUBSESSION
     )
+    assert [source.source_kind for source in sources_for_ingest(adapter, project_dir)] == [
+        SourceKind.ROOT_SESSION
+    ]
+    assert sources_for_ingest(adapter, session_dir) == []
 
 
 def test_claude_rejects_non_root_source_kind() -> None:
