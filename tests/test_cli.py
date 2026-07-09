@@ -295,10 +295,13 @@ def test_ingest_claude_directory_selects_only_root_sessions(
     tool_results_dir = session_dir / "tool-results"
     subagents_dir.mkdir(parents=True)
     tool_results_dir.mkdir()
-    copyfile(CLAUDE_FIXTURE_DIR / "basic-session.jsonl", project_dir / "root.jsonl")
+    copyfile(CLAUDE_FIXTURE_DIR / "basic-session.jsonl", project_dir / "session-1.jsonl")
     (subagents_dir / "agent-a.jsonl").write_text("not a root transcript")
     (subagents_dir / "agent-a.meta.json").write_text("{}")
     (tool_results_dir / "result.txt").write_text("PRIVATE_SIDECAR_OUTPUT")
+    (tool_results_dir / "result.jsonl").write_text(
+        '{"type":"system","content":"PRIVATE_JSONL_SIDECAR_OUTPUT"}\n'
+    )
     (project_dir / "memory.md").write_text("PRIVATE_MEMORY")
     monkeypatch.setattr(
         "session_doctor.adapters.claude.ClaudeCodeAdapter.default_roots",

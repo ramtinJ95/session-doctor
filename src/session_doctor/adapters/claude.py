@@ -394,7 +394,7 @@ def classify_claude_path(path: Path, root: Path | None = None) -> SourceKind:
     relative_path = path.relative_to(root) if root and path.is_relative_to(root) else path
     parent_name = relative_path.parent.name
     is_subagent_file = parent_name == "subagents" and path.name.startswith("agent-")
-    if parent_name == "tool-results" and path.suffix != ".jsonl":
+    if is_claude_tool_result_path(path, relative_path, root):
         return SourceKind.TOOL_RESULT
     if is_subagent_file and path.name.endswith(".meta.json"):
         return SourceKind.SUBAGENT_METADATA
@@ -405,6 +405,20 @@ def classify_claude_path(path: Path, root: Path | None = None) -> SourceKind:
     if path.suffix in {".md", ".txt"}:
         return SourceKind.MEMORY
     return SourceKind.AUXILIARY
+
+
+def is_claude_tool_result_path(
+    path: Path,
+    relative_path: Path,
+    root: Path | None,
+) -> bool:
+    if relative_path.parent.name != "tool-results":
+        return False
+    if root is None or len(relative_path.parts) >= 3:
+        return True
+    session_dir = path.parent.parent
+    root_transcript = session_dir.parent / f"{session_dir.name}.jsonl"
+    return root_transcript.is_file()
 
 
 __all__ = [

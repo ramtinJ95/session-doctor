@@ -7,7 +7,7 @@ import pytest
 
 from session_doctor.adapters import SourceFormatError
 from session_doctor.adapters.claude import ClaudeCodeAdapter, classify_claude_path
-from session_doctor.analysis import analyze_features
+from session_doctor.analysis import analyze_features, classify_session
 from session_doctor.cli_options import sources_for_ingest
 from session_doctor.ids import source_id_for_path
 from session_doctor.privacy import hash_text
@@ -101,6 +101,95 @@ def test_claude_messages_exclude_thinking_and_tool_result_text() -> None:
         feature.feature_name: feature.feature_value for feature in features.session_features
     }
     assert feature_values["user_message_count"] == "2"
+
+
+def test_claude_end_turn_marks_final_answer_and_resolves_correction(tmp_path) -> None:
+    source_path = tmp_path / "resolved.jsonl"
+    source_path.write_text(
+        "\n".join(
+            (
+                json.dumps(
+                    {
+                        "type": "user",
+                        "sessionId": "session-1",
+                        "uuid": "user-1",
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "message": {
+                            "role": "user",
+                            "content": "That is not what I asked. Please fix it.",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "sessionId": "session-1",
+                        "uuid": "assistant-1",
+                        "parentUuid": "user-1",
+                        "timestamp": "2026-01-01T00:00:01Z",
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": "Fixed."}],
+                            "stop_reason": "end_turn",
+                        },
+                    }
+                ),
+            )
+        )
+    )
+    bundle = ClaudeCodeAdapter().parse_source(source_for_fixture(source_path))
+
+    assert bundle.messages[-1].metadata["phase"] == "final_answer"
+    features = analyze_features(bundle, "analysis-run")
+    feature_values = {
+        feature.feature_name: feature.feature_value for feature in features.session_features
+    }
+    assert feature_values["unresolved_ending_signal"] == "false"
+    classifications = classify_session(
+        bundle,
+        "analysis-run",
+        features.message_features,
+        features.session_features,
+    )
+    labels = {classification.label for classification in classifications}
+    assert "resolved_after_corrections" in labels
+    assert "user_stuck" not in labels
+
+
+def test_claude_local_command_output_is_hashed_but_not_persisted_as_message_text(
+    tmp_path,
+) -> None:
+    source_path = tmp_path / "local-command.jsonl"
+    source_path.write_text(
+        json.dumps(
+            {
+                "type": "system",
+                "subtype": "local_command",
+                "sessionId": "session-1",
+                "uuid": "system-1",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "content": "PRIVATE_LOCAL_COMMAND_OUTPUT",
+            }
+        )
+    )
+    source = source_for_fixture(source_path)
+    bundle = ClaudeCodeAdapter().parse_source(source)
+
+    assert bundle.messages == []
+    assert bundle.session is not None
+    assert bundle.session.metadata["claude_metadata_only_counts"] == {"system.local_command": 1}
+    assert bundle.raw_events[0].metadata["local_command_output_hash"] == hash_text(
+        "PRIVATE_LOCAL_COMMAND_OUTPUT"
+    )
+    assert bundle.raw_events[0].metadata["local_command_output_length"] == len(
+        "PRIVATE_LOCAL_COMMAND_OUTPUT"
+    )
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    store.insert_parsed_bundle(source, bundle)
+    loaded = store.load_session_bundle(bundle.session.session_id)
+    assert loaded is not None
+    assert loaded.messages == []
+    assert "PRIVATE_LOCAL_COMMAND_OUTPUT" not in loaded.model_dump_json()
 
 
 def test_claude_normalizes_tools_commands_files_and_usage_without_raw_output() -> None:
@@ -399,10 +488,11 @@ def test_claude_discovery_classifies_all_sources_but_ingests_only_roots(tmp_path
     subagents_dir.mkdir(parents=True)
     tool_results_dir.mkdir()
     paths = {
-        project_dir / "root.jsonl": SourceKind.ROOT_SESSION,
+        project_dir / "session-1.jsonl": SourceKind.ROOT_SESSION,
         subagents_dir / "agent-a.jsonl": SourceKind.SUBSESSION,
         subagents_dir / "agent-a.meta.json": SourceKind.SUBAGENT_METADATA,
         tool_results_dir / "result.txt": SourceKind.TOOL_RESULT,
+        tool_results_dir / "result.jsonl": SourceKind.TOOL_RESULT,
         project_dir / "memory.md": SourceKind.MEMORY,
         project_dir / "settings.json": SourceKind.AUXILIARY,
     }
