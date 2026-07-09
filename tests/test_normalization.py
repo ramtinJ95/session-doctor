@@ -61,6 +61,23 @@ def test_file_identity_groups_relative_and_absolute_paths_under_project() -> Non
     assert absolute.resolution == "absolute"
 
 
+def test_file_identity_treats_unknown_as_a_valid_relative_filename() -> None:
+    relative = canonical_file_identity(
+        "unknown",
+        cwd="/tmp/session-doctor",
+        project_path="/tmp/session-doctor",
+    )
+    absolute = canonical_file_identity(
+        "/tmp/session-doctor/unknown",
+        cwd=None,
+        project_path="/tmp/session-doctor",
+    )
+
+    assert relative.canonical_path == absolute.canonical_path == "/tmp/session-doctor/unknown"
+    assert relative.project_relative_path == absolute.project_relative_path == "unknown"
+    assert relative.resolution == "cwd"
+
+
 def test_file_identity_preserves_outside_project_and_missing_base_states() -> None:
     outside = canonical_file_identity(
         "../other/file.py",

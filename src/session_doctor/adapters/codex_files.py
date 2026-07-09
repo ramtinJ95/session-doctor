@@ -46,22 +46,20 @@ def file_activities_from_patch_event(
             )
         )
     if not activities:
-        identity = canonical_file_identity("unknown", cwd=cwd, project_path=project_path)
         activities.append(
             FileActivity(
                 file_activity_id=stable_id("file_activity", session_id, event.event_id, "unknown"),
                 session_id=session_id,
                 source_event_id=event.event_id,
                 path="unknown",
-                normalized_path=identity.normalized_path,
-                canonical_path=identity.canonical_path,
-                project_relative_path=identity.project_relative_path,
-                path_resolution=identity.resolution,
+                normalized_path="unknown",
+                path_resolution="unresolved",
                 operation="patch",
                 timestamp=event.timestamp,
                 metadata={
                     "success": bool_value(payload.get("success")),
                     "status": string_value(payload.get("status")),
+                    "path_missing": True,
                 },
             )
         )

@@ -69,7 +69,7 @@ def canonical_file_identity(
     project_path: str | None,
 ) -> FileIdentity:
     normalized_path = posixpath.normpath(path) if path else path
-    if normalized_path in {"", "unknown"}:
+    if not normalized_path:
         return FileIdentity(normalized_path, None, None, "unresolved")
 
     normalized_project = absolute_normalized_path(project_path)
