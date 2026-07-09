@@ -3,11 +3,14 @@ from __future__ import annotations
 import posixpath
 import shlex
 from dataclasses import dataclass
-from pathlib import PurePosixPath
 
 from .privacy import hash_text, redact_command_for_display
 
-SUPPORTED_SHELLS = frozenset({"bash", "sh", "zsh"})
+SUPPORTED_SHELL_EXECUTABLES: dict[str, str] = {
+    shell_path: shell_name
+    for shell_name in ("bash", "sh", "zsh")
+    for shell_path in (shell_name, f"/bin/{shell_name}", f"/usr/bin/{shell_name}")
+}
 SUPPORTED_SHELL_FLAGS = frozenset({"-c", "-lc"})
 
 
@@ -52,9 +55,9 @@ def recognized_shell_wrapper(command: str) -> tuple[str, str, str] | None:
     if len(parts) != 3:
         return None
 
-    shell_name = PurePosixPath(parts[0]).name
+    shell_name = SUPPORTED_SHELL_EXECUTABLES.get(parts[0])
     shell_flag = parts[1]
-    if shell_name not in SUPPORTED_SHELLS or shell_flag not in SUPPORTED_SHELL_FLAGS:
+    if shell_name is None or shell_flag not in SUPPORTED_SHELL_FLAGS:
         return None
     return shell_name, shell_flag, parts[2]
 

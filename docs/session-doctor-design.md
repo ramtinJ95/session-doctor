@@ -1482,11 +1482,12 @@ logs will not all expose the same metadata.
 ### Canonical Aggregate Identities
 
 `CommandRun.command` preserves the native command. A separate identity is
-derived from trimmed text and unwraps only an exact `sh`, `bash`, or `zsh`
-invocation with one payload passed through `-c` or `-lc`. The unredacted
-canonical text is hashed for grouping, while only a redacted canonical example
-is stored for display. Near-miss wrappers and commands that require shell
-interpretation remain distinct.
+derived from trimmed text and unwraps only a bare `sh`, `bash`, or `zsh` name,
+or its explicitly recognized `/bin` or `/usr/bin` path, with one payload passed
+through `-c` or `-lc`. The unredacted canonical text is hashed for grouping,
+while only a redacted canonical example is stored for display. Other paths,
+near-miss wrappers, and commands that require shell interpretation remain
+distinct.
 
 `FileActivity.path` preserves the native path. Normalization removes `.` and
 `..` lexically, anchors a relative path to a trustworthy event/session cwd or

@@ -6,6 +6,7 @@ from pathlib import Path
 from shutil import copyfile
 from typing import Any, cast
 
+import duckdb
 import pytest
 from typer.testing import CliRunner
 
@@ -14,7 +15,7 @@ from session_doctor.adapters import BaseAdapter, ParsedSessionBundle, SourceRead
 from session_doctor.cli import app
 from session_doctor.ids import source_id_for_path
 from session_doctor.schemas import AgentName, Session, SessionSource
-from session_doctor.store import DuckDBStore
+from session_doctor.store import SCHEMA_VERSION, DuckDBStore
 
 runner = CliRunner()
 CODEX_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "codex"
@@ -103,6 +104,57 @@ def test_db_info_rejects_existing_directory_as_database_path(tmp_path) -> None:
 
     assert result.exit_code == 1
     assert "Invalid database path" in result.stdout
+
+
+def test_db_init_accepts_existing_empty_database_file(tmp_path) -> None:
+    database_path = tmp_path / "empty.duckdb"
+    with duckdb.connect(str(database_path)):
+        pass
+
+    result = runner.invoke(app, ["db", "init", "--db", str(database_path)])
+
+    assert result.exit_code == 0
+    assert f"Schema version: {SCHEMA_VERSION}" in result.stdout
+
+
+def test_stale_database_is_inspectable_but_operational_commands_require_rebuild(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "stale.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TIMESTAMP)"
+        )
+        connection.execute("INSERT INTO schema_migrations (version) VALUES (2)")
+
+    info_result = runner.invoke(app, ["db", "info", "--db", str(database_path)])
+
+    assert info_result.exit_code == 0
+    assert "Schema version" in info_result.stdout
+    assert "2" in info_result.stdout
+
+    commands = (
+        ["db", "init", "--db", str(database_path)],
+        ["sessions", "list", "--db", str(database_path)],
+        [
+            "ingest",
+            "--agent",
+            "codex",
+            "--source",
+            str(CODEX_FIXTURE_DIR / "basic-session.jsonl"),
+            "--db",
+            str(database_path),
+        ],
+        ["analyze", "session-1", "--db", str(database_path)],
+        ["summary", "--db", str(database_path)],
+    )
+    for command in commands:
+        result = runner.invoke(app, command)
+        assert result.exit_code == 1
+        assert "Incompatible database" in result.stdout
+        assert "expected 3" in result.stdout
+        assert "Delete it and recreate it" in result.stdout
+        assert "BinderException" not in result.stdout
 
 
 def test_adapters_list_without_scan() -> None:

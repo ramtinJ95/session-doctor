@@ -89,6 +89,10 @@ uv run session-doctor db init
 uv run session-doctor db info
 ```
 
+Before version 1.0, incompatible database schemas are not migrated. Use
+`db info` to inspect the stored schema version, then delete and rebuild an
+incompatible local database.
+
 Use a temporary or project-local database path during development:
 
 ```bash
