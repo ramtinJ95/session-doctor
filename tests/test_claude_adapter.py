@@ -156,12 +156,8 @@ def test_claude_end_turn_marks_final_answer_and_resolves_correction(tmp_path) ->
     assert "user_stuck" not in labels
 
 
-@pytest.mark.parametrize("stop_reason", ["max_tokens", "stop_sequence"])
-def test_claude_truncated_assistant_stop_is_unresolved_evidence(
-    tmp_path,
-    stop_reason: str,
-) -> None:
-    source_path = tmp_path / f"{stop_reason}.jsonl"
+def test_claude_max_tokens_stop_is_unresolved_evidence(tmp_path) -> None:
+    source_path = tmp_path / "max-tokens.jsonl"
     source_path.write_text(
         json.dumps(
             {
@@ -172,8 +168,8 @@ def test_claude_truncated_assistant_stop_is_unresolved_evidence(
                 "message": {
                     "role": "assistant",
                     "content": [{"type": "text", "text": "Incomplete response"}],
-                    "stop_reason": stop_reason,
-                    "stop_sequence": "END" if stop_reason == "stop_sequence" else None,
+                    "stop_reason": "max_tokens",
+                    "stop_sequence": None,
                 },
             }
         )
@@ -186,7 +182,7 @@ def test_claude_truncated_assistant_stop_is_unresolved_evidence(
         for warning in bundle.parse_warnings
         if warning.metadata["code"] == "claude_assistant_truncated"
     )
-    assert warning.metadata["stop_reason"] == stop_reason
+    assert warning.metadata["stop_reason"] == "max_tokens"
     features = analyze_features(bundle, "analysis-run")
     feature_values = {feature.feature_name: feature for feature in features.session_features}
     assert feature_values["unresolved_ending_signal"].feature_value == "true"
@@ -194,6 +190,75 @@ def test_claude_truncated_assistant_stop_is_unresolved_evidence(
         warning.warning_id
         in feature_values["unresolved_ending_signal"].evidence["late_parse_warning_ids"]
     )
+
+
+def test_claude_stop_sequence_is_not_truncation_evidence(tmp_path) -> None:
+    source_path = tmp_path / "stop-sequence.jsonl"
+    source_path.write_text(
+        json.dumps(
+            {
+                "type": "assistant",
+                "sessionId": "session-1",
+                "uuid": "assistant-1",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Configured completion"}],
+                    "stop_reason": "stop_sequence",
+                    "stop_sequence": "END",
+                },
+            }
+        )
+    )
+
+    bundle = ClaudeCodeAdapter().parse_source(source_for_fixture(source_path))
+
+    assert all(
+        warning.metadata["code"] != "claude_assistant_truncated"
+        for warning in bundle.parse_warnings
+    )
+    features = analyze_features(bundle, "analysis-run")
+    feature_values = {
+        feature.feature_name: feature.feature_value for feature in features.session_features
+    }
+    assert feature_values["unresolved_ending_signal"] == "false"
+
+
+def test_claude_api_error_message_text_is_hashed_but_not_persisted(tmp_path) -> None:
+    source_path = tmp_path / "api-error.jsonl"
+    source_path.write_text(
+        json.dumps(
+            {
+                "type": "assistant",
+                "sessionId": "session-1",
+                "uuid": "assistant-1",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "isApiErrorMessage": True,
+                "error": {"type": "overloaded_error"},
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "PRIVATE_API_ERROR_MESSAGE"}],
+                    "stop_reason": "end_turn",
+                },
+            }
+        )
+    )
+    source = source_for_fixture(source_path)
+    bundle = ClaudeCodeAdapter().parse_source(source)
+
+    assert bundle.messages[0].text is None
+    assert bundle.messages[0].text_hash == hash_text("PRIVATE_API_ERROR_MESSAGE")
+    assert bundle.messages[0].text_length == len("PRIVATE_API_ERROR_MESSAGE")
+    assert bundle.messages[0].metadata["error_content_redacted"] is True
+    assert "phase" not in bundle.messages[0].metadata
+    assert "claude_assistant_error" in {
+        warning.metadata["code"] for warning in bundle.parse_warnings
+    }
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    store.insert_parsed_bundle(source, bundle)
+    loaded = store.load_session_bundle(bundle.session.session_id) if bundle.session else None
+    assert loaded is not None
+    assert "PRIVATE_API_ERROR_MESSAGE" not in loaded.model_dump_json()
 
 
 def test_claude_local_command_output_is_hashed_but_not_persisted_as_message_text(
@@ -554,6 +619,32 @@ def test_claude_discovery_classifies_all_sources_but_ingests_only_roots(tmp_path
     assert sources_for_ingest(adapter, session_dir) == []
     assert sources_for_ingest(adapter, subagents_dir) == []
     assert sources_for_ingest(adapter, tool_results_dir) == []
+
+
+def test_claude_explicit_file_classification_matches_discovery(tmp_path) -> None:
+    project_named_tool_results = tmp_path / "tool-results"
+    project_named_tool_results.mkdir()
+    root_path = project_named_tool_results / "session.jsonl"
+    root_path.write_text("{}\n")
+    adapter = ClaudeCodeAdapter()
+
+    discovered = adapter.discover(tmp_path)
+    discovered_kind = next(
+        source.source_kind for source in discovered if source.source_path == str(root_path)
+    )
+    explicit_kind = adapter.source_for_path(root_path).source_kind
+
+    assert discovered_kind is SourceKind.ROOT_SESSION
+    assert explicit_kind is SourceKind.ROOT_SESSION
+
+    native_project = tmp_path / "project"
+    session_dir = native_project / "session-1"
+    sidecar_dir = session_dir / "tool-results"
+    sidecar_dir.mkdir(parents=True)
+    (native_project / "session-1.jsonl").write_text("{}\n")
+    sidecar_path = sidecar_dir / "result.jsonl"
+    sidecar_path.write_text("{}\n")
+    assert adapter.source_for_path(sidecar_path).source_kind is SourceKind.TOOL_RESULT
 
 
 def test_claude_rejects_non_root_source_kind() -> None:

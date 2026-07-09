@@ -44,6 +44,8 @@ def message_from_record(
         }
         else None
     )
+    error_content_redacted = claude_record_has_private_error_content(record)
+    stored_text = None if error_content_redacted else text
     native_message_id = string_value(record.get("uuid")) or string_value(message.get("id"))
     stop_reason = string_value(message.get("stop_reason"))
     metadata: dict[str, Any] = {
@@ -57,8 +59,13 @@ def message_from_record(
         if isinstance(record.get("isSidechain"), bool)
         else None,
         "thinking_block_count": content_block_types.count("thinking"),
+        "error_content_redacted": error_content_redacted,
     }
-    if role is NormalizedRole.ASSISTANT and stop_reason == "end_turn":
+    if (
+        role is NormalizedRole.ASSISTANT
+        and stop_reason == "end_turn"
+        and not error_content_redacted
+    ):
         metadata["phase"] = "final_answer"
     return Message(
         message_id=stable_id("message", session_id, event.event_id),
@@ -68,11 +75,22 @@ def message_from_record(
         native_message_id=native_message_id,
         parent_message_id=string_value(record.get("parentUuid")),
         timestamp=parse_timestamp(string_value(record.get("timestamp"))),
-        text=text,
+        text=stored_text,
         text_hash=hash_text(text) if text is not None else None,
         text_length=text_length(text),
         content_block_types=content_block_types,
         metadata=metadata,
+    )
+
+
+def claude_record_has_private_error_content(record: dict[str, Any]) -> bool:
+    return (
+        record.get("error") is not None
+        or record.get("isApiErrorMessage") is True
+        or (
+            string_value(record.get("type")) == "system"
+            and string_value(record.get("subtype")) == "api_error"
+        )
     )
 
 
