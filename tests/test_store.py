@@ -7,6 +7,7 @@ import duckdb
 import pytest
 
 from session_doctor.adapters import ParsedSessionBundle
+from session_doctor.adapters.claude import ClaudeCodeAdapter
 from session_doctor.adapters.codex import CodexAdapter
 from session_doctor.ids import source_id_for_path
 from session_doctor.schemas import (
@@ -35,6 +36,7 @@ from session_doctor.store import (
 )
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "codex"
+CLAUDE_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "claude"
 
 
 def test_store_initialize_creates_expected_tables(tmp_path) -> None:
@@ -246,6 +248,37 @@ def test_store_load_session_bundle_round_trips_ingested_records(tmp_path) -> Non
     assert len(loaded.command_runs) == len(bundle.command_runs)
     assert loaded.messages[0].content_block_types == ["input_text"]
     assert loaded.messages[0].metadata["codex_message_source"] == "response_item"
+
+
+def test_store_round_trips_claude_root_records_without_private_payloads(tmp_path) -> None:
+    fixture_path = CLAUDE_FIXTURE_DIR / "basic-session.jsonl"
+    source = SessionSource(
+        source_id=source_id_for_path(AgentName.CLAUDE, fixture_path),
+        agent_name=AgentName.CLAUDE,
+        source_path=str(fixture_path),
+    )
+    bundle = ClaudeCodeAdapter().parse_source(source)
+    assert bundle.session is not None
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+
+    store.insert_parsed_bundle(source, bundle)
+    loaded = store.load_session_bundle(bundle.session.session_id)
+
+    assert loaded is not None
+    assert loaded.session is not None
+    assert loaded.session.agent_name is AgentName.CLAUDE
+    assert len(loaded.raw_events) == 9
+    assert len(loaded.messages) == 6
+    assert len(loaded.tool_calls) == 5
+    assert len(loaded.tool_results) == 2
+    assert len(loaded.command_runs) == 1
+    assert len(loaded.file_activities) == 3
+    assert len(loaded.model_usage) == 2
+    serialized_bundle = loaded.model_dump_json()
+    assert "PRIVATE_THINKING_TEXT" not in serialized_bundle
+    assert "PRIVATE_COMMAND_OUTPUT" not in serialized_bundle
+    assert "PRIVATE_WRITE_BODY" not in serialized_bundle
+    assert "PRIVATE_PATCH" not in serialized_bundle
 
 
 def test_store_load_session_bundle_orders_messages_by_raw_event_index(tmp_path) -> None:

@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import pytest
-
 from session_doctor.adapters import ClaudeCodeAdapter, CodexAdapter, PiAdapter
 from session_doctor.adapters.claude import classify_claude_path
-from session_doctor.schemas import AgentName, SessionSource, SourceKind
+from session_doctor.schemas import AgentName, SourceKind
 
 
 def test_codex_discovery_finds_jsonl_sessions(tmp_path) -> None:
@@ -61,15 +59,21 @@ def test_claude_discovery_classifies_known_file_kinds(tmp_path) -> None:
     assert by_path[str(auxiliary_file)] == SourceKind.AUXILIARY
 
 
-def test_parse_source_is_deferred() -> None:
-    source = SessionSource(
-        source_id="source-1",
-        agent_name=AgentName.CLAUDE,
-        source_path="/tmp/session.jsonl",
+def test_claude_parse_source_is_implemented(tmp_path) -> None:
+    source_path = tmp_path / "session.jsonl"
+    source_path.write_text(
+        '{"type":"user","sessionId":"session-1","uuid":"message-1",'
+        '"timestamp":"2026-01-01T00:00:00Z","message":'
+        '{"role":"user","content":"Hello"}}\n'
     )
+    adapter = ClaudeCodeAdapter()
 
-    with pytest.raises(NotImplementedError, match="not implemented yet"):
-        ClaudeCodeAdapter().parse_source(source)
+    bundle = adapter.parse_source(adapter.source_for_path(source_path))
+
+    assert bundle.session is not None
+    assert bundle.session.native_session_id == "session-1"
+    assert len(bundle.raw_events) == 1
+    assert len(bundle.messages) == 1
 
 
 def test_classify_claude_path_prefers_tool_results(tmp_path) -> None:

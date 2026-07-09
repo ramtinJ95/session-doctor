@@ -8,8 +8,6 @@ from rich.console import Console
 
 from .adapters import BaseAdapter, built_in_adapters
 from .config import default_database_path
-from .ids import source_id_for_path
-from .schemas import SourceKind
 from .schemas.common import AgentName
 from .schemas.sessions import SessionSource
 from .store import DuckDBStore, SchemaMismatchError
@@ -120,15 +118,16 @@ def adapter_for_ingest(agent: str) -> BaseAdapter:
     if adapter is None:
         console.print(f"[red]Unsupported --agent:[/red] {agent}")
         raise typer.Exit(2)
-    if adapter.name not in {AgentName.CODEX, AgentName.PI}:
-        console.print(f"[red]--agent {agent} is discovered but parsing is not implemented.[/red]")
-        raise typer.Exit(2)
     return adapter
 
 
 def sources_for_ingest(adapter: BaseAdapter, source: Path | None) -> list[SessionSource]:
     if source is None:
-        return adapter.discover()
+        return [
+            discovered_source
+            for discovered_source in adapter.discover()
+            if discovered_source.source_kind in adapter.ingestible_source_kinds
+        ]
 
     expanded_source = source.expanduser()
     if not expanded_source.exists():
@@ -137,16 +136,20 @@ def sources_for_ingest(adapter: BaseAdapter, source: Path | None) -> list[Sessio
 
     resolved_source = expanded_source.resolve()
     if resolved_source.is_dir():
-        return adapter.discover(resolved_source)
-    if resolved_source.is_file():
         return [
-            SessionSource(
-                source_id=source_id_for_path(adapter.name, resolved_source),
-                agent_name=adapter.name,
-                source_path=str(resolved_source),
-                source_kind=SourceKind.ROOT_SESSION,
-            )
+            discovered_source
+            for discovered_source in adapter.discover(resolved_source)
+            if discovered_source.source_kind in adapter.ingestible_source_kinds
         ]
+    if resolved_source.is_file():
+        session_source = adapter.source_for_path(resolved_source)
+        if session_source.source_kind not in adapter.ingestible_source_kinds:
+            console.print(
+                f"[red]Unsupported source kind for {adapter.display_name} ingestion:[/red] "
+                f"{session_source.source_kind.value}"
+            )
+            raise typer.Exit(2)
+        return [session_source]
 
     console.print(f"[red]Source is not a file or directory:[/red] {resolved_source}")
     raise typer.Exit(1)
