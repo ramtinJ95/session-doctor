@@ -23,7 +23,7 @@ complete only after its acceptance criteria and full quality gate pass.
 | Workstream | Status | Pull request | Evidence |
 | --- | --- | --- | --- |
 | PR 1: ingestion and aggregate hardening | complete | #20 | schema v3; 145 tests; full gate; cross-adapter fixture smoke |
-| PR 2: Claude root-session vertical slice | planned | | |
+| PR 2: Claude root-session vertical slice | in progress | | 159 tests; full gate; root fixture CLI/store smoke |
 | PR 3: Claude completion and validation | planned | | |
 | Pre-Phase-8 milestone | planned | | |
 
@@ -477,57 +477,57 @@ Other record types:
 
 Fixtures and parser foundation:
 
-- [ ] Add small synthetic root-session fixtures covering observed structural
+- [x] Add small synthetic root-session fixtures covering observed structural
   variants without copying private content.
-- [ ] Add Claude record readers, raw-event construction, and session metadata
+- [x] Add Claude record readers, raw-event construction, and session metadata
   extraction.
-- [ ] Add deliberate known metadata-only type handling.
-- [ ] Add malformed JSON, missing ID, cwd drift, version drift, and unknown type
+- [x] Add deliberate known metadata-only type handling.
+- [x] Add malformed JSON, missing ID, cwd drift, version drift, and unknown type
   tests.
 
 Normalized entities:
 
-- [ ] Parse user, assistant, and system messages.
-- [ ] Exclude thinking text while preserving safe structural metadata.
-- [ ] Parse tool calls and correlate tool results.
-- [ ] Parse Bash command runs with hashed output.
-- [ ] Parse safe file activity for read/edit/write operations.
-- [ ] Parse model usage.
-- [ ] Preserve parent/native IDs and timestamps.
-- [ ] Add privacy regression assertions for arguments, output, patches, thinking,
+- [x] Parse user, assistant, and system messages.
+- [x] Exclude thinking text while preserving safe structural metadata.
+- [x] Parse tool calls and correlate tool results.
+- [x] Parse Bash command runs with hashed output.
+- [x] Parse safe file activity for read/edit/write operations.
+- [x] Parse model usage.
+- [x] Preserve parent/native IDs and timestamps.
+- [x] Add privacy regression assertions for arguments, output, patches, thinking,
   and write/edit content.
 
 CLI and persistence:
 
-- [ ] Allow `ingest --agent claude`.
-- [ ] Make default Claude ingestion select root sessions only in PR 2.
-- [ ] Prove repeated root-session ingestion delete-and-replaces old rows.
-- [ ] Show Claude sessions and normalized counts through `sessions list`.
-- [ ] Run `analyze` over an ingested Claude fixture without Claude-specific
+- [x] Allow `ingest --agent claude`.
+- [x] Make default Claude ingestion select root sessions only in PR 2.
+- [x] Prove repeated root-session ingestion delete-and-replaces old rows.
+- [x] Show Claude sessions and normalized counts through `sessions list`.
+- [x] Run `analyze` over an ingested Claude fixture without Claude-specific
   analysis branches.
-- [ ] Include Claude sessions in filtered/unfiltered summary output.
-- [ ] Add terminal and JSON CLI coverage.
-- [ ] Update this plan's PR 2 status and evidence when complete.
+- [x] Include Claude sessions in filtered/unfiltered summary output.
+- [x] Add terminal and JSON CLI coverage.
+- [x] Update this plan's PR 2 status and evidence when complete.
 
 ### PR 2 Acceptance Criteria
 
-- [ ] `ClaudeCodeAdapter.parse_source()` returns a normalized bundle for
+- [x] `ClaudeCodeAdapter.parse_source()` returns a normalized bundle for
   representative root fixtures.
-- [ ] Every valid fixture record has a raw event.
-- [ ] Messages, tool calls/results, commands, files, usage, and warnings are
+- [x] Every valid fixture record has a raw event.
+- [x] Messages, tool calls/results, commands, files, usage, and warnings are
   normalized deliberately.
-- [ ] Unknown record/content shapes warn without stopping the file.
-- [ ] Native version and cwd drift do not crash parsing.
-- [ ] Thinking text, raw tool output, raw command output, diffs, and write/edit
+- [x] Unknown record/content shapes warn without stopping the file.
+- [x] Native version and cwd drift do not crash parsing.
+- [x] Thinking text, raw tool output, raw command output, diffs, and write/edit
   bodies are not persisted.
-- [ ] `ingest --agent claude --source <root-fixture>` succeeds.
-- [ ] Default Claude ingestion does not ingest memory/metadata/sidecar files as
+- [x] `ingest --agent claude --source <root-fixture>` succeeds.
+- [x] Default Claude ingestion does not ingest memory/metadata/sidecar files as
   root sessions.
-- [ ] Re-ingestion does not duplicate rows.
-- [ ] `sessions list`, `analyze`, and `summary --agent claude` work.
-- [ ] Existing Codex/Pi behavior remains green.
-- [ ] Claude is documented as root-session MVP only, not complete.
-- [ ] The full quality gate passes.
+- [x] Re-ingestion does not duplicate rows.
+- [x] `sessions list`, `analyze`, and `summary --agent claude` work.
+- [x] Existing Codex/Pi behavior remains green.
+- [x] Claude is documented as root-session MVP only, not complete.
+- [x] The full quality gate passes.
 
 ## PR 3: Claude Completion And Validation
 
