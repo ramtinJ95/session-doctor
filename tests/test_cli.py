@@ -254,6 +254,33 @@ def test_ingest_directory_keeps_valid_sources_but_exits_nonzero_after_skip(
     assert DuckDBStore(database_path).table_count("sessions") == 1
 
 
+def test_ingest_directory_skips_invalid_utf8_and_processes_later_sources(tmp_path) -> None:
+    source_dir = tmp_path / "sessions"
+    source_dir.mkdir()
+    (source_dir / "a-invalid.jsonl").write_bytes(b"\xff\n")
+    copyfile(CODEX_FIXTURE_DIR / "basic-session.jsonl", source_dir / "z-valid.jsonl")
+    database_path = tmp_path / "session-doctor.duckdb"
+
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "codex",
+            "--source",
+            str(source_dir),
+            "--db",
+            str(database_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Skipped source" in result.stdout
+    assert "source_format_error" in result.stdout
+    assert "Unable to decode Codex source as UTF-8" in result.stdout
+    assert DuckDBStore(database_path).table_count("sessions") == 1
+
+
 def test_ingest_directory_total_recoverable_failure_exits_nonzero(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
