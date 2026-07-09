@@ -8,6 +8,7 @@ from session_doctor.adapters.codex import (
     CODEX_MESSAGE_SOURCE_RESPONSE_ITEM,
     CodexAdapter,
 )
+from session_doctor.adapters.codex_files import file_activities_from_patch_event
 from session_doctor.ids import source_id_for_path, stable_id
 from session_doctor.schemas import AgentName, NormalizedRole, SessionSource
 
@@ -95,6 +96,26 @@ def test_codex_parse_source_records_command_and_patch_metadata() -> None:
     assert file_activity.operation == "update"
     assert file_activity.metadata["success"] is True
     assert file_activity.metadata["diff_length"] == len("@@\n-old\n+new\n")
+
+
+def test_codex_empty_patch_uses_an_explicit_missing_path_marker() -> None:
+    fixture_path = FIXTURE_DIR / "basic-session.jsonl"
+    bundle = CodexAdapter().parse_source(source_for_fixture(fixture_path))
+    assert bundle.session is not None
+
+    activities = file_activities_from_patch_event(
+        bundle.session.session_id,
+        bundle.raw_events[0],
+        {"changes": {}},
+        cwd=bundle.session.cwd,
+        project_path=bundle.session.project_path,
+    )
+
+    assert len(activities) == 1
+    assert activities[0].path == "unknown"
+    assert activities[0].canonical_path is None
+    assert activities[0].path_resolution == "unresolved"
+    assert activities[0].metadata["path_missing"] is True
 
 
 def test_codex_parse_source_normalizes_expected_common_shapes() -> None:
