@@ -536,6 +536,72 @@ def test_claude_bash_error_without_exit_code_is_visible_to_analysis(tmp_path) ->
     assert feature_values["failed_command_count"] == "1"
 
 
+def test_claude_empty_bash_streams_do_not_create_repeated_failure_evidence(
+    tmp_path,
+) -> None:
+    source_path = tmp_path / "empty-streams.jsonl"
+    records: list[dict[str, object]] = []
+    for index in range(3):
+        tool_id = f"bash-{index}"
+        records.extend(
+            [
+                {
+                    "type": "assistant",
+                    "sessionId": "session-1",
+                    "uuid": f"assistant-{index}",
+                    "timestamp": f"2026-01-01T00:00:0{index * 2}Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": tool_id,
+                                "name": "Bash",
+                                "input": {"command": f"different-command-{index}"},
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "user",
+                    "sessionId": "session-1",
+                    "uuid": f"user-{index}",
+                    "timestamp": f"2026-01-01T00:00:0{index * 2 + 1}Z",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_id,
+                                "is_error": True,
+                            }
+                        ],
+                    },
+                    "toolUseResult": {"stdout": "", "stderr": "", "exitCode": 1},
+                },
+            ]
+        )
+    source_path.write_text("\n".join(json.dumps(record) for record in records))
+
+    bundle = ClaudeCodeAdapter().parse_source(source_for_fixture(source_path))
+
+    assert all(command.stdout_hash is None for command in bundle.command_runs)
+    assert all(command.stderr_hash is None for command in bundle.command_runs)
+    assert all(command.output_length is None for command in bundle.command_runs)
+    features = analyze_features(bundle, "analysis-run")
+    feature_values = {
+        feature.feature_name: feature.feature_value for feature in features.session_features
+    }
+    assert feature_values["repeated_command_failure_count"] == "0"
+    classifications = classify_session(
+        bundle,
+        "analysis-run",
+        features.message_features,
+        features.session_features,
+    )
+    assert "agent_looping" not in {classification.label for classification in classifications}
+
+
 def test_claude_idless_duplicate_file_tools_persist_with_explicit_false(tmp_path) -> None:
     source_path = tmp_path / "idless-files.jsonl"
     source_path.write_text(
