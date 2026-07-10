@@ -120,9 +120,14 @@ def analyze_session(
         except ArtifactWriteError as exc:
             raise AnalysisArtifactError(artifact_path) from exc
 
+    persisted_analysis_run = (
+        analysis_run.model_copy(update={"artifact_path": None})
+        if staged_artifact_path is not None
+        else analysis_run
+    )
     try:
         store.replace_analysis_rows(
-            analysis_run,
+            persisted_analysis_run,
             extracted_features.message_features,
             extracted_features.session_features,
             classifications,
@@ -136,17 +141,17 @@ def analyze_session(
             staged_artifact_path.replace(artifact_path)
         except OSError as exc:
             discard_staged_artifact(staged_artifact_path)
-            analysis_run = analysis_run.model_copy(update={"artifact_path": None})
-            try:
-                store.replace_analysis_rows(
-                    analysis_run,
-                    extracted_features.message_features,
-                    extracted_features.session_features,
-                    classifications,
-                )
-            except Exception as persistence_exc:
-                raise AnalysisPersistenceError from persistence_exc
             raise AnalysisArtifactError(artifact_path) from exc
+        try:
+            store.replace_analysis_rows(
+                analysis_run,
+                extracted_features.message_features,
+                extracted_features.session_features,
+                classifications,
+            )
+        except Exception as exc:
+            discard_staged_artifact(artifact_path)
+            raise AnalysisPersistenceError from exc
 
     return AnalysisResult(
         analysis_run=analysis_run,
