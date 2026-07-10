@@ -151,21 +151,30 @@ Install manually only after checking that the destination does not already
 exist. Codex and Pi can share one global copy:
 
 ```bash
-test ! -e "$HOME/.agents/skills/session-doctor"
-mkdir -p "$HOME/.agents/skills"
-cp -R "$skill_source" "$HOME/.agents/skills/session-doctor"
+destination="$HOME/.agents/skills/session-doctor"
+if test -e "$destination"; then
+  printf 'Already exists; inspect it and choose whether to replace it: %s\n' "$destination" >&2
+else
+  mkdir -p "$(dirname "$destination")"
+  cp -R "$skill_source" "$destination"
+fi
 ```
 
 Claude Code uses its global skill root:
 
 ```bash
-test ! -e "$HOME/.claude/skills/session-doctor"
-mkdir -p "$HOME/.claude/skills"
-cp -R "$skill_source" "$HOME/.claude/skills/session-doctor"
+destination="$HOME/.claude/skills/session-doctor"
+if test -e "$destination"; then
+  printf 'Already exists; inspect it and choose whether to replace it: %s\n' "$destination" >&2
+else
+  mkdir -p "$(dirname "$destination")"
+  cp -R "$skill_source" "$destination"
+fi
 ```
 
-Pi may alternatively use `~/.pi/agent/skills/session-doctor`. Invoke the skill
-as `$session-doctor` in Codex, `/session-doctor` in Claude Code, or
+Pi may alternatively use its native global root by repeating the same guarded
+copy with `destination="$HOME/.pi/agent/skills/session-doctor"`. Invoke the
+skill as `$session-doctor` in Codex, `/session-doctor` in Claude Code, or
 `/skill:session-doctor` in Pi. The skill requires exactly the CLI version named
 in its frontmatter. Replace or remove an existing destination only through an
 explicit manual decision; `session-doctor` never modifies agent configuration.
