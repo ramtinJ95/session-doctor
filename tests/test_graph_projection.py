@@ -15,7 +15,7 @@ from session_doctor.adapters.pi import PiAdapter
 from session_doctor.analysis_workflow import analyze_session
 from session_doctor.cli import app
 from session_doctor.graph_projection import EDGE_TYPE_ORDER, NODE_TYPE_ORDER, project_graph
-from session_doctor.ids import source_id_for_path
+from session_doctor.ids import source_id_for_path, stable_id
 from session_doctor.schemas import (
     AgentName,
     AnalysisRun,
@@ -322,6 +322,19 @@ def test_graph_projects_direct_relation_directions_and_exact_topology_scope(tmp_
     assert graph.counts.nodes_by_type["message"] == 2
     assert "PRIVATE_PARENT_TEXT" not in graph.model_dump_json()
     assert "PRIVATE_WARNING" not in graph.model_dump_json()
+
+    invalid_topology = graph.model_dump()
+    duplicate_edge = next(
+        edge
+        for edge in invalid_topology["edges"]
+        if edge["edge_type"] == "parent_session_reference"
+    ).copy()
+    duplicate_edge["edge_id"] = stable_id("extra-topology-edge")
+    invalid_topology["edges"].append(duplicate_edge)
+    invalid_topology["counts"]["edges"] += 1
+    invalid_topology["counts"]["edges_by_type"]["parent_session_reference"] += 1
+    with pytest.raises(ValidationError, match="topology-only nodes"):
+        type(graph).model_validate(invalid_topology)
 
 
 def test_graph_cli_is_json_only_read_only_and_handles_missing_session(tmp_path) -> None:

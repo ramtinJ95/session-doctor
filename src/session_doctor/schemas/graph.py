@@ -264,22 +264,22 @@ class GraphReport(GraphModel):
         }
         if contained_targets != expected_contained_targets:
             raise ValueError("every exact-session node must be contained by the session anchor")
-        topology_edges = {
-            (edge.edge_type, edge.target_node_id)
+        topology_edges = sorted(
+            (edge.edge_type, edge.source_node_id, edge.target_node_id)
             for edge in self.edges
-            if edge.source_node_id == session_node.node_id
-            and edge.edge_type in {"parent_session_reference", "child_session_reference"}
-        }
-        expected_topology_edges = {
+            if edge.edge_type in {"parent_session_reference", "child_session_reference"}
+        )
+        expected_topology_edges = sorted(
             (
                 "parent_session_reference"
                 if node.relationship == "parent"
                 else "child_session_reference",
+                session_node.node_id,
                 node.node_id,
             )
             for node in self.nodes
             if isinstance(node, SessionReferenceGraphNode)
-        }
+        )
         if topology_edges != expected_topology_edges:
             raise ValueError("session references must terminate at topology-only nodes")
         return self
