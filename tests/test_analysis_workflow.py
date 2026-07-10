@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import duckdb
 import pytest
 
 from session_doctor.adapters import ParsedSessionBundle
@@ -95,6 +96,59 @@ def test_analysis_workflow_publishes_artifact_after_persistence(tmp_path) -> Non
     assert list(artifact_path.parent.glob("*.tmp")) == []
 
 
+def test_analysis_workflow_publish_failure_leaves_no_artifact_pointer(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database_path, store = store_with_empty_session(tmp_path)
+
+    def fail_publish(self, target):
+        raise OSError("private publish failure")
+
+    monkeypatch.setattr(Path, "replace", fail_publish)
+
+    with pytest.raises(AnalysisArtifactError):
+        analyze_session(
+            store,
+            "session-a",
+            database_path,
+            artifact=None,
+            no_artifact=False,
+        )
+
+    assert persisted_artifact_path(database_path) is None
+
+
+def test_analysis_workflow_metadata_failure_removes_published_artifact(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database_path, store = store_with_empty_session(tmp_path)
+    original_replace = store.replace_analysis_rows
+    call_count = 0
+
+    def fail_second_persistence(*args, **kwargs) -> None:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise RuntimeError("private reconciliation failure")
+        original_replace(*args, **kwargs)
+
+    monkeypatch.setattr(store, "replace_analysis_rows", fail_second_persistence)
+
+    with pytest.raises(AnalysisPersistenceError):
+        analyze_session(
+            store,
+            "session-a",
+            database_path,
+            artifact=None,
+            no_artifact=False,
+        )
+
+    assert persisted_artifact_path(database_path) is None
+    assert not (tmp_path / "artifacts" / "session-a-analysis.json").exists()
+
+
 def store_with_empty_session(tmp_path: Path) -> tuple[Path, DuckDBStore]:
     database_path = tmp_path / "session-doctor.duckdb"
     source = SessionSource(
@@ -114,3 +168,11 @@ def store_with_empty_session(tmp_path: Path) -> tuple[Path, DuckDBStore]:
         ),
     )
     return database_path, store
+
+
+def persisted_artifact_path(database_path: Path) -> str | None:
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        row = connection.execute("SELECT artifact_path FROM analysis_runs").fetchone()
+    assert row is not None
+    value = row[0]
+    return str(value) if value is not None else None
