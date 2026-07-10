@@ -9,6 +9,7 @@ from session_doctor.analysis.version import ANALYZER_VERSION
 from session_doctor.schemas import (
     AgentName,
     AnalysisRun,
+    CommandRun,
     Message,
     MessageFeature,
     NormalizedRole,
@@ -237,6 +238,103 @@ def test_problematic_file_eligibility_rejects_stale_analysis(tmp_path) -> None:
         eligible = latest_problematic_session_ids(connection)
 
     assert eligible == set()
+
+
+def test_diagnostic_snapshot_loads_exact_historical_recurrence_context(tmp_path) -> None:
+    store = DuckDBStore(tmp_path / "diagnostic.duckdb")
+    selected = insert_pattern_session(
+        store,
+        "selected",
+        datetime(2026, 1, 15, 8),
+        datetime(2026, 1, 15, 9),
+    )
+    insert_pattern_session(
+        store,
+        "historical",
+        datetime(2026, 1, 10, 8),
+        datetime(2026, 1, 10, 9),
+    )
+    insert_pattern_session(
+        store,
+        "future",
+        datetime(2026, 1, 16, 8),
+        datetime(2026, 1, 16, 9),
+    )
+    store.replace_analysis_rows(
+        AnalysisRun(
+            analysis_run_id="selected-analysis",
+            session_id=selected.session_id,
+            analyzer_version=ANALYZER_VERSION,
+        ),
+        [],
+        [],
+        [],
+    )
+
+    snapshot = store.load_diagnostic_snapshot("selected")
+
+    assert snapshot is not None
+    context = snapshot.recurrence
+    assert context.status == "available"
+    assert context.scope_path == "/work/project"
+    assert context.scope_source == "session_project_path"
+    assert context.evidence_cutoff == datetime(2026, 1, 15, 9)
+    assert context.window_start == datetime(2025, 10, 27)
+    assert len(context.failed_commands) == 1
+    pattern = context.failed_commands[0]
+    assert pattern.command_display == "pytest -q"
+    assert pattern.evidence.event_count == 2
+    assert pattern.evidence.selected_session_event_count == 1
+    assert pattern.evidence.root_family_count == 2
+    assert context.temporal_exclusions.after_cutoff_sessions == 1
+    assert context.temporal_exclusions.after_cutoff_events == 1
+    assert context.problematic_file_analysis_exclusions.missing == 1
+
+
+def insert_pattern_session(
+    store: DuckDBStore,
+    session_id: str,
+    started_at: datetime,
+    command_at: datetime,
+) -> Session:
+    source_id = f"{session_id}-source"
+    session = Session(
+        session_id=session_id,
+        source_id=source_id,
+        agent_name=AgentName.CODEX,
+        project_path="/work/project",
+        started_at=started_at,
+    )
+    store.insert_parsed_bundle(
+        SessionSource(
+            source_id=source_id,
+            agent_name=session.agent_name,
+            source_path=f"/private/{source_id}.jsonl",
+        ),
+        ParsedSessionBundle(
+            session=session,
+            raw_events=[
+                RawEvent(
+                    event_id=f"{session_id}-event",
+                    source_id=source_id,
+                    agent_name=session.agent_name,
+                    record_index=1,
+                    timestamp=command_at,
+                )
+            ],
+            command_runs=[
+                CommandRun(
+                    command_run_id=f"{session_id}-command",
+                    session_id=session_id,
+                    source_event_id=f"{session_id}-event",
+                    command="pytest -q",
+                    ended_at=command_at,
+                    exit_code=1,
+                )
+            ],
+        ),
+    )
+    return session
 
 
 def insert_session(
