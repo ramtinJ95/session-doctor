@@ -545,6 +545,8 @@ def test_ingest_directory_skips_invalid_utf8_and_processes_later_sources(tmp_pat
     assert "Skipped source" in result.stdout
     assert "source_format_error" in result.stdout
     assert "Unable to decode Codex source as UTF-8" in result.stdout
+    assert "root_session=1" in result.stdout
+    assert "root_session=2" not in result.stdout
     assert DuckDBStore(database_path).table_count("sessions") == 1
 
 

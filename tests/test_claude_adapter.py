@@ -888,17 +888,63 @@ def test_claude_correlates_tool_result_sidecar_without_raw_content() -> None:
     assert tool_result.output_hash == hash_text(expected_output.decode())
     assert tool_result.output_length == len(expected_output)
     assert tool_result.metadata["sidecar_correlated"] is True
-    assert tool_result.metadata["sidecar_length"] == len(expected_output)
+    assert tool_result.metadata["sidecar_byte_length"] == len(expected_output)
+    assert tool_result.metadata["sidecar_character_length"] == len(expected_output.decode())
     serialized = bundle.model_dump_json()
     assert "PRIVATE_PERSISTED_TOOL_OUTPUT" not in serialized
     assert "PRIVATE_ORPHAN_TOOL_OUTPUT" not in serialized
     assert "PRIVATE_SUBAGENT_TASK" not in serialized
 
 
+def test_claude_sidecar_lengths_use_text_characters_for_unicode_output(tmp_path) -> None:
+    root_path = tmp_path / "session-1.jsonl"
+    tool_results_dir = tmp_path / "session-1" / "tool-results"
+    tool_results_dir.mkdir(parents=True)
+    output = "é🙂"
+    encoded_output = output.encode()
+    (tool_results_dir / "inline.txt").write_bytes(encoded_output)
+    (tool_results_dir / "persisted.txt").write_bytes(encoded_output)
+    records = [
+        {
+            "type": "user",
+            "sessionId": "session-1",
+            "uuid": "inline-result",
+            "message": {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "inline-tool", "content": output}
+                ],
+            },
+            "toolUseResult": {"persistedOutputPath": "tool-results/inline.txt"},
+        },
+        {
+            "type": "user",
+            "sessionId": "session-1",
+            "uuid": "persisted-result",
+            "message": {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "persisted-tool"}],
+            },
+            "toolUseResult": {"persistedOutputPath": "tool-results/persisted.txt"},
+        },
+    ]
+    root_path.write_text("\n".join(json.dumps(record) for record in records))
+
+    bundle = ClaudeCodeAdapter().parse_source(ClaudeCodeAdapter().source_for_path(root_path))
+
+    inline_result, persisted_result = bundle.tool_results
+    assert inline_result.output_length == len(output)
+    assert inline_result.metadata["inline_output_truncated"] is False
+    assert inline_result.metadata["sidecar_byte_length"] == len(encoded_output)
+    assert inline_result.metadata["sidecar_character_length"] == len(output)
+    assert persisted_result.output_hash == hash_text(output)
+    assert persisted_result.output_length == len(output)
+
+
 def test_claude_sidecar_hashing_reads_bounded_chunks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    payload = b"x" * (2 * 1024 * 1024 + 17)
+    payload = b"x" * (1024 * 1024 - 1) + "é".encode() + b"x" * (1024 * 1024)
 
     class GuardedBytesIO(BytesIO):
         def read(self, size: int | None = -1, /) -> bytes:
@@ -907,10 +953,11 @@ def test_claude_sidecar_hashing_reads_bounded_chunks(
 
     monkeypatch.setattr(Path, "open", lambda self, mode: GuardedBytesIO(payload))
 
-    digest, length = hash_sidecar(Path("ignored"))
+    digest, byte_length, character_length = hash_sidecar(Path("ignored"))
 
     assert digest == hash_text(payload.decode())
-    assert length == len(payload)
+    assert byte_length == len(payload)
+    assert character_length == len(payload.decode())
 
 
 def test_claude_subagent_without_parent_signal_warns_instead_of_guessing(tmp_path) -> None:
