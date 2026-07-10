@@ -17,6 +17,7 @@ from session_doctor.diagnostic_models import (
     RecurrenceFamilyExclusions,
     RecurrenceTemporalExclusions,
 )
+from session_doctor.ids import stable_id
 from session_doctor.report_payload import build_session_report
 from session_doctor.report_renderers import render_session_report_markdown
 from session_doctor.schemas import AgentName, AnalysisRun, SessionFeature, SessionSource
@@ -228,7 +229,10 @@ def test_report_does_not_disclose_or_claim_unresolved_file_loop_paths(tmp_path) 
 
     assert report.evidence["repeated_file_edits"].items == []
     assert "PRIVATE_UNRESOLVED_FILE" not in serialized
-    assert any(row.code == "unresolved_analysis_references" for row in report.limitations)
+    limitation = next(
+        row for row in report.limitations if row.code == "unresolved_analysis_references"
+    )
+    assert stable_id("unresolved-file-loop", private_path) in limitation.evidence_ids
 
 
 def test_report_cli_supports_all_formats_without_mutating_store(tmp_path) -> None:
