@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 
 import typer
@@ -13,7 +14,9 @@ from .ingest_workflow import IngestSummary
 from .privacy import redact_home
 from .schemas import AnalysisRun, SessionClassification, SessionFeature, SourceKind
 from .store import TABLE_NAMES
+from .store.aggregate_queries import SCORE_NAMES
 from .store.models import AggregateSummary, SessionSummary, StoreInfo
+from .store.trend_models import TrendCohort, TrendMetrics, TrendReport
 
 ANALYSIS_SUMMARY_FEATURES = (
     "friction_score",
@@ -376,6 +379,99 @@ def render_summary(summary: AggregateSummary, database_path: Path, console: Cons
     console.print("[bold]Where to look next[/bold]")
     for recommendation in summary.recommendations:
         console.print(f"- {recommendation}")
+
+
+def render_trends(report: TrendReport, database_path: Path, console: Console) -> None:
+    scope_table = Table(title="Session trends")
+    scope_table.add_column("Metric")
+    scope_table.add_column("Value")
+    scope_table.add_row("Database", redact_home(database_path))
+    scope_table.add_row("Agent filter", report.filters.agent_name or "all")
+    scope_table.add_row(
+        "Project filter",
+        redact_home(report.filters.project_path) if report.filters.project_path else "all",
+    )
+    scope_table.add_row("Bucket", report.filters.bucket.value)
+    scope_table.add_row("Periods", str(report.filters.periods))
+    scope_table.add_row("Window start", format_timestamp(report.window.start))
+    scope_table.add_row("Window end", format_timestamp(report.window.end))
+    scope_table.add_row("Latest session", format_timestamp(report.window.latest_session_at))
+    scope_table.add_row("Matching sessions", str(report.scope.matching_sessions))
+    scope_table.add_row("Windowed sessions", str(report.scope.windowed_sessions))
+    scope_table.add_row("Outside window", str(report.scope.outside_window_sessions))
+    scope_table.add_row("Untimed sessions", str(report.scope.untimed_sessions))
+    scope_table.add_row("Current analysis", str(report.scope.windowed_analysis.current))
+    scope_table.add_row("Stale analysis", str(report.scope.windowed_analysis.stale))
+    scope_table.add_row("Never analyzed", str(report.scope.windowed_analysis.never))
+    console.print(scope_table)
+    if report.scope.windowed_analysis.stale or report.scope.windowed_analysis.never:
+        console.print(
+            "Run [bold]session-doctor analyze --all[/bold] with the same filters to restore "
+            "current analysis coverage."
+        )
+
+    render_trend_cohort("Top-level", report.cohorts.top_level, console)
+    render_trend_cohort("Sidechain", report.cohorts.sidechain, console)
+
+
+def render_trend_cohort(title: str, cohort: TrendCohort, console: Console) -> None:
+    if cohort.totals.sessions == 0:
+        return
+    bucket_table = Table(title=f"{title} buckets")
+    bucket_table.add_column("Start")
+    bucket_table.add_column("Sessions")
+    bucket_table.add_column("Current")
+    bucket_table.add_column("Coverage")
+    bucket_table.add_column("Risk rate")
+    for score_name in SCORE_NAMES:
+        bucket_table.add_column(score_name.removesuffix("_score").replace("_risk", ""))
+    bucket_table.add_column("Classifications")
+    for bucket in cohort.buckets:
+        metrics = bucket.metrics
+        bucket_table.add_row(
+            bucket.start.date().isoformat(),
+            str(metrics.sessions),
+            str(metrics.current_analyzed),
+            format_rate(metrics.current_analysis_coverage),
+            format_rate(metrics.risky_session_rate),
+            *(format_score_metric(metrics, score_name) for score_name in SCORE_NAMES),
+            ", ".join(
+                f"{row.label}={row.session_count}/{format_rate(row.rate)}"
+                for row in metrics.classifications
+            ),
+        )
+    console.print(bucket_table)
+
+    judgment_table = Table(title=f"{title} judgments")
+    judgment_table.add_column("Metric")
+    judgment_table.add_column("Status")
+    judgment_table.add_column("Earlier")
+    judgment_table.add_column("Recent")
+    judgment_table.add_column("Delta")
+    judgment_table.add_column("Reason")
+    for judgment in cohort.judgments:
+        judgment_table.add_row(
+            judgment.metric_name,
+            judgment.status.value,
+            format_optional_score(judgment.earlier_value),
+            format_optional_score(judgment.recent_value),
+            format_optional_score(judgment.delta),
+            ", ".join(judgment.reasons),
+        )
+    console.print(judgment_table)
+
+
+def format_score_metric(metrics: TrendMetrics, metric_name: str) -> str:
+    score = next(row for row in metrics.scores if row.metric_name == metric_name)
+    return f"{format_optional_score(score.average)} ({score.sample_count})"
+
+
+def format_rate(value: float | None) -> str:
+    return "" if value is None else f"{value:.0%}"
+
+
+def format_timestamp(value: datetime | None) -> str:
+    return value.isoformat() if value is not None else ""
 
 
 def format_optional_score(value: float | None) -> str:

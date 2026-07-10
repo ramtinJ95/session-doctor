@@ -11,6 +11,7 @@ from .duckdb import (
     SummaryFilters,
 )
 from .migrations import SCHEMA_VERSION, TABLE_NAMES, SchemaMismatchError
+from .trend_models import TrendBucketSize, TrendFilters, TrendReport, TrendStatus
 
 __all__ = [
     "AggregateSummary",
@@ -25,4 +26,8 @@ __all__ = [
     "StoreInfo",
     "SummaryFilters",
     "TABLE_NAMES",
+    "TrendBucketSize",
+    "TrendFilters",
+    "TrendReport",
+    "TrendStatus",
 ]

@@ -38,6 +38,8 @@ from .row_mappers import (
     tool_result_rows,
 )
 from .summary_readers import aggregate_summary as read_aggregate_summary
+from .trend_models import TrendFilters, TrendReport
+from .trend_readers import read_trends
 from .writers import (
     insert_parsed_bundle as write_parsed_bundle,
 )
@@ -119,6 +121,9 @@ class DuckDBStore:
         filters: SessionScopeFilters,
     ) -> tuple[AnalysisTarget, ...]:
         return list_analysis_targets(self.database_path, filters)
+
+    def trends(self, filters: TrendFilters) -> TrendReport:
+        return read_trends(self.database_path, filters)
 
     def load_session_bundle(self, session_id: str) -> ParsedSessionBundle | None:
         return load_session_bundle(self.database_path, session_id)

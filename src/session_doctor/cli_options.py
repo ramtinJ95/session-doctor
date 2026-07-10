@@ -14,6 +14,7 @@ from .schemas.common import AgentName, SourceKind
 from .schemas.sessions import SessionSource
 from .store import DatabaseOpenError, DuckDBStore, SchemaMismatchError
 from .store.models import SessionScopeFilters, StoreInfo, SummaryFilters
+from .store.trend_models import TrendBucketSize, TrendFilters
 
 console = Console()
 
@@ -145,6 +146,34 @@ def scope_filters_from_options(
             project_path = os.path.normpath(str(Path.cwd() / expanded_project))
 
     return SessionScopeFilters(agent_name=agent_name, project_path=project_path)
+
+
+def trend_filters_from_options(
+    agent: str | None,
+    project: Path | None,
+    bucket: str,
+    periods: int,
+    limit: int,
+) -> TrendFilters:
+    try:
+        bucket_size = TrendBucketSize(bucket)
+    except ValueError:
+        console.print("[red]Invalid --bucket:[/red] expected week or month")
+        raise typer.Exit(2) from None
+    if periods < 1 or periods > 120:
+        console.print("[red]Invalid --periods:[/red] expected an integer from 1 to 120")
+        raise typer.Exit(2)
+    if limit < 1:
+        console.print("[red]Invalid --limit:[/red] expected a positive integer")
+        raise typer.Exit(2)
+    scope = scope_filters_from_options(agent, project)
+    return TrendFilters(
+        agent_name=scope.agent_name,
+        project_path=scope.project_path,
+        bucket=bucket_size,
+        periods=periods,
+        limit=limit,
+    )
 
 
 def adapter_for_ingest(agent: str) -> BaseAdapter:
