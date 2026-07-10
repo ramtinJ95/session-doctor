@@ -14,7 +14,7 @@ from .schemas.common import AgentName, SourceKind
 from .schemas.sessions import SessionSource
 from .store import DatabaseOpenError, DuckDBStore, SchemaMismatchError
 from .store.models import SessionScopeFilters, StoreInfo, SummaryFilters
-from .store.trend_models import TrendBucketSize, TrendFilters
+from .store.trend_models import ProjectFilters, TrendBucketSize, TrendFilters
 
 console = Console()
 
@@ -174,6 +174,14 @@ def trend_filters_from_options(
         periods=periods,
         limit=limit,
     )
+
+
+def project_filters_from_options(agent: str | None, limit: int) -> ProjectFilters:
+    if limit < 1:
+        console.print("[red]Invalid --limit:[/red] expected a positive integer")
+        raise typer.Exit(2)
+    scope = scope_filters_from_options(agent, None)
+    return ProjectFilters(agent_name=scope.agent_name, limit=limit)
 
 
 def adapter_for_ingest(agent: str) -> BaseAdapter:

@@ -27,6 +27,7 @@ from .cli_options import (
     database_path_is_valid,
     os_access_writable,
     path_can_be_created,
+    project_filters_from_options,
     require_analysis_output_format,
     require_current_database_schema,
     require_existing_database_path,
@@ -44,6 +45,7 @@ from .cli_renderers import (
     render_batch_analysis,
     render_database_info,
     render_doctor_table,
+    render_project_report,
     render_sessions_table,
     render_summary,
     render_trends,
@@ -60,7 +62,7 @@ from .ingest_workflow import IngestSummary, ingest_sources
 from .schemas import AnalysisRun, SessionClassification, SessionFeature
 from .store import TABLE_NAMES, DuckDBStore
 from .summary_payload import summary_payload
-from .trend_payload import trend_payload
+from .trend_payload import project_payload, trend_payload
 
 console = Console()
 
@@ -68,6 +70,7 @@ app = typer.Typer(help="Inspect and diagnose local AI agent sessions.")
 adapters_app = typer.Typer(help="Inspect built-in session adapters.")
 db_app = typer.Typer(help="Manage the local DuckDB store.")
 sessions_app = typer.Typer(help="Inspect ingested sessions.")
+projects_app = typer.Typer(help="Inspect observed project path hints.")
 
 __all__ = [
     "ANALYSIS_SUMMARY_FEATURES",
@@ -527,6 +530,45 @@ def trends(
     render_trends(report, database_path, console)
 
 
+@projects_app.command("list")
+def projects_list(
+    db: Annotated[
+        Path | None,
+        typer.Option(
+            "--db",
+            help="DuckDB path to inspect. Defaults to SESSION_DOCTOR_DB or app data.",
+        ),
+    ] = None,
+    agent: Annotated[
+        str | None,
+        typer.Option(
+            "--agent",
+            help="Only include sessions from this agent, for example codex, claude, or pi.",
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        typer.Option("--limit", help="Maximum observed project rows."),
+    ] = 10,
+    output_format: Annotated[
+        str,
+        typer.Option("--format", help="Output format: terminal or json."),
+    ] = "terminal",
+) -> None:
+    """List exact observed project_path/CWD hints."""
+    require_summary_output_format(output_format)
+    filters = project_filters_from_options(agent, limit)
+    database_path = database_path_from_option(db)
+    require_valid_database_path(database_path)
+    require_existing_database_path(database_path)
+    require_current_database_schema(database_path)
+    report = DuckDBStore(database_path).projects(filters)
+    if output_format == "json":
+        typer.echo(json.dumps(project_payload(report), indent=2, sort_keys=True))
+        return
+    render_project_report(report, console)
+
+
 @app.command()
 def report(session_id: str) -> None:
     """Reserved for future report generation."""
@@ -544,6 +586,7 @@ def graph(session_id: str) -> None:
 app.add_typer(adapters_app, name="adapters")
 app.add_typer(db_app, name="db")
 app.add_typer(sessions_app, name="sessions")
+app.add_typer(projects_app, name="projects")
 
 
 def not_implemented(command_name: str) -> None:

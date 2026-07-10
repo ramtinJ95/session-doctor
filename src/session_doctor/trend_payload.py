@@ -5,7 +5,10 @@ from datetime import datetime
 from .analysis import ANALYZER_VERSION
 from .privacy import redact_home
 from .store.trend_models import (
+    AgentObservation,
     AnalysisCompatibilityCounts,
+    ProjectObservation,
+    ProjectReport,
     TrendBucket,
     TrendCohort,
     TrendJudgment,
@@ -47,6 +50,8 @@ def trend_payload(report: TrendReport) -> dict[str, object]:
             "top_level": cohort_payload(report.cohorts.top_level),
             "sidechain": cohort_payload(report.cohorts.sidechain),
         },
+        "projects": [project_observation_payload(row) for row in report.projects.rows],
+        "unknown_project_sessions": report.projects.unknown_sessions,
     }
 
 
@@ -66,6 +71,7 @@ def cohort_payload(cohort: TrendCohort) -> dict[str, object]:
         "totals": metrics_payload(cohort.totals),
         "buckets": [bucket_payload(bucket) for bucket in cohort.buckets],
         "judgments": [judgment_payload(judgment) for judgment in cohort.judgments],
+        "agents": [agent_observation_payload(agent) for agent in cohort.agents],
     }
 
 
@@ -135,3 +141,28 @@ def judgment_payload(judgment: TrendJudgment) -> dict[str, object]:
 
 def timestamp_value(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
+
+
+def agent_observation_payload(observation: AgentObservation) -> dict[str, object]:
+    return {"agent": observation.agent_name, **metrics_payload(observation.metrics)}
+
+
+def project_observation_payload(observation: ProjectObservation) -> dict[str, object]:
+    return {
+        "project": redact_home(observation.project_path),
+        "sessions": observation.sessions,
+        "top_level_sessions": observation.top_level_sessions,
+        "sidechain_sessions": observation.sidechain_sessions,
+        "analysis": compatibility_payload(observation.analysis),
+        "first_session_at": timestamp_value(observation.first_session_at),
+        "latest_session_at": timestamp_value(observation.latest_session_at),
+        "agents": list(observation.agents),
+    }
+
+
+def project_payload(report: ProjectReport) -> dict[str, object]:
+    return {
+        "filters": {"agent": report.filters.agent_name, "limit": report.filters.limit},
+        "projects": [project_observation_payload(row) for row in report.observations.rows],
+        "unknown_project_sessions": report.observations.unknown_sessions,
+    }

@@ -19,7 +19,13 @@ from session_doctor.schemas import (
     SessionFeature,
     SessionSource,
 )
-from session_doctor.store import DuckDBStore, TrendBucketSize, TrendFilters, TrendStatus
+from session_doctor.store import (
+    DuckDBStore,
+    ProjectFilters,
+    TrendBucketSize,
+    TrendFilters,
+    TrendStatus,
+)
 from session_doctor.store.aggregate_queries import SCORE_NAMES
 from session_doctor.store.trend_models import ScoreAggregate, TrendBucket, TrendMetrics
 from session_doctor.store.trend_readers import (
@@ -101,6 +107,10 @@ def test_trends_aligns_weekly_scope_coverage_and_cohorts(tmp_path) -> None:
     assert sidechain.totals.current_analysis_coverage == 1.0
     assert len(sidechain.buckets) == 4
     assert [bucket.metrics.sessions for bucket in sidechain.buckets] == [0, 0, 0, 1]
+    assert [(row.agent_name, row.metrics.sessions) for row in top_level.agents] == [("codex", 2)]
+    assert [(row.project_path, row.sessions) for row in report.projects.rows] == [
+        ("/work/project", 3)
+    ]
 
 
 def test_trend_window_handles_month_year_and_empty_ranges() -> None:
@@ -292,13 +302,82 @@ def test_trends_cli_json_and_terminal_are_read_only(tmp_path) -> None:
         "periods": 3,
         "limit": 10,
     }
-    assert set(payload) == {"filters", "window", "scope", "cohorts"}
+    assert set(payload) == {
+        "filters",
+        "window",
+        "scope",
+        "cohorts",
+        "projects",
+        "unknown_project_sessions",
+    }
     assert terminal_result.exit_code == 0
     assert "Session trends" in terminal_result.stdout
     assert "Top-level buckets" in terminal_result.stdout
     assert "Top-level judgments" in terminal_result.stdout
     assert store.table_count("analysis_runs") == analysis_count
     assert not (tmp_path / "artifacts").exists()
+
+
+def test_projects_list_keeps_exact_paths_unknowns_and_analysis_versions(tmp_path) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    store = DuckDBStore(database_path)
+    home_project = str(Path.home() / "project")
+    add_session(store, "root-a", datetime(2026, 1, 1, 9), project=home_project)
+    add_session(store, "root-b", datetime(2026, 1, 2, 9), project=home_project)
+    add_session(
+        store,
+        "nested",
+        datetime(2026, 1, 3, 9),
+        project=f"{home_project}/nested",
+        sidechain=True,
+    )
+    add_session(
+        store, "pi-project", datetime(2026, 1, 4, 9), project="/work/pi", agent=AgentName.PI
+    )
+    add_session(store, "unknown", None, project="")
+    add_analysis(store, "root-a", score=0.4)
+    add_analysis(store, "root-b", score=0.4, analyzer_version="phase5")
+    add_analysis(store, "nested", score=0.4)
+
+    report = store.projects(ProjectFilters(limit=10))
+    json_result = runner.invoke(
+        app,
+        ["projects", "list", "--db", str(database_path), "--format", "json"],
+    )
+    pi_result = runner.invoke(
+        app,
+        [
+            "projects",
+            "list",
+            "--db",
+            str(database_path),
+            "--agent",
+            "pi",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert [(row.project_path, row.sessions) for row in report.observations.rows] == [
+        (home_project, 2),
+        ("/work/pi", 1),
+        (f"{home_project}/nested", 1),
+    ]
+    assert report.observations.unknown_sessions == 1
+    assert json_result.exit_code == 0
+    payload = cast("dict[str, Any]", json.loads(json_result.stdout))
+    assert payload["unknown_project_sessions"] == 1
+    projects = cast("list[dict[str, Any]]", payload["projects"])
+    assert projects[0]["project"] == "~/project"
+    assert projects[0]["analysis"] == {
+        "current": 1,
+        "stale": 1,
+        "never": 0,
+        "version_counts": {"phase5": 1, ANALYZER_VERSION: 1},
+    }
+    assert pi_result.exit_code == 0
+    pi_payload = cast("dict[str, Any]", json.loads(pi_result.stdout))
+    assert [row["project"] for row in pi_payload["projects"]] == ["/work/pi"]
 
 
 @pytest.mark.parametrize(

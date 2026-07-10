@@ -16,6 +16,7 @@ from .connection import initialize_database, inspection_connection
 from .json_values import duckdb_value, metadata_json, parse_metadata, parse_string_list
 from .migrations import require_current_schema
 from .models import AggregateSummary, SessionScopeFilters, SessionSummary, StoreInfo, SummaryFilters
+from .project_readers import read_projects
 from .readers import (
     list_session_summaries,
     load_session_bundle,
@@ -38,7 +39,7 @@ from .row_mappers import (
     tool_result_rows,
 )
 from .summary_readers import aggregate_summary as read_aggregate_summary
-from .trend_models import TrendFilters, TrendReport
+from .trend_models import ProjectFilters, ProjectReport, TrendFilters, TrendReport
 from .trend_readers import read_trends
 from .writers import (
     insert_parsed_bundle as write_parsed_bundle,
@@ -124,6 +125,9 @@ class DuckDBStore:
 
     def trends(self, filters: TrendFilters) -> TrendReport:
         return read_trends(self.database_path, filters)
+
+    def projects(self, filters: ProjectFilters) -> ProjectReport:
+        return read_projects(self.database_path, filters)
 
     def load_session_bundle(self, session_id: str) -> ParsedSessionBundle | None:
         return load_session_bundle(self.database_path, session_id)
