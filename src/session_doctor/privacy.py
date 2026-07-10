@@ -41,12 +41,22 @@ def looks_sensitive_key(key: str) -> bool:
 
 def redact_command_for_display(command: str) -> str:
     redacted_command = command
-    for key in SENSITIVE_KEY_PARTS:
-        redacted_command = re.sub(
-            rf"(?i)({re.escape(key)}[A-Z0-9_ -]*=)(\S+)",
+    sensitive_key = rf"[A-Z0-9_-]*(?:{'|'.join(SENSITIVE_KEY_PARTS)})[A-Z0-9_-]*"
+    value = r"(?:\"[^\"]*\"|'[^']*'|[^\s'\"]+)"
+    patterns = (
+        (
+            r"(?i)(\bauthorization\s*:\s*(?:bearer|basic|token)\s+)[^\s'\"]+",
             r"\1<redacted>",
-            redacted_command,
-        )
+        ),
+        (r"(?i)(\bbearer\s+)[^\s'\"]+", r"\1<redacted>"),
+        (rf"(?i)(\b{sensitive_key}\s*=\s*){value}", r"\1<redacted>"),
+        (rf"(?i)(--?{sensitive_key}\s+){value}", r"\1<redacted>"),
+        (rf"(?i)(\b{sensitive_key}\s*:\s*){value}", r"\1<redacted>"),
+        (rf"(?i)([?&]{sensitive_key}=){value}", r"\1<redacted>"),
+        (r"(?i)([a-z][a-z0-9+.-]*://)[^/\s@]+@", r"\1<redacted>@"),
+    )
+    for pattern, replacement in patterns:
+        redacted_command = re.sub(pattern, replacement, redacted_command)
     home = str(Path.home())
     redacted_command = redacted_command.replace(f"{home}/", "~/")
     return redact_home(redacted_command)

@@ -171,6 +171,54 @@ class ProjectReport:
 
 
 @dataclass(frozen=True)
+class FamilyExclusionCounts:
+    orphan_parent: int
+    cycle: int
+    cross_agent_parent: int
+
+
+@dataclass(frozen=True)
+class RecurrenceEvidence:
+    event_count: int
+    session_count: int
+    root_family_count: int
+    top_level_session_count: int
+    sidechain_session_count: int
+    agents: tuple[str, ...]
+    active_bucket_count: int
+    first_at: datetime | None
+    most_recent_at: datetime | None
+    example_session_id: str
+
+
+@dataclass(frozen=True)
+class FailedCommandPattern:
+    command: str
+    evidence: RecurrenceEvidence
+
+
+@dataclass(frozen=True)
+class FailedToolResultPattern:
+    tool_name: str
+    fingerprint_id: str
+    evidence: RecurrenceEvidence
+
+
+@dataclass(frozen=True)
+class ProblematicFilePattern:
+    path: str
+    evidence: RecurrenceEvidence
+
+
+@dataclass(frozen=True)
+class RecurringPatterns:
+    family_exclusions: FamilyExclusionCounts
+    failed_commands: tuple[FailedCommandPattern, ...]
+    failed_tool_results: tuple[FailedToolResultPattern, ...]
+    problematic_files: tuple[ProblematicFilePattern, ...]
+
+
+@dataclass(frozen=True)
 class TrendCohorts:
     top_level: TrendCohort
     sidechain: TrendCohort
@@ -183,3 +231,4 @@ class TrendReport:
     scope: TrendScope
     cohorts: TrendCohorts
     projects: ProjectObservations
+    recurring_patterns: RecurringPatterns

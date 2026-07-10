@@ -6,11 +6,13 @@ from pathlib import Path
 
 import duckdb
 
-from session_doctor.privacy import redact_home
+from session_doctor.privacy import redact_command_for_display, redact_home
 
 from .aggregate_queries import (
+    MUTATING_FILE_OPERATIONS,
     RISK_SCORE_THRESHOLD,
     base_sessions_cte,
+    failed_command_predicate,
     label_groups_sql,
     latest_analysis_sql,
     score_features_sql,
@@ -29,7 +31,6 @@ from .models import (
 )
 
 PROBLEMATIC_SESSION_SCORE_THRESHOLD = 0.55
-MUTATING_FILE_OPERATIONS = ("edit", "update", "write", "patch", "move", "delete")
 
 
 @dataclass
@@ -299,9 +300,7 @@ def failed_commands(
             CAST(COALESCE(c.ended_at, c.started_at, b.started_at) AS VARCHAR) AS failed_at
         FROM command_runs AS c
         JOIN base_sessions AS b ON b.session_id = c.session_id
-        WHERE (c.exit_code IS NOT NULL AND c.exit_code != 0)
-           OR lower(c.metadata_json) LIKE '%"cancelled": true%'
-           OR lower(c.metadata_json) LIKE '%"interrupted": true%'
+        WHERE {failed_command_predicate("c")}
         """,
         params,
     ).fetchall()
@@ -311,7 +310,7 @@ def failed_commands(
         group = grouped.setdefault(
             str(command_identity),
             CommandGroup(
-                display_command=str(command_display),
+                display_command=redact_command_for_display(str(command_display)),
                 example_session_id=str(session_id),
             ),
         )

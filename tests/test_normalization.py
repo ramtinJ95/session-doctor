@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from session_doctor.normalization import canonical_command_identity, canonical_file_identity
 
 
@@ -41,6 +43,26 @@ def test_command_identity_redacts_display_after_deriving_identity() -> None:
 
     assert identity.display == "TOKEN=<redacted> pytest -q"
     assert identity.identity_hash != redacted_input.identity_hash
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "tool --api-key TOP_SECRET",
+        "tool --token='TOP_SECRET'",
+        "TOKEN=TOP_SECRET tool",
+        "curl -H 'Authorization: Bearer TOP_SECRET' https://example.test",
+        "curl -H 'Authorization: Basic TOP_SECRET' https://example.test",
+        "curl -H 'X-API-Key: TOP_SECRET' https://example.test",
+        "curl https://user:TOP_SECRET@example.test/path",
+        "curl 'https://example.test/path?token=TOP_SECRET&safe=yes'",
+    ],
+)
+def test_command_identity_redacts_common_secret_shapes(command) -> None:
+    identity = canonical_command_identity(command)
+
+    assert "TOP_SECRET" not in identity.display
+    assert "<redacted>" in identity.display
 
 
 def test_file_identity_groups_relative_and_absolute_paths_under_project() -> None:

@@ -14,10 +14,14 @@ from session_doctor.cli import app
 from session_doctor.schemas import (
     AgentName,
     AnalysisRun,
+    CommandRun,
+    FileActivity,
     Session,
     SessionClassification,
     SessionFeature,
     SessionSource,
+    ToolCall,
+    ToolResult,
 )
 from session_doctor.store import (
     DuckDBStore,
@@ -309,6 +313,7 @@ def test_trends_cli_json_and_terminal_are_read_only(tmp_path) -> None:
         "cohorts",
         "projects",
         "unknown_project_sessions",
+        "recurring_patterns",
     }
     assert terminal_result.exit_code == 0
     assert "Session trends" in terminal_result.stdout
@@ -380,6 +385,168 @@ def test_projects_list_keeps_exact_paths_unknowns_and_analysis_versions(tmp_path
     assert [row["project"] for row in pi_payload["projects"]] == ["/work/pi"]
 
 
+def test_recurring_patterns_require_distinct_valid_filtered_root_families(tmp_path) -> None:
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    recurring_command = "tool --api-key TOP_SECRET"
+    recurring_file = str(Path.home() / "project" / "src" / "app.py")
+    non_problematic_file = str(Path.home() / "project" / "src" / "safe.py")
+    add_pattern_session(
+        store,
+        "root-a",
+        datetime(2026, 1, 5, 9),
+        project="/work/project",
+        agent=AgentName.CODEX,
+        files=(non_problematic_file,),
+    )
+    add_pattern_session(
+        store,
+        "side-a",
+        datetime(2026, 1, 6, 9),
+        project="/work/project",
+        agent=AgentName.CODEX,
+        parent="root-a",
+        commands=(recurring_command, recurring_command, "one-family-command"),
+        cancelled_commands={recurring_command},
+        tool_errors=(("bash", "shared-output-hash"), ("read", "shared-output-hash")),
+        unknown_tool_error_hash="unknown-output-hash",
+        files=(recurring_file, "unresolved.py"),
+    )
+    add_pattern_session(
+        store,
+        "root-b",
+        datetime(2026, 1, 12, 9),
+        project="/work/project",
+        agent=AgentName.PI,
+        files=(non_problematic_file,),
+    )
+    add_pattern_session(
+        store,
+        "nested-a",
+        datetime(2026, 1, 7, 9),
+        project="/work/project/nested",
+        agent=AgentName.CODEX,
+        parent="side-a",
+        commands=(recurring_command, "one-family-command"),
+    )
+    add_pattern_session(
+        store,
+        "side-b",
+        datetime(2026, 1, 13, 9),
+        project="/work/project/subdir",
+        agent=AgentName.PI,
+        parent="root-b",
+        commands=(recurring_command,),
+        tool_errors=(("bash", "shared-output-hash"), ("read", "shared-output-hash")),
+        unknown_tool_error_hash="unknown-output-hash",
+        files=(recurring_file, "unresolved.py"),
+    )
+    add_pattern_session(
+        store,
+        "orphan",
+        datetime(2026, 1, 14, 9),
+        project="/work/project",
+        parent="missing-parent",
+        commands=(recurring_command,),
+    )
+    add_pattern_session(
+        store,
+        "cycle-a",
+        datetime(2026, 1, 15, 9),
+        project="/work/project",
+        parent="cycle-b",
+    )
+    add_pattern_session(
+        store,
+        "cycle-b",
+        datetime(2026, 1, 16, 9),
+        project="/work/project",
+        parent="cycle-a",
+    )
+    add_pattern_session(
+        store,
+        "cross-agent",
+        datetime(2026, 1, 17, 9),
+        project="/work/project",
+        agent=AgentName.CODEX,
+        parent="root-b",
+    )
+    add_pattern_session(
+        store,
+        "outside-member",
+        datetime(2026, 1, 18, 9),
+        project="/other",
+        parent="root-a",
+        commands=(recurring_command,),
+    )
+    add_pattern_session(
+        store,
+        "old-root",
+        datetime(2025, 11, 3, 9),
+        project="/work/project",
+    )
+    add_pattern_session(
+        store,
+        "old-side",
+        datetime(2026, 1, 19, 9),
+        project="/work/project",
+        parent="old-root",
+        commands=(recurring_command,),
+    )
+    add_pattern_session(
+        store,
+        "nonmatching-root",
+        datetime(2026, 1, 8, 9),
+        project="/other",
+    )
+    add_pattern_session(
+        store,
+        "matching-child",
+        datetime(2026, 1, 9, 9),
+        project="/work/project",
+        parent="nonmatching-root",
+        commands=(recurring_command,),
+    )
+    add_analysis(store, "side-a", score=0.8)
+    add_analysis(store, "side-b", score=0.8)
+
+    report = store.trends(TrendFilters(project_path="/work/project", periods=4, limit=10))
+    payload = trend_payload(report)
+    patterns = report.recurring_patterns
+
+    assert patterns.family_exclusions.orphan_parent == 1
+    assert patterns.family_exclusions.cycle == 2
+    assert patterns.family_exclusions.cross_agent_parent == 1
+    assert len(patterns.failed_commands) == 1
+    command_pattern = patterns.failed_commands[0]
+    assert command_pattern.command == "tool --api-key <redacted>"
+    assert command_pattern.evidence.event_count == 4
+    assert command_pattern.evidence.session_count == 3
+    assert command_pattern.evidence.root_family_count == 2
+    assert command_pattern.evidence.top_level_session_count == 0
+    assert command_pattern.evidence.sidechain_session_count == 3
+    assert command_pattern.evidence.agents == ("codex", "pi")
+    assert command_pattern.evidence.active_bucket_count == 2
+    assert {row.tool_name for row in patterns.failed_tool_results} == {"bash", "read", "unknown"}
+    assert len({row.fingerprint_id for row in patterns.failed_tool_results}) == 3
+    assert all(
+        "shared-output-hash" not in row.fingerprint_id for row in patterns.failed_tool_results
+    )
+    assert len(patterns.problematic_files) == 1
+    assert patterns.problematic_files[0].path == recurring_file
+    limited = store.trends(
+        TrendFilters(project_path="/work/project", periods=4, limit=1)
+    ).recurring_patterns
+    assert len(limited.failed_commands) == 1
+    assert len(limited.failed_tool_results) == 1
+    assert len(limited.problematic_files) == 1
+    serialized = json.dumps(payload, sort_keys=True)
+    assert "TOP_SECRET" not in serialized
+    assert "shared-output-hash" not in serialized
+    assert "unknown-output-hash" not in serialized
+    assert str(Path.home()) not in serialized
+    assert "one-family-command" not in serialized
+
+
 @pytest.mark.parametrize(
     ("arguments", "message"),
     [
@@ -416,6 +583,7 @@ def add_session(
     project: str,
     sidechain: bool = False,
     agent: AgentName = AgentName.CODEX,
+    parent: str | None = None,
 ) -> None:
     source = SessionSource(
         source_id=f"source-{session_id}",
@@ -432,6 +600,7 @@ def add_session(
                 project_path=project,
                 started_at=started_at,
                 is_sidechain=sidechain,
+                parent_session_id=parent,
             )
         ),
     )
@@ -499,6 +668,96 @@ def score_values(
 
 def score_for(metrics, metric_name: str):
     return next(score for score in metrics.scores if score.metric_name == metric_name)
+
+
+def add_pattern_session(
+    store: DuckDBStore,
+    session_id: str,
+    started_at: datetime,
+    *,
+    project: str,
+    agent: AgentName = AgentName.CODEX,
+    parent: str | None = None,
+    commands: tuple[str, ...] = (),
+    cancelled_commands: set[str] | None = None,
+    tool_errors: tuple[tuple[str, str], ...] = (),
+    unknown_tool_error_hash: str | None = None,
+    files: tuple[str, ...] = (),
+) -> None:
+    source = SessionSource(
+        source_id=f"source-{session_id}",
+        agent_name=agent,
+        source_path=f"/tmp/{session_id}.jsonl",
+    )
+    tool_calls = [
+        ToolCall(
+            tool_call_id=f"tool-call-{session_id}-{index}",
+            session_id=session_id,
+            name=tool_name,
+            timestamp=started_at + timedelta(minutes=index),
+        )
+        for index, (tool_name, _) in enumerate(tool_errors)
+    ]
+    tool_results = [
+        ToolResult(
+            tool_result_id=f"tool-result-{session_id}-{index}",
+            session_id=session_id,
+            tool_call_id=tool_calls[index].tool_call_id,
+            timestamp=started_at + timedelta(minutes=index),
+            is_error=True,
+            output_hash=output_hash,
+        )
+        for index, (_, output_hash) in enumerate(tool_errors)
+    ]
+    if unknown_tool_error_hash is not None:
+        tool_results.append(
+            ToolResult(
+                tool_result_id=f"tool-result-{session_id}-unknown",
+                session_id=session_id,
+                timestamp=started_at,
+                is_error=True,
+                output_hash=unknown_tool_error_hash,
+            )
+        )
+    command_rows = [
+        CommandRun(
+            command_run_id=f"command-{session_id}-{index}",
+            session_id=session_id,
+            command=command,
+            started_at=started_at + timedelta(minutes=index),
+            exit_code=None if command in (cancelled_commands or set()) else 1,
+            metadata={"cancelled": True} if command in (cancelled_commands or set()) else {},
+        )
+        for index, command in enumerate(commands)
+    ]
+    file_rows = [
+        FileActivity(
+            file_activity_id=f"file-{session_id}-{index}",
+            session_id=session_id,
+            path=path,
+            operation="edit",
+            timestamp=started_at + timedelta(minutes=index),
+        )
+        for index, path in enumerate(files)
+    ]
+    store.insert_parsed_bundle(
+        source,
+        ParsedSessionBundle(
+            session=Session(
+                session_id=session_id,
+                source_id=source.source_id,
+                agent_name=agent,
+                parent_session_id=parent,
+                started_at=started_at,
+                project_path=project,
+                is_sidechain=parent is not None,
+            ),
+            command_runs=command_rows,
+            tool_calls=tool_calls,
+            tool_results=tool_results,
+            file_activities=file_rows,
+        ),
+    )
 
 
 def synthetic_metrics(
