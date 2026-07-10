@@ -8,6 +8,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .adapters import BaseAdapter
+from .batch_analysis import BatchAnalysisResult
 from .ingest_workflow import IngestSummary
 from .privacy import redact_home
 from .schemas import AnalysisRun, SessionClassification, SessionFeature, SourceKind
@@ -212,6 +213,37 @@ def render_analysis_summary(
             classification.evidence_summary,
         )
     console.print(classification_table)
+
+
+def render_batch_analysis(result: BatchAnalysisResult, console: Console) -> None:
+    table = Table(title="Batch analysis")
+    table.add_column("Metric")
+    table.add_column("Value")
+    table.add_row("Matching", str(result.matching_count))
+    table.add_row("Selected", str(result.selected_count))
+    table.add_row("Succeeded", str(len(result.succeeded_session_ids)))
+    table.add_row("Skipped", str(len(result.skipped_session_ids)))
+    table.add_row("Failed", str(len(result.failures)))
+    console.print(table)
+
+    if result.succeeded_session_ids or result.skipped_session_ids:
+        session_table = Table(title="Batch sessions")
+        session_table.add_column("Session ID")
+        session_table.add_column("Status")
+        for session_id in result.succeeded_session_ids:
+            session_table.add_row(session_id, "succeeded")
+        for session_id in result.skipped_session_ids:
+            session_table.add_row(session_id, "skipped")
+        console.print(session_table)
+
+    if result.failures:
+        failure_table = Table(title="Analysis failures")
+        failure_table.add_column("Session ID")
+        failure_table.add_column("Code")
+        failure_table.add_column("Message")
+        for failure in result.failures:
+            failure_table.add_row(failure.session_id, failure.code.value, failure.message)
+        console.print(failure_table)
 
 
 def render_summary(summary: AggregateSummary, database_path: Path, console: Console) -> None:

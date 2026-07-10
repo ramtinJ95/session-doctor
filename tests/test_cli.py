@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from inspect import signature
 from pathlib import Path
 from shutil import copyfile
@@ -12,9 +13,11 @@ from typer.testing import CliRunner
 
 from session_doctor import __version__
 from session_doctor.adapters import BaseAdapter, ParsedSessionBundle, SourceReadError
+from session_doctor.analysis import ANALYZER_VERSION
+from session_doctor.analysis_workflow import SessionAnalysisError
 from session_doctor.cli import app
 from session_doctor.ids import source_id_for_path
-from session_doctor.schemas import AgentName, Session, SessionSource
+from session_doctor.schemas import AgentName, AnalysisRun, Session, SessionSource
 from session_doctor.store import SCHEMA_VERSION, DuckDBStore
 
 runner = CliRunner()
@@ -1028,6 +1031,205 @@ def test_analyze_no_artifact_skips_default_artifact(tmp_path) -> None:
     assert not (tmp_path / "artifacts" / f"{session_id}-analysis.json").exists()
 
 
+def test_analyze_all_selects_stale_and_missing_then_skips_current(tmp_path) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    store = DuckDBStore(database_path)
+    insert_batch_session(
+        store,
+        session_id="session-current",
+        project_path="/work/project",
+        started_at=datetime(2026, 1, 1, 8, 0),
+    )
+    insert_batch_session(
+        store,
+        session_id="session-stale",
+        project_path="/work/project/subdir",
+        started_at=datetime(2026, 1, 2, 8, 0),
+    )
+    insert_batch_session(
+        store,
+        session_id="session-missing",
+        project_path="/work/project",
+        started_at=None,
+    )
+    insert_batch_session(
+        store,
+        session_id="session-other-agent",
+        project_path="/work/project",
+        started_at=datetime(2026, 1, 3, 8, 0),
+        agent_name=AgentName.PI,
+    )
+    add_empty_analysis(store, "session-current", ANALYZER_VERSION)
+    add_empty_analysis(store, "session-stale", "phase5")
+
+    result = runner.invoke(
+        app,
+        [
+            "analyze",
+            "--all",
+            "--db",
+            str(database_path),
+            "--project",
+            "/work/project",
+            "--agent",
+            "codex",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = cast("dict[str, Any]", json.loads(result.stdout))
+    assert payload["analyzer_version"] == ANALYZER_VERSION
+    assert payload["filters"] == {"agent": "codex", "project": "/work/project"}
+    assert payload["counts"] == {
+        "matching": 3,
+        "selected": 2,
+        "succeeded": 2,
+        "skipped": 1,
+        "failed": 0,
+    }
+    assert payload["succeeded_session_ids"] == ["session-stale", "session-missing"]
+    assert payload["skipped_session_ids"] == ["session-current"]
+    assert payload["failures"] == []
+    assert not (tmp_path / "artifacts").exists()
+
+    rerun = runner.invoke(
+        app,
+        ["analyze", "--all", "--db", str(database_path), "--format", "json"],
+    )
+
+    assert rerun.exit_code == 0
+    rerun_payload = cast("dict[str, Any]", json.loads(rerun.stdout))
+    assert rerun_payload["counts"] == {
+        "matching": 4,
+        "selected": 1,
+        "succeeded": 1,
+        "skipped": 3,
+        "failed": 0,
+    }
+    assert rerun_payload["succeeded_session_ids"] == ["session-other-agent"]
+
+
+def test_analyze_all_force_writes_artifacts_for_current_sessions(tmp_path) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    store = DuckDBStore(database_path)
+    insert_batch_session(
+        store,
+        session_id="session-current",
+        project_path="/work/project",
+        started_at=datetime(2026, 1, 1, 8, 0),
+    )
+    add_empty_analysis(store, "session-current", ANALYZER_VERSION)
+
+    result = runner.invoke(
+        app,
+        [
+            "analyze",
+            "--all",
+            "--db",
+            str(database_path),
+            "--force",
+            "--write-artifacts",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = cast("dict[str, Any]", json.loads(result.stdout))
+    assert payload["force"] is True
+    assert payload["write_artifacts"] is True
+    assert payload["counts"] == {
+        "matching": 1,
+        "selected": 1,
+        "succeeded": 1,
+        "skipped": 0,
+        "failed": 0,
+    }
+    assert (tmp_path / "artifacts" / "session-current-analysis.json").exists()
+
+    terminal_result = runner.invoke(
+        app,
+        ["analyze", "--all", "--db", str(database_path)],
+    )
+
+    assert terminal_result.exit_code == 0
+    assert "Batch analysis" in terminal_result.stdout
+    assert "session-current" in terminal_result.stdout
+    assert "skipped" in terminal_result.stdout
+
+
+def test_analyze_all_continues_after_safe_per_session_failure(tmp_path, monkeypatch) -> None:
+    from session_doctor import batch_analysis
+
+    database_path = tmp_path / "session-doctor.duckdb"
+    store = DuckDBStore(database_path)
+    for index, session_id in enumerate(("session-a", "session-b", "session-c"), start=1):
+        insert_batch_session(
+            store,
+            session_id=session_id,
+            project_path="/work/project",
+            started_at=datetime(2026, 1, index, 8, 0),
+        )
+    original_analyze_session = batch_analysis.analyze_session
+
+    def fail_middle_session(*args, **kwargs):
+        if args[1] == "session-b":
+            raise SessionAnalysisError("TOP_SECRET /private/source.jsonl")
+        return original_analyze_session(*args, **kwargs)
+
+    monkeypatch.setattr(batch_analysis, "analyze_session", fail_middle_session)
+
+    result = runner.invoke(
+        app,
+        ["analyze", "--all", "--db", str(database_path), "--format", "json"],
+    )
+
+    assert result.exit_code == 1
+    assert "TOP_SECRET" not in result.stdout
+    assert "/private/source.jsonl" not in result.stdout
+    payload = cast("dict[str, Any]", json.loads(result.stdout))
+    assert payload["counts"] == {
+        "matching": 3,
+        "selected": 3,
+        "succeeded": 2,
+        "skipped": 0,
+        "failed": 1,
+    }
+    assert payload["succeeded_session_ids"] == ["session-a", "session-c"]
+    assert payload["failures"] == [
+        {
+            "session_id": "session-b",
+            "code": "analysis_failed",
+            "message": "Session analysis failed",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected_message"),
+    [
+        ([], "Choose exactly one"),
+        (["session-a", "--all"], "Choose exactly one"),
+        (["--all", "--artifact", "out.json"], "rejects --artifact"),
+        (["--all", "--no-artifact"], "rejects --artifact"),
+        (["session-a", "--write-artifacts"], "Single-session mode rejects"),
+        (["session-a", "--force"], "Single-session mode rejects"),
+        (["session-a", "--project", "/work"], "Single-session mode rejects"),
+        (["session-a", "--agent", "codex"], "Single-session mode rejects"),
+    ],
+)
+def test_analyze_rejects_conflicting_modes(tmp_path, arguments, expected_message) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    DuckDBStore(database_path).initialize()
+
+    result = runner.invoke(app, ["analyze", *arguments, "--db", str(database_path)])
+
+    assert result.exit_code == 2
+    assert expected_message in result.stdout
+
+
 def test_summary_rejects_missing_database(tmp_path) -> None:
     result = runner.invoke(app, ["summary", "--db", str(tmp_path / "missing.duckdb")])
 
@@ -1216,6 +1418,48 @@ def payload_feature(
         if item.get("feature_name") == feature_name:
             return item
     raise AssertionError(f"Missing {feature_name} in {collection_name}")
+
+
+def insert_batch_session(
+    store: DuckDBStore,
+    *,
+    session_id: str,
+    project_path: str,
+    started_at: datetime | None,
+    agent_name: AgentName = AgentName.CODEX,
+) -> None:
+    source = SessionSource(
+        source_id=f"source-{session_id}",
+        agent_name=agent_name,
+        source_path=f"/tmp/{session_id}.jsonl",
+    )
+    store.insert_parsed_bundle(
+        source,
+        ParsedSessionBundle(
+            session=Session(
+                session_id=session_id,
+                source_id=source.source_id,
+                agent_name=agent_name,
+                project_path=project_path,
+                started_at=started_at,
+            )
+        ),
+    )
+
+
+def add_empty_analysis(store: DuckDBStore, session_id: str, analyzer_version: str) -> None:
+    store.replace_analysis_rows(
+        AnalysisRun(
+            analysis_run_id=f"analysis-{session_id}-{analyzer_version}",
+            session_id=session_id,
+            analyzer_version=analyzer_version,
+            started_at=datetime(2026, 2, 1, 8, 0),
+            completed_at=datetime(2026, 2, 1, 8, 1),
+        ),
+        [],
+        [],
+        [],
+    )
 
 
 def payload_feature_evidence(

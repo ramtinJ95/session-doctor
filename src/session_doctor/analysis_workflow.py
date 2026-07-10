@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 
-import typer
-from rich.console import Console
-
 from .analysis import ANALYZER_VERSION, analyze_features, classify_session
-from .artifacts import analysis_payload, artifact_path_for_analysis, write_analysis_artifact
+from .artifacts import (
+    ArtifactWriteError,
+    analysis_payload,
+    artifact_path_for_analysis,
+    write_analysis_artifact,
+)
 from .ids import stable_id
 from .schemas import AnalysisRun, SessionClassification, SessionFeature
 from .store import DuckDBStore
@@ -22,28 +25,72 @@ class AnalysisResult:
     payload: dict[str, object]
 
 
+class AnalysisFailureCode(StrEnum):
+    SESSION_NOT_LOADABLE = "session_not_loadable"
+    ANALYSIS_FAILED = "analysis_failed"
+    ARTIFACT_WRITE_FAILED = "artifact_write_failed"
+    PERSISTENCE_FAILED = "persistence_failed"
+
+
+class AnalysisWorkflowError(RuntimeError):
+    code: AnalysisFailureCode
+    safe_message: str
+
+
+class SessionNotLoadableError(AnalysisWorkflowError):
+    code = AnalysisFailureCode.SESSION_NOT_LOADABLE
+    safe_message = "Session could not be loaded"
+
+    def __init__(self, *, not_found: bool = False) -> None:
+        self.not_found = not_found
+        super().__init__(self.safe_message)
+
+
+class SessionAnalysisError(AnalysisWorkflowError):
+    code = AnalysisFailureCode.ANALYSIS_FAILED
+    safe_message = "Session analysis failed"
+
+
+class AnalysisArtifactError(AnalysisWorkflowError):
+    code = AnalysisFailureCode.ARTIFACT_WRITE_FAILED
+    safe_message = "Analysis artifact could not be written"
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        super().__init__(self.safe_message)
+
+
+class AnalysisPersistenceError(AnalysisWorkflowError):
+    code = AnalysisFailureCode.PERSISTENCE_FAILED
+    safe_message = "Analysis results could not be persisted"
+
+
 def analyze_session(
     store: DuckDBStore,
     session_id: str,
     database_path: Path,
     artifact: Path | None,
     no_artifact: bool,
-    console: Console,
 ) -> AnalysisResult:
-    bundle = store.load_session_bundle(session_id)
+    try:
+        bundle = store.load_session_bundle(session_id)
+    except Exception as exc:
+        raise SessionNotLoadableError from exc
     if bundle is None or bundle.session is None:
-        console.print(f"[red]Session not found:[/red] {session_id}")
-        raise typer.Exit(1)
+        raise SessionNotLoadableError(not_found=True)
 
     started_at = datetime.now(UTC)
     analysis_run_id = stable_id("analysis_run", session_id, started_at.isoformat())
-    extracted_features = analyze_features(bundle, analysis_run_id)
-    classifications = classify_session(
-        bundle,
-        analysis_run_id,
-        extracted_features.message_features,
-        extracted_features.session_features,
-    )
+    try:
+        extracted_features = analyze_features(bundle, analysis_run_id)
+        classifications = classify_session(
+            bundle,
+            analysis_run_id,
+            extracted_features.message_features,
+            extracted_features.session_features,
+        )
+    except Exception as exc:
+        raise SessionAnalysisError from exc
     artifact_path = artifact_path_for_analysis(database_path, session_id, artifact, no_artifact)
     analysis_run = AnalysisRun(
         analysis_run_id=analysis_run_id,
@@ -62,14 +109,20 @@ def analyze_session(
     )
 
     if artifact_path:
-        write_analysis_artifact(artifact_path, payload)
+        try:
+            write_analysis_artifact(artifact_path, payload)
+        except ArtifactWriteError as exc:
+            raise AnalysisArtifactError(exc.path) from exc
 
-    store.replace_analysis_rows(
-        analysis_run,
-        extracted_features.message_features,
-        extracted_features.session_features,
-        classifications,
-    )
+    try:
+        store.replace_analysis_rows(
+            analysis_run,
+            extracted_features.message_features,
+            extracted_features.session_features,
+            classifications,
+        )
+    except Exception as exc:
+        raise AnalysisPersistenceError from exc
 
     return AnalysisResult(
         analysis_run=analysis_run,
