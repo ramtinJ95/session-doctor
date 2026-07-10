@@ -2042,6 +2042,13 @@ Start with JSON output:
 
 Later output formats can be added after the graph semantics stabilize.
 
+Status: planned; grilling approved. Phase 9 keeps both commands read-only,
+generates exact-session reports and graphs on demand, exposes stale/missing
+analysis honestly, limits message disclosure to explicit evidence-only
+`--show-text`, and uses conservative provenance rather than causal graph edges.
+
+Detailed plan: `docs/phase-9-plan.md`.
+
 ### Phase 10: Agent Wrappers
 
 Add optional integrations:
