@@ -20,10 +20,6 @@ def hash_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def hash_bytes(payload: bytes) -> str:
-    return hashlib.sha256(payload).hexdigest()
-
-
 def text_length(text: str | None) -> int:
     return len(text or "")
 

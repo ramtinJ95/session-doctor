@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
-from session_doctor.privacy import hash_bytes
 from session_doctor.schemas import SessionSource, SourceKind, ToolResult
 
 from .base import ParsedSessionBundle
@@ -122,7 +122,7 @@ def enrich_tool_result_from_sidecar(
         return tool_result
 
     try:
-        payload = sidecar_path.read_bytes()
+        sidecar_hash, sidecar_length = hash_sidecar(sidecar_path)
     except OSError:
         bundle.parse_warnings.append(
             warning_for_record(
@@ -134,12 +134,11 @@ def enrich_tool_result_from_sidecar(
         )
         return tool_result
 
-    sidecar_length = len(payload)
     declared_length = int_value(native_result.get("persistedOutputSize"))
     metadata = {
         **tool_result.metadata,
         "sidecar_correlated": True,
-        "sidecar_hash": hash_bytes(payload),
+        "sidecar_hash": sidecar_hash,
         "sidecar_length": sidecar_length,
         "sidecar_declared_length": declared_length,
         "inline_output_truncated": (
@@ -149,11 +148,21 @@ def enrich_tool_result_from_sidecar(
     use_sidecar_output = tool_result.output_length in {None, 0} and sidecar_length > 0
     return tool_result.model_copy(
         update={
-            "output_hash": hash_bytes(payload) if use_sidecar_output else tool_result.output_hash,
+            "output_hash": sidecar_hash if use_sidecar_output else tool_result.output_hash,
             "output_length": sidecar_length if use_sidecar_output else tool_result.output_length,
             "metadata": metadata,
         }
     )
 
 
-__all__ = ["add_topology_warnings", "enrich_tool_result_from_sidecar"]
+def hash_sidecar(path: Path) -> tuple[str, int]:
+    digest = hashlib.sha256()
+    length = 0
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+            length += len(chunk)
+    return digest.hexdigest(), length
+
+
+__all__ = ["add_topology_warnings", "enrich_tool_result_from_sidecar", "hash_sidecar"]
