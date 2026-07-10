@@ -4,7 +4,7 @@ from .analysis import AnalysisRun, MessageFeature, SessionClassification, Sessio
 from .common import AgentName, Confidence, NormalizedRole, SessionDoctorModel, SourceKind
 from .events import RawEvent
 from .files import FileActivity
-from .graph import GraphEdge, GraphNode
+from .graph import GraphEdge, GraphNode, GraphReport
 from .messages import Message
 from .sessions import Session, SessionSource
 from .tools import CommandRun, ToolCall, ToolResult
@@ -19,6 +19,7 @@ __all__ = [
     "FileActivity",
     "GraphEdge",
     "GraphNode",
+    "GraphReport",
     "Message",
     "MessageFeature",
     "ModelUsage",
