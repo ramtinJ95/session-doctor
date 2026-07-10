@@ -1959,16 +1959,18 @@ Detailed plan: `docs/phase-7-plan.md`.
 
 ### Phase 8: Project-Level Trends
 
-Extend aggregate summaries into trend views across sessions:
+Plan a read-only trend query layer over normalized sessions and latest persisted
+analysis, plus an explicit batch-analysis recovery command:
 
-- trend by project
-- trend by week/month
-- repeated stuck patterns
-- repeated failing commands or tool outputs
-- repeated files involved in problematic sessions
-- agent fit by project/task type
-- prompt clarity drift
-- project complexity signals
+- aligned weekly/monthly project scopes
+- current-analyzer coverage, explicit stale analysis, and a filtered
+  `analyze --all` recovery path
+- separate top-level and sidechain cohorts
+- project-scoped guarded outcome directions and neutral signal directions
+- cohort-specific non-causal agent observations
+- recurring failed commands, failed tool-result fingerprints, and problematic
+  files across distinct top-level session families
+- exact observed project-path discovery without guessed repository identity
 
 This phase should provide the first useful view over all sessions and over a
 specific folder/project. It should still stay deterministic and local-only.
@@ -1980,6 +1982,11 @@ session-doctor trends
 session-doctor trends --project /path/to/project
 session-doctor projects list
 ```
+
+Status: planned. The detailed plan completed grilling and is approved for
+implementation; Phase 8 code has not started.
+
+Detailed plan: `docs/phase-8-plan.md`.
 
 ### Phase 9: Reports And Graph Projection
 

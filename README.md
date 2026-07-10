@@ -215,4 +215,5 @@ Design references:
 - [Phase 5 Plan](docs/phase-5-plan.md)
 - [Phase 6 Plan](docs/phase-6-plan.md)
 - [Phase 7 Plan](docs/phase-7-plan.md)
+- [Phase 8 Plan](docs/phase-8-plan.md)
 - [Pre-Phase-8 Plan](docs/pre-phase-8-plan.md)
