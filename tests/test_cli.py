@@ -159,6 +159,56 @@ def test_stale_database_is_inspectable_but_operational_commands_require_rebuild(
         assert "BinderException" not in result.stdout
 
 
+def test_invalid_database_file_reports_stable_cli_error(tmp_path) -> None:
+    database_path = tmp_path / "invalid.duckdb"
+    database_path.write_text("not a DuckDB database")
+    commands = (
+        ["db", "init", "--db", str(database_path)],
+        ["db", "info", "--db", str(database_path)],
+        ["sessions", "list", "--db", str(database_path)],
+        [
+            "ingest",
+            "--agent",
+            "codex",
+            "--source",
+            str(CODEX_FIXTURE_DIR / "basic-session.jsonl"),
+            "--db",
+            str(database_path),
+        ],
+        ["analyze", "session-1", "--db", str(database_path)],
+        ["summary", "--db", str(database_path)],
+    )
+
+    for command in commands:
+        result = runner.invoke(app, command)
+        assert result.exit_code == 1
+        assert "Invalid database" in result.stdout
+        assert "could not be opened" in result.stdout
+        assert "DuckDB database" in result.stdout
+        assert "Incompatible database" not in result.stdout
+        assert "IOException" not in result.stdout
+
+
+def test_database_connection_failure_reports_stable_cli_error(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "unavailable.duckdb"
+    database_path.touch()
+
+    def fail_connection(*args: object, **kwargs: object) -> None:
+        raise duckdb.ConnectionException("synthetic connection failure")
+
+    monkeypatch.setattr("session_doctor.store.connection.duckdb.connect", fail_connection)
+
+    result = runner.invoke(app, ["db", "info", "--db", str(database_path)])
+
+    assert result.exit_code == 1
+    assert "Invalid database" in result.stdout
+    assert "opened as a DuckDB database" in result.stdout
+    assert "synthetic connection failure" not in result.stdout
+
+
 def test_adapters_list_without_scan() -> None:
     result = runner.invoke(app, ["adapters", "list"])
 

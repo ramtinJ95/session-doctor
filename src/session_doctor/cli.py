@@ -15,6 +15,7 @@ from .analysis_workflow import analyze_session
 from .artifacts import analysis_payload, artifact_path_for_analysis, write_analysis_artifact
 from .cli_options import (
     adapter_for_ingest,
+    database_info_for_path,
     database_path_from_option,
     database_path_is_valid,
     os_access_writable,
@@ -178,8 +179,7 @@ def database_info(
     """Show local DuckDB database path and schema status."""
     database_path = database_path_from_option(db)
     require_valid_database_path(database_path)
-    store = DuckDBStore(database_path)
-    render_database_info(store.info(), console)
+    render_database_info(database_info_for_path(database_path), console)
 
 
 @sessions_app.command("list")

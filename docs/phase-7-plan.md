@@ -17,6 +17,8 @@ Implemented scope:
 - Kept Phase 7 read-only: no artifacts, derived writes, schema migration,
   graph projection, project trends, Markdown reports, LLM calls, embeddings, or
   ML dependencies.
+- Recorded current Codex/Pi aggregate smoke evidence in
+  [`pre-phase-8-codex-pi-validation.md`](pre-phase-8-codex-pi-validation.md).
 
 ## Goal
 

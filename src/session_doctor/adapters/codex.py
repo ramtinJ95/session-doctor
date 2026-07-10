@@ -30,6 +30,14 @@ from .codex_tools import (
 )
 from .common import dict_value, increment_count, string_value, warning_for_record
 
+CODEX_METADATA_EVENT_TYPES = {
+    "context_compacted",
+    "entered_review_mode",
+    "exited_review_mode",
+    "thread_settings_applied",
+}
+CODEX_METADATA_RECORD_TYPES = {"world_state"}
+
 
 class CodexAdapter(BaseAdapter):
     name = AgentName.CODEX
@@ -143,6 +151,19 @@ class CodexAdapter(BaseAdapter):
                     )
                 elif payload_type in {"task_started", "task_complete"}:
                     increment_count(expected_ignored_counts, f"event_msg.{payload_type}")
+                elif payload_type in CODEX_METADATA_EVENT_TYPES:
+                    increment_count(expected_ignored_counts, f"event_msg.{payload_type}")
+                    compacted_record_count += payload_type == "context_compacted"
+                elif payload_type == "turn_aborted":
+                    bundle.parse_warnings.append(
+                        warning_for_record(
+                            source,
+                            record_index,
+                            "codex_turn_aborted",
+                            "Codex turn ended with an abort signal",
+                            {"payload_type": payload_type},
+                        )
+                    )
                 elif payload_type == "error":
                     bundle.parse_warnings.append(
                         warning_for_record(
@@ -170,6 +191,8 @@ class CodexAdapter(BaseAdapter):
                 continue
             elif record_type == "compacted":
                 compacted_record_count += 1
+            elif record_type in CODEX_METADATA_RECORD_TYPES:
+                increment_count(expected_ignored_counts, f"record.{record_type}")
             else:
                 bundle.parse_warnings.append(
                     warning_for_record(

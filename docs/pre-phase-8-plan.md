@@ -1,6 +1,6 @@
 # Pre-Phase-8 Plan: Aggregate Hardening And Claude Code Adapter
 
-Status: in progress.
+Status: complete.
 
 This document is the implementation contract and progress checklist for the
 work that must land before Phase 8 project-level trends begin.
@@ -24,8 +24,8 @@ complete only after its acceptance criteria and full quality gate pass.
 | --- | --- | --- | --- |
 | PR 1: ingestion and aggregate hardening | complete | #20 | schema v3; 145 tests; full gate; cross-adapter fixture smoke |
 | PR 2: Claude root-session vertical slice | complete | #21 | 170 tests; full gate; root fixture CLI/store smoke |
-| PR 3: Claude completion and validation | in progress | #22 | implementation complete on branch; 184 tests; full gate; copied-local validation |
-| Pre-Phase-8 milestone | planned | | |
+| PR 3: Claude completion and validation | complete | #22 | merged; 184 tests; full gate; [copied-local validation](pre-phase-8-claude-validation.md) |
+| Pre-Phase-8 milestone | complete | #20–#22 | all criteria passed; [cross-adapter closeout validation](pre-phase-8-codex-pi-validation.md) |
 
 Allowed status values:
 
@@ -628,7 +628,7 @@ Documentation:
 - [x] Update README phase/capability and usage sections.
 - [x] Document Claude root/subagent/sidecar semantics.
 - [x] Update this plan's progress ledger and PR 3 status/evidence.
-- [ ] Mark this milestone complete only after every milestone criterion passes.
+- [x] Mark this milestone complete only after every milestone criterion passes.
 
 ### PR 3 Acceptance Criteria
 
@@ -651,7 +651,7 @@ Documentation:
 
 The pre-Phase-8 milestone is complete when:
 
-- [ ] PR 1, PR 2, and PR 3 are complete in order.
+- [x] PR 1, PR 2, and PR 3 are complete in order.
 - [x] All PR-specific acceptance criteria are checked.
 - [x] Codex, Pi, and Claude pass the same ingest/list/analyze/summary contract.
 - [x] Cross-adapter command and file aggregation has explicit regression tests.
@@ -666,7 +666,7 @@ The pre-Phase-8 milestone is complete when:
 - [x] `uv run ty check` passes.
 - [x] `uv run pytest -q` passes.
 - [x] `docs/session-doctor-design.md` and README match the implemented state.
-- [ ] The progress ledger at the top of this document is complete.
+- [x] The progress ledger at the top of this document is complete.
 
 ## Suggested Validation Note Format
 
@@ -698,13 +698,13 @@ Quality gate result:
 2. Implement and merge PR 1.
 3. Rebuild local/fixture DuckDB data if the clean model changes.
 4. Implement and merge PR 2. Complete in #21.
-5. Implement and merge PR 3. In progress.
-6. Update the progress ledger and mark the milestone complete.
+5. Implement and merge PR 3. Complete in #22.
+6. Update the progress ledger and mark the milestone complete. Complete.
 7. Reassess and plan Phase 8 using the resulting three-adapter aggregate model.
 
 ## Open Questions During Implementation
 
-No product decision currently blocks starting PR 3.
+No unresolved implementation question remains for this milestone.
 
 Implementation should stop for steering if evidence forces a material change to
 one of these contracts:

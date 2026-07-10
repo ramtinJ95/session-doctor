@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Never
 
 import typer
 from rich.console import Console
@@ -11,8 +12,8 @@ from .adapters import BaseAdapter, built_in_adapters
 from .config import default_database_path
 from .schemas.common import AgentName, SourceKind
 from .schemas.sessions import SessionSource
-from .store import DuckDBStore, SchemaMismatchError
-from .store.models import SummaryFilters
+from .store import DatabaseOpenError, DuckDBStore, SchemaMismatchError
+from .store.models import StoreInfo, SummaryFilters
 
 console = Console()
 
@@ -67,10 +68,25 @@ def require_current_database_schema(path: Path, *, allow_empty: bool = False) ->
         return
     try:
         DuckDBStore(path).validate_schema(allow_empty=allow_empty)
+    except DatabaseOpenError as exc:
+        raise_invalid_database(path, exc)
     except SchemaMismatchError as exc:
         console.print(f"[red]Incompatible database:[/red] {path} ({exc})")
         console.print(f"Delete it and recreate it with: session-doctor db init --db {path}")
         raise typer.Exit(1) from exc
+
+
+def database_info_for_path(path: Path) -> StoreInfo:
+    try:
+        return DuckDBStore(path).info()
+    except DatabaseOpenError as exc:
+        raise_invalid_database(path, exc)
+
+
+def raise_invalid_database(path: Path, exc: DatabaseOpenError) -> Never:
+    console.print(f"[red]Invalid database:[/red] {path} ({exc})")
+    console.print("Choose a valid DuckDB file or remove it and initialize a new database.")
+    raise typer.Exit(1) from exc
 
 
 def require_analysis_output_format(output_format: str) -> None:
