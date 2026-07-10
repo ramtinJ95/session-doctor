@@ -1761,13 +1761,13 @@ message_feature_17 --supports_classification--> classification_4
 Graph view exposes persisted structure and deterministic findings that can help
 a reviewer inspect:
 
-- loops
-- repeated goals
-- repeated tool failures
-- same file edited repeatedly
-- correction chains
-- user frustration tied to specific assistant behavior
-- cross-session stuck patterns in future project-level analysis
+- exact-session normalized timeline and raw-event provenance
+- persisted repeated-request relations
+- repeated command/tool failure-group membership
+- file targets and repeated file-activity evidence
+- feature, score, and classification evidence relations
+- parse warnings and explicitly unresolved references
+- parent/child session topology as lightweight references only
 
 The command should exist in the public plan:
 
