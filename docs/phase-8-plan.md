@@ -1,6 +1,6 @@
 # Phase 8 Plan: Project-Level Trends
 
-Status: planned; grilling approved.
+Status: complete.
 
 This document is the implementation contract for Phase 8. The plan completed an
 interactive grilling pass and a final adversarial review before implementation.
@@ -1041,5 +1041,6 @@ The interactive grilling pass resolved:
 - stable but non-secret failed-output correlation IDs
 - a four-PR implementation sequence
 
-The post-grilling adversarial review returned no findings. This plan is approved
-for implementation; Phase 8 code has not started.
+The post-grilling adversarial review returned no findings. Implementation then
+landed through the four planned review stages. Native fixture coverage and the
+privacy-safe copied-local smoke are recorded in `docs/phase-8-validation.md`.
