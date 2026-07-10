@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 
 import duckdb
 
@@ -242,23 +243,27 @@ def test_problematic_file_eligibility_rejects_stale_analysis(tmp_path) -> None:
 
 def test_diagnostic_snapshot_loads_exact_historical_recurrence_context(tmp_path) -> None:
     store = DuckDBStore(tmp_path / "diagnostic.duckdb")
+    project = str(Path.home() / "work-project")
     selected = insert_pattern_session(
         store,
         "selected",
         datetime(2026, 1, 15, 8),
         datetime(2026, 1, 15, 9),
+        project,
     )
     insert_pattern_session(
         store,
         "historical",
         datetime(2026, 1, 10, 8),
         datetime(2026, 1, 10, 9),
+        project,
     )
     insert_pattern_session(
         store,
         "future",
         datetime(2026, 1, 16, 8),
         datetime(2026, 1, 16, 9),
+        project,
     )
     store.replace_analysis_rows(
         AnalysisRun(
@@ -276,7 +281,7 @@ def test_diagnostic_snapshot_loads_exact_historical_recurrence_context(tmp_path)
     assert snapshot is not None
     context = snapshot.recurrence
     assert context.status == "available"
-    assert context.scope_path == "/work/project"
+    assert context.scope_path == "~/work-project"
     assert context.scope_source == "session_project_path"
     assert context.evidence_cutoff == datetime(2026, 1, 15, 9)
     assert context.window_start == datetime(2025, 10, 27)
@@ -296,13 +301,14 @@ def insert_pattern_session(
     session_id: str,
     started_at: datetime,
     command_at: datetime,
+    project: str,
 ) -> Session:
     source_id = f"{session_id}-source"
     session = Session(
         session_id=session_id,
         source_id=source_id,
         agent_name=AgentName.CODEX,
-        project_path="/work/project",
+        project_path=project,
         started_at=started_at,
     )
     store.insert_parsed_bundle(
