@@ -8,6 +8,7 @@ from typing import Protocol
 
 import duckdb
 
+from session_doctor.analysis.version import ANALYZER_VERSION
 from session_doctor.ids import stable_id
 from session_doctor.privacy import redact_command_for_display
 
@@ -306,7 +307,9 @@ def latest_problematic_session_ids(
     rows = connection.execute(
         f"""
         WITH latest_analysis AS ({latest_analysis_sql()}),
-        eligible_analysis AS (SELECT * FROM latest_analysis),
+        eligible_analysis AS (
+            SELECT * FROM latest_analysis WHERE analyzer_version = ?
+        ),
         score_features AS ({score_features_sql()}),
         label_groups AS ({label_groups_sql()})
         SELECT s.session_id
@@ -316,7 +319,7 @@ def latest_problematic_session_ids(
         LEFT JOIN label_groups AS lg ON lg.session_id = s.session_id
         WHERE {risky_session_predicate()}
         """,
-        [RISK_SCORE_THRESHOLD],
+        [ANALYZER_VERSION, RISK_SCORE_THRESHOLD],
     ).fetchall()
     return {str(row[0]) for row in rows}
 

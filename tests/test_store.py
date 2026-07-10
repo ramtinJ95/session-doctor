@@ -51,6 +51,8 @@ def test_store_initialize_creates_expected_tables(tmp_path) -> None:
     assert info.exists
     assert info.schema_version == SCHEMA_VERSION
     assert set(TABLE_NAMES).issubset(set(info.tables))
+    assert "graph_nodes" not in info.tables
+    assert "graph_edges" not in info.tables
 
 
 def test_store_info_handles_missing_database(tmp_path) -> None:
@@ -174,7 +176,7 @@ def test_store_initialize_rejects_stale_schema_without_modifying_it(tmp_path) ->
 
     store = DuckDBStore(database_path)
 
-    with pytest.raises(SchemaMismatchError, match="version is 2; expected 3"):
+    with pytest.raises(SchemaMismatchError, match="version is 2; expected 4"):
         store.initialize()
     with pytest.raises(SchemaMismatchError, match="Rebuild the database"):
         store.aggregate_summary(SummaryFilters())

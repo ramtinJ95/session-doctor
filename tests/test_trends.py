@@ -508,7 +508,7 @@ def test_recurring_patterns_require_distinct_valid_filtered_root_families(tmp_pa
         commands=(recurring_command,),
     )
     add_analysis(store, "side-a", score=0.8)
-    add_analysis(store, "side-b", score=0.8, analyzer_version="phase5")
+    add_analysis(store, "side-b", score=0.8)
 
     report = store.trends(TrendFilters(project_path="/work/project", periods=4, limit=10))
     payload = trend_payload(report)

@@ -253,7 +253,7 @@ Claude Code parsing currently normalizes:
 
 ### Storage And Analysis Coverage
 
-The current internal DuckDB schema marker is `3`. This marker is for local
+The current internal DuckDB schema marker is `4`. This marker is for local
 inspection and rebuild coordination only; before the first release, existing
 DuckDB files and JSON artifacts may be regenerated instead of migrated for
 compatibility. The current store creates these tables:
@@ -274,8 +274,6 @@ analysis_runs
 message_features
 session_features
 session_classifications
-graph_nodes
-graph_edges
 ```
 
 Ingestion is source-scoped delete-and-replace: re-ingesting one source removes
@@ -1594,8 +1592,6 @@ analysis_runs
 message_features
 session_features
 session_classifications
-graph_nodes
-graph_edges
 ```
 
 DuckDB is the primary local query/report substrate. JSONL/Parquet export remains
@@ -2074,10 +2070,5 @@ These should call the CLI rather than duplicate business logic.
 ## Open Implementation Questions
 
 - Which Claude Code session files contain the most reliable role/tool metadata?
-- Should the first graph projection populate the existing DuckDB `graph_nodes`
-  and `graph_edges` tables, generate graphs on demand from normalized event
-  tables, or support both modes?
 
-The Claude adapter question should be resolved when Claude parsing starts. The
-graph persistence question should be resolved later when graph projection
-starts.
+The Claude adapter question should be resolved when Claude parsing starts.

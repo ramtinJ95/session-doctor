@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .analysis_readers import AnalysisCompatibility, AnalysisTarget
 from .connection import DatabaseOpenError
+from .diagnostic_readers import load_diagnostic_snapshot
 from .duckdb import (
     AggregateSummary,
     DuckDBStore,
@@ -39,4 +40,5 @@ __all__ = [
     "TrendFilters",
     "TrendReport",
     "TrendStatus",
+    "load_diagnostic_snapshot",
 ]

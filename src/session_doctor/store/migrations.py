@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import duckdb
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 TABLE_NAMES = (
     "schema_migrations",
@@ -20,8 +20,6 @@ TABLE_NAMES = (
     "message_features",
     "session_features",
     "session_classifications",
-    "graph_nodes",
-    "graph_edges",
 )
 
 
@@ -300,28 +298,6 @@ CREATE_TABLE_STATEMENTS = (
         confidence DOUBLE NOT NULL,
         evidence_event_ids_json VARCHAR NOT NULL DEFAULT '[]',
         evidence_summary VARCHAR NOT NULL,
-        metadata_json VARCHAR NOT NULL DEFAULT '{}'
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS graph_nodes (
-        node_id VARCHAR PRIMARY KEY,
-        session_id VARCHAR NOT NULL,
-        node_type VARCHAR NOT NULL,
-        label VARCHAR NOT NULL,
-        source_event_id VARCHAR,
-        metadata_json VARCHAR NOT NULL DEFAULT '{}'
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS graph_edges (
-        edge_id VARCHAR PRIMARY KEY,
-        session_id VARCHAR NOT NULL,
-        source_node_id VARCHAR NOT NULL,
-        target_node_id VARCHAR NOT NULL,
-        edge_type VARCHAR NOT NULL,
-        confidence DOUBLE NOT NULL,
-        source_event_id VARCHAR,
         metadata_json VARCHAR NOT NULL DEFAULT '{}'
     )
     """,
