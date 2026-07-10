@@ -15,7 +15,7 @@ from .common import content_blocks, dict_value, hash_json, int_value, string_val
 @dataclass
 class TranscriptFacts:
     source: SessionSource
-    native_session_ids: set[str] = field(default_factory=set)
+    native_session_ids: list[str] = field(default_factory=list)
     event_ids: set[str] = field(default_factory=set)
     tool_use_ids: set[str] = field(default_factory=set)
     agent_ids: set[str] = field(default_factory=set)
@@ -71,8 +71,10 @@ def transcript_facts(source: SessionSource) -> TranscriptFacts:
 
 
 def collect_record_facts(facts: TranscriptFacts, record: dict[str, Any]) -> None:
+    native_session_id = string_value(record.get("sessionId"))
+    if native_session_id is not None and native_session_id not in facts.native_session_ids:
+        facts.native_session_ids.append(native_session_id)
     for key, target in (
-        ("sessionId", facts.native_session_ids),
         ("uuid", facts.event_ids),
         ("agentId", facts.agent_ids),
         ("sourceToolAssistantUUID", facts.source_assistant_ids),
@@ -250,7 +252,7 @@ def resolve_parent_candidates(
 
 
 def session_id_for_facts(facts: TranscriptFacts) -> str:
-    native_session_id = min(facts.native_session_ids) if facts.native_session_ids else None
+    native_session_id = facts.native_session_ids[0] if facts.native_session_ids else None
     source_path = Path(facts.source.source_path)
     native_identity = native_session_id or facts.source.native_session_id or source_path.stem
     return stable_id(
@@ -263,30 +265,39 @@ def session_id_for_facts(facts: TranscriptFacts) -> str:
 
 def add_nesting_depths(transcripts: dict[Path, TranscriptFacts]) -> None:
     by_source_id = {facts.source.source_id: facts for facts in transcripts.values()}
+    topology = {
+        facts.source.source_id: nesting_depth(facts, by_source_id)
+        for facts in transcripts.values()
+        if facts.source.source_kind is SourceKind.SUBSESSION
+    }
     for facts in transcripts.values():
         if facts.source.source_kind is not SourceKind.SUBSESSION:
             continue
-        depth = nesting_depth(facts, by_source_id)
+        depth, cyclic = topology[facts.source.source_id]
+        if cyclic:
+            facts.source.parent_source_id = None
+            facts.source.metadata.pop("claude_parent_session_id", None)
+            facts.source.metadata["claude_parent_link_status"] = "cyclic"
         facts.source.metadata["claude_nesting_depth"] = depth
 
 
 def nesting_depth(
     facts: TranscriptFacts,
     by_source_id: dict[str, TranscriptFacts],
-) -> int | None:
+) -> tuple[int | None, bool]:
     depth = 0
     current = facts
     visited: set[str] = set()
     while current.source.source_kind is SourceKind.SUBSESSION:
         if current.source.source_id in visited or current.source.parent_source_id is None:
-            return None
+            return None, current.source.source_id in visited
         visited.add(current.source.source_id)
         parent = by_source_id.get(current.source.parent_source_id)
         if parent is None:
-            return None
+            return None, False
         depth += 1
         current = parent
-    return depth
+    return depth, False
 
 
 def add_orphan_counts(

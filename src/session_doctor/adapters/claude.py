@@ -161,7 +161,7 @@ class ClaudeCodeAdapter(BaseAdapter):
     def source_for_path(self, path: Path) -> SessionSource:
         source_kind = classify_claude_path(path)
         if source_kind is SourceKind.SUBSESSION:
-            discovery_root = path.parents[2]
+            discovery_root = path.parent.parent
             discovered = self.discover(discovery_root)
             matched = next(
                 (source for source in discovered if Path(source.source_path) == path),
