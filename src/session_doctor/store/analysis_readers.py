@@ -2,20 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from enum import StrEnum
 from pathlib import Path
 
 from session_doctor.analysis.version import ANALYZER_VERSION
+from session_doctor.diagnostic_models import AnalysisCompatibility
 
 from .aggregate_queries import base_sessions_cte, latest_analysis_sql
 from .connection import read_connection
 from .models import SessionScopeFilters
-
-
-class AnalysisCompatibility(StrEnum):
-    CURRENT = "current"
-    STALE = "stale"
-    MISSING = "missing"
 
 
 @dataclass(frozen=True)
