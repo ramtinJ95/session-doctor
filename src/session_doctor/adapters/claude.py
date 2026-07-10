@@ -393,7 +393,23 @@ def parse_user_tool_results(
     event: RawEvent,
     tool_results: list[ClaudeToolResult],
 ) -> None:
-    for block_index, block in user_tool_result_blocks(record):
+    result_blocks = user_tool_result_blocks(record)
+    persisted_output_path = string_value(
+        dict_value(record.get("toolUseResult")).get("persistedOutputPath")
+    )
+    correlate_sidecar = persisted_output_path is None or len(result_blocks) == 1
+    if persisted_output_path is not None and not correlate_sidecar:
+        bundle.parse_warnings.append(
+            warning_for_record(
+                source,
+                record_index,
+                "ambiguous_tool_result_sidecar",
+                "Claude Code tool-result sidecar cannot be correlated to exactly one block",
+                {"tool_result_block_count": len(result_blocks)},
+            )
+        )
+
+    for block_index, block in result_blocks:
         if string_value(block.get("tool_use_id")) is None:
             bundle.parse_warnings.append(
                 warning_for_record(
@@ -414,15 +430,15 @@ def parse_user_tool_results(
             block,
             block_index,
         )
-        bundle.tool_results.append(
-            enrich_tool_result_from_sidecar(
+        if correlate_sidecar:
+            normalized_result = enrich_tool_result_from_sidecar(
                 bundle,
                 source,
                 record_index,
                 record,
                 normalized_result,
             )
-        )
+        bundle.tool_results.append(normalized_result)
 
 
 def add_session_identity_warnings(
