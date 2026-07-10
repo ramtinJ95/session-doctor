@@ -1,6 +1,6 @@
 # Phase 9 Plan: Reports And Graph Projection
 
-Status: planned; grilling approved.
+Status: complete.
 
 This document is the implementation contract for Phase 9. It must complete an
 interactive grilling pass and a blocker-only adversarial review before it is
@@ -1052,5 +1052,6 @@ Resolved interactively:
 - completion includes copied-local structural validation and small private
   semantic adjudication without retaining content
 
-The final blocker-only adversarial review returned `NO FINDINGS`. This plan is
-approved for implementation and should land before Phase 9 code begins.
+The final planning review and every implementation PR review returned
+`NO FINDINGS`. Phase 9 is implemented and validated; see
+`docs/phase-9-validation.md`.

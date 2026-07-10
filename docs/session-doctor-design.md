@@ -45,12 +45,12 @@ session-doctor analyze --all [--project PATH] [--agent AGENT] [--force]
 session-doctor summary [--format terminal|json] [--project PATH] [--agent AGENT] [--limit N]
 session-doctor trends [--project PATH] [--agent AGENT] [--bucket week|month] [--periods N]
 session-doctor projects list [--agent AGENT] [--limit N] [--format terminal|json]
-session-doctor report <session-id>
-session-doctor graph <session-id>
+session-doctor report <session-id> [--format terminal|markdown|json] [--limit N] [--show-text]
+session-doctor graph <session-id> [--format json]
 ```
 
-`report` and `graph` are reserved placeholders today. `explain` and `export`
-remain design ideas but are not current CLI commands.
+`report` and `graph` are exact-session, on-demand read surfaces. `explain` and
+`export` remain design ideas but are not current CLI commands.
 
 The CLI should be local-only by default. It should not call an LLM or external
 API on its own unless an explicit future option enables that. LLM capability can
@@ -69,7 +69,7 @@ The first complete product iteration should support:
 - DuckDB-backed local analysis
 - deterministic features and explainable scoring
 - deterministic project-level trend and recurrence views
-- a planned graph command and graph projection model
+- privacy-safe reports and a complete conservative graph projection model
 
 The current implementation parses Codex, Pi, and Claude Code root/subagent
 transcripts. Claude metadata and explicitly referenced persisted tool results
@@ -81,8 +81,8 @@ implementation slice.
 ## Current Repository State
 
 As of the current repository state, Phase 5 deterministic feature hardening,
-Phase 6 classification scoring, Phase 7 aggregate summaries, and Phase 8
-project-level trends are implemented.
+Phase 6 classification scoring, Phase 7 aggregate summaries, Phase 8
+project-level trends, and Phase 9 reports/graph projection are implemented.
 The repository has a working local CLI for ingesting and analyzing Codex, Pi,
 and Claude Code root/subagent logs. Claude discovery also classifies metadata,
 persisted tool results, memory, and auxiliary files. Related sidecars are
@@ -162,13 +162,9 @@ session-doctor trends [--db PATH] [--format terminal|json]
 session-doctor trends [--project PATH] [--agent codex|claude|pi]
 session-doctor trends [--bucket week|month] [--periods 1..120] [--limit N]
 session-doctor projects list [--db PATH] [--agent codex|claude|pi] [--limit N]
-```
-
-Reserved commands that exist but exit as not implemented:
-
-```bash
-session-doctor report <session-id>
-session-doctor graph <session-id>
+session-doctor report <session-id> [--db PATH] [--format terminal|markdown|json]
+session-doctor report <session-id> [--limit N] [--show-text]
+session-doctor graph <session-id> [--db PATH] [--format json]
 ```
 
 Commands not currently present: `explain`, `export`.
@@ -322,10 +318,10 @@ where applicable.
 - Claude memory files and unrelated auxiliary files are deliberately excluded;
   orphan metadata/tool-result sidecars are reported rather than guessed into a
   session.
-- Markdown/terminal reports beyond the `analyze` summary tables are not
-  implemented.
-- Graph tables and Pydantic graph schemas exist, but no graph projection writer
-  or reader is implemented yet.
+- Reports deliberately omit full transcripts and disclose message text only
+  for displayed persisted evidence under `--show-text`.
+- Graphs are derived on demand as typed JSON; graphical rendering, graph
+  algorithms, persistence, and merged-family graphs remain deferred.
 - Observed project paths are hints, not inferred VCS roots or a project
   registry; nested paths remain distinct.
 - Directional judgments deliberately remain unavailable without explicit
@@ -351,9 +347,9 @@ privacy helpers.
 The named Pre-Phase-8 work in `docs/pre-phase-8-plan.md` hardened cross-adapter
 identities and ingestion failures, added Claude root parsing, and completed
 Claude subagents, sidecars, and copied-local validation before project-level
-trends. Human-readable reports and graph projection remain after trend views so
-they can reuse the same aggregate queries and evidence model rather than
-inventing a parallel reporting layer.
+trends. Phase 9 reports and graph projection now reuse the same normalized,
+current-analysis, topology, and recurrence contracts rather than inventing a
+parallel evidence layer.
 
 ## Local Session Inspection Findings
 
@@ -2038,12 +2034,13 @@ Start with JSON output:
 
 Later output formats can be added after the graph semantics stabilize.
 
-Status: planned; grilling approved. Phase 9 keeps both commands read-only,
+Status: complete. Phase 9 keeps both commands read-only,
 generates exact-session reports and graphs on demand, exposes stale/missing
 analysis honestly, limits message disclosure to explicit evidence-only
 `--show-text`, and uses conservative provenance rather than causal graph edges.
 
 Detailed plan: `docs/phase-9-plan.md`.
+Validation: `docs/phase-9-validation.md`.
 
 ### Phase 10: Agent Wrappers
 

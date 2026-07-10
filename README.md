@@ -95,6 +95,15 @@ Phase 8 adds deterministic project-level trends:
   problematic files without exposing native output or content
 - `projects list` discovery without guessed repository roots
 
+Phase 9 adds exact-session diagnostics:
+
+- privacy-safe terminal, Markdown, and stable JSON `report` output
+- explicit current, stale, and missing analysis states without automatic analysis
+- evidence-only message disclosure through `--show-text`
+- trailing project recurrence context with fixed topology and timing boundaries
+- complete deterministic JSON evidence graphs with conservative provenance
+- read-only on-demand projection without report artifacts, graph persistence, or NetworkX
+
 ## Usage
 
 Install dependencies:
@@ -245,6 +254,29 @@ views expose raw series but reserve directional judgments for an explicit
 `--project` scope. Missing timestamps, stale analysis, sparse periods, and
 insufficient samples remain visible rather than being filled or guessed.
 
+Inspect one session as a report or typed evidence graph:
+
+```bash
+uv run session-doctor report <session-id> --db /tmp/session-doctor-test.duckdb
+uv run session-doctor report <session-id> \
+  --db /tmp/session-doctor-test.duckdb \
+  --format markdown > report.md
+uv run session-doctor report <session-id> \
+  --db /tmp/session-doctor-test.duckdb \
+  --format json
+uv run session-doctor report <session-id> \
+  --db /tmp/session-doctor-test.duckdb \
+  --show-text
+uv run session-doctor graph <session-id> \
+  --db /tmp/session-doctor-test.duckdb
+```
+
+Both commands are exact-session and read-only. They never ingest, analyze,
+write artifacts, cache projections, or persist graph rows. Stale or missing
+analysis returns explicit partial output. `--show-text` applies only to report
+evidence messages selected by persisted exact message IDs; graph output is
+always message-text-free.
+
 Run the quality gate:
 
 ```bash
@@ -267,4 +299,5 @@ Design references:
 - [Phase 8 Plan](docs/phase-8-plan.md)
 - [Phase 8 Validation](docs/phase-8-validation.md)
 - [Phase 9 Plan](docs/phase-9-plan.md)
+- [Phase 9 Validation](docs/phase-9-validation.md)
 - [Pre-Phase-8 Plan](docs/pre-phase-8-plan.md)
