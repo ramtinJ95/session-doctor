@@ -12,7 +12,6 @@ from session_doctor.privacy import (
     display_project_hint,
     public_fingerprint,
     redact_command_for_display,
-    redact_home,
 )
 from session_doctor.report_models import (
     BoundedEvidence,
@@ -368,28 +367,27 @@ def file_loop_items(snapshot: DiagnosticSnapshot) -> list[FileLoopEvidence]:
         activities = [
             row
             for row in snapshot.normalized.file_activities
-            if (row.canonical_path or row.normalized_path) == path
+            if path in {row.canonical_path, row.project_relative_path, row.normalized_path}
             and (not source_event_ids or row.source_event_id in source_event_ids)
         ]
-        if activities:
-            first = activities[0]
-            display_path = display_file_path(
-                project_relative_path=first.project_relative_path,
-                normalized_path=first.normalized_path,
-                canonical_path=first.canonical_path,
-            )
-            resolution = first.path_resolution
-        else:
-            display_path = redact_home(path)
-            resolution = "unresolved"
+        if len(activities) < 2:
+            continue
+        first = activities[0]
+        display_path = display_file_path(
+            project_relative_path=first.project_relative_path,
+            normalized_path=first.normalized_path,
+            canonical_path=first.canonical_path,
+        )
         items.append(
             FileLoopEvidence(
                 evidence_id=stable_id("report-file-loop", path),
                 display_path=display_path,
-                path_resolution=resolution,
-                edit_count=max(len(activities), len(source_event_ids)),
+                path_resolution=first.path_resolution,
+                edit_count=len(activities),
                 file_activity_ids=sorted(row.file_activity_id for row in activities),
-                source_event_ids=source_event_ids,
+                source_event_ids=sorted(
+                    {row.source_event_id for row in activities if row.source_event_id is not None}
+                ),
             )
         )
     return sorted(items, key=lambda item: (item.display_path, item.evidence_id))
@@ -809,6 +807,15 @@ def unresolved_analysis_reference_ids(snapshot: DiagnosticSnapshot) -> list[str]
             for warning_id in string_list(ending_feature.evidence.get("late_parse_warning_ids"))
             if warning_id not in warning_ids
         )
+    file_feature = session_feature(snapshot, "same_file_edited_repeatedly_count")
+    if file_feature:
+        for path in string_list(file_feature.evidence.get("paths")):
+            resolved_count = sum(
+                path in {row.canonical_path, row.project_relative_path, row.normalized_path}
+                for row in snapshot.normalized.file_activities
+            )
+            if resolved_count < 2:
+                unresolved.append(stable_id("unresolved-file-loop", path))
     return unresolved
 
 
