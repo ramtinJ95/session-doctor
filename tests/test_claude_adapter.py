@@ -774,6 +774,44 @@ def test_claude_topology_links_root_and_nested_subagents() -> None:
     assert all(source.parent_source_id is not None for source in directly_selected)
 
 
+def test_claude_relative_discovery_does_not_mark_referenced_sidecar_orphaned(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    relative_root = Path("claude-topology")
+    topology_root = tmp_path / relative_root
+    project_dir = topology_root / "project"
+    tool_results_dir = project_dir / "session-1" / "tool-results"
+    tool_results_dir.mkdir(parents=True)
+    (tool_results_dir / "referenced.txt").write_text("output")
+    (tool_results_dir / "orphan.txt").write_text("orphan")
+    (project_dir / "session-1.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "user",
+                "sessionId": "session-1",
+                "uuid": "result-1",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "tool_result", "tool_use_id": "tool-1"}],
+                },
+                "toolUseResult": {
+                    "persistedOutputPath": "tool-results/referenced.txt",
+                },
+            }
+        )
+    )
+    monkeypatch.chdir(tmp_path)
+
+    root_source = next(
+        source
+        for source in ClaudeCodeAdapter().discover(relative_root)
+        if source.source_kind is SourceKind.ROOT_SESSION
+    )
+
+    assert root_source.metadata["claude_orphan_tool_result_count"] == 1
+
+
 def test_claude_parent_session_id_uses_first_observed_native_id(tmp_path) -> None:
     project_dir = tmp_path / "project"
     session_dir = project_dir / "session-1"

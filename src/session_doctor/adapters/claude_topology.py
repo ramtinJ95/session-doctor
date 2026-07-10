@@ -26,17 +26,17 @@ class TranscriptFacts:
 
 def enrich_claude_sources(sources: list[SessionSource]) -> None:
     transcripts = {
-        Path(source.source_path): transcript_facts(source)
+        Path(source.source_path).resolve(): transcript_facts(source)
         for source in sources
         if source.source_kind in {SourceKind.ROOT_SESSION, SourceKind.SUBSESSION}
     }
     metadata_paths = {
-        Path(source.source_path)
+        Path(source.source_path).resolve()
         for source in sources
         if source.source_kind is SourceKind.SUBAGENT_METADATA
     }
     tool_result_paths = {
-        Path(source.source_path)
+        Path(source.source_path).resolve()
         for source in sources
         if source.source_kind is SourceKind.TOOL_RESULT
     }
@@ -114,7 +114,7 @@ def enrich_subagent(
     transcripts: dict[Path, TranscriptFacts],
     metadata_paths: set[Path],
 ) -> None:
-    source_path = Path(facts.source.source_path)
+    source_path = Path(facts.source.source_path).resolve()
     metadata_path = source_path.with_suffix(".meta.json")
     sidecar = read_subagent_metadata(metadata_path, metadata_path in metadata_paths)
     metadata_agent_id = string_value(sidecar.get("agent_id"))
@@ -359,6 +359,7 @@ def resolve_tool_result_path(source_path: Path, raw_path: str) -> Path | None:
 
 
 def claude_session_directory(source_path: Path) -> Path:
+    source_path = source_path.resolve()
     if source_path.parent.name == "subagents":
         return source_path.parent.parent
     return source_path.parent / source_path.stem

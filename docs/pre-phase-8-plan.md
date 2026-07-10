@@ -24,7 +24,7 @@ complete only after its acceptance criteria and full quality gate pass.
 | --- | --- | --- | --- |
 | PR 1: ingestion and aggregate hardening | complete | #20 | schema v3; 145 tests; full gate; cross-adapter fixture smoke |
 | PR 2: Claude root-session vertical slice | complete | #21 | 170 tests; full gate; root fixture CLI/store smoke |
-| PR 3: Claude completion and validation | in progress | #22 | implementation complete on branch; 181 tests; full gate; copied-local validation |
+| PR 3: Claude completion and validation | in progress | #22 | implementation complete on branch; 183 tests; full gate; copied-local validation |
 | Pre-Phase-8 milestone | planned | | |
 
 Allowed status values:
