@@ -100,6 +100,8 @@ Codex/Pi/Claude root or subagent JSONL source
   -> persisted analysis rows + optional JSON artifact
   -> aggregate summary queries over ingested/analyzed sessions
   -> aligned project/agent/cohort trend and recurrence views
+  -> exact-session terminal/Markdown/JSON reports
+  -> exact-session conservative JSON evidence graphs
 ```
 
 ### Implemented Capabilities
@@ -253,9 +255,9 @@ Claude Code parsing currently normalizes:
 ### Storage And Analysis Coverage
 
 The current internal DuckDB schema marker is `4`. This marker is for local
-inspection and rebuild coordination only; before the first release, existing
-DuckDB files and JSON artifacts may be regenerated instead of migrated for
-compatibility. The current store creates these tables:
+inspection and rebuild coordination only; throughout 0.x, existing DuckDB files
+and JSON artifacts may be regenerated instead of migrated for compatibility.
+The current store creates these tables:
 
 ```text
 schema_migrations
@@ -345,7 +347,8 @@ DuckDB initialization and round-tripping, adapter discovery, Codex parsing, Pi
 parsing, Claude root parsing, ingest behavior, session listing, feature
 extraction, classification, analysis persistence, analysis artifacts, aggregate
 summaries, weekly/monthly trends, project discovery, family recurrence, and
-privacy helpers.
+privacy helpers, plus typed diagnostic reads, report payload/rendering, graph
+projection, and native three-adapter report/graph end-to-end behavior.
 
 The named Pre-Phase-8 work in `docs/pre-phase-8-plan.md` hardened cross-adapter
 identities and ingestion failures, added Claude root parsing, and completed
@@ -1600,8 +1603,8 @@ Design requirements:
 
 - local-only by default
 - no background service required
-- deterministic versioned rebuilds before the first release; migration
-  compatibility starts only after a released schema contract exists
+- deterministic versioned rebuilds throughout 0.x; migration compatibility
+  begins only with an explicitly stable contract, no earlier than `v1.0.0`
 - easy deletion/rebuild of derived tables
 - future export to JSONL and Parquet
 
@@ -1733,26 +1736,30 @@ Primary source of truth:
 SessionSource -> Session -> RawEvent -> Message / ToolCall / ToolResult / CommandRun / FileActivity
 ```
 
-Derived graph view:
+Implemented conservative derived graph view:
 
 ```text
-nodes = messages, goals, assistant actions, tool calls, tool results, files,
-        errors, classifications
-edges = asks_for, responds_to, edits, runs, fails_with, same_failure_as,
-        repeats_goal_of, corrects, references_prior_attempt, causes_retry
+nodes = session, topology-only session references, raw events, messages,
+        tool calls/results, command runs, file activities/files, failure groups,
+        message/session features, classifications, parse warnings
+edges = contains, parent_message, derived_from, has_tool_result, runs_command,
+        targets_file, member_of_failure_group, repeats_request_of, detected_in,
+        contributes_to_score, supports_classification, has_warning,
+        parent_session_reference, child_session_reference
 ```
 
 Example:
 
 ```text
-user_message_17 --repeats_goal_of--> user_message_3
-tool_result_8  --same_failure_as--> tool_result_13
-user_message_17 --corrects--> assistant_message_16
-assistant_action_12 --edits--> file:src/foo.py
-tool_result_13 --fails_with--> error:AssertionError
+message_feature_17 --repeats_request_of--> message_3
+tool_result_8 --member_of_failure_group--> failure_group_2
+command_run_12 --targets_file--> file:src/foo.py
+classification_4 --derived_from--> raw_event_13
+message_feature_17 --supports_classification--> classification_4
 ```
 
-Graph view should help detect:
+Graph view exposes persisted structure and deterministic findings that can help
+a reviewer inspect:
 
 - loops
 - repeated goals
@@ -1768,8 +1775,10 @@ The command should exist in the public plan:
 session-doctor graph <session-id>
 ```
 
-Initial output can be JSON nodes/edges. Later it can support Markdown summaries,
-Graphviz, HTML, or MCP/query access.
+Output is typed deterministic JSON nodes/edges. Causal edges, inferred goals,
+agent blame, and invented error entities are deliberately excluded. Graphviz,
+HTML, algorithms, persistence, merged-family graphs, and MCP/query access remain
+deferred until dogfooding establishes a concrete need.
 
 ## Layer 8: Reporting
 
@@ -2045,16 +2054,25 @@ analysis honestly, limits message disclosure to explicit evidence-only
 Detailed plan: `docs/phase-9-plan.md`.
 Validation: `docs/phase-9-validation.md`.
 
-### Phase 10: Agent Wrappers
+### Phase 10: Optional Agent Integration And v0.1.0 Dogfood Release
 
-Add optional integrations:
+Finish the first roadmap with optional integration and a lightweight dogfood
+release:
 
-- Codex skill
-- Claude skill/command
-- Pi integration
-- MCP server or query tool
+- one portable Agent Skills-standard wrapper for Codex, Claude Code, and Pi
+- a read-only CLI command that locates the bundled wrapper for manual install
+- guarded full-CLI orchestration without direct SQL or transcript access
+- explicit confirmation before writes and evidence-message disclosure
+- release licensing, package/version checks, dogfood guidance, and local
+  three-harness validation
+- an annotated `v0.1.0` source tag after explicit approval
 
-These should call the CLI rather than duplicate business logic.
+MCP/query access, CI, PyPI publication, and a GitHub Release remain deferred
+until dogfooding establishes their contracts.
+
+Status: planned; grilling approved.
+
+Detailed plan: `docs/phase-10-plan.md`.
 
 ## Non-Goals For First Iteration
 
@@ -2067,8 +2085,9 @@ These should call the CLI rather than duplicate business logic.
 - cloud-hosted/project-wide dashboards
 - graphical UI for graph visualization
 
-## Open Implementation Questions
+## Resolved Implementation Questions
 
-- Which Claude Code session files contain the most reliable role/tool metadata?
-
-The Claude adapter question should be resolved when Claude parsing starts.
+Claude role/tool metadata and source-kind boundaries are implemented and
+validated across root transcripts, nested subagents, metadata sidecars, and
+explicitly referenced persisted tool results. Ambiguous or orphaned relations
+remain warnings rather than guessed links.

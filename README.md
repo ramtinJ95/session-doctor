@@ -104,6 +104,13 @@ Phase 9 adds exact-session diagnostics:
 - complete deterministic JSON evidence graphs with conservative provenance
 - read-only on-demand projection without report artifacts, graph persistence, or NetworkX
 
+Phase 10 completes the roadmap with one optional portable agent skill for
+Codex, Claude Code, and Pi plus a lightweight `v0.1.0` source-tag dogfood
+release. The skill remains a thin CLI orchestrator: it never reads transcripts
+or DuckDB directly, confirms before writes and evidence-message disclosure, and
+keeps interpretations evidence-citing and non-causal. MCP, CI, PyPI, and stable
+0.x compatibility remain deferred while the CLI is dogfooded.
+
 ## Usage
 
 Install dependencies:
@@ -300,4 +307,5 @@ Design references:
 - [Phase 8 Validation](docs/phase-8-validation.md)
 - [Phase 9 Plan](docs/phase-9-plan.md)
 - [Phase 9 Validation](docs/phase-9-validation.md)
+- [Phase 10 Plan](docs/phase-10-plan.md)
 - [Pre-Phase-8 Plan](docs/pre-phase-8-plan.md)
