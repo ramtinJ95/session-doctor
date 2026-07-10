@@ -8,7 +8,14 @@ import duckdb
 
 from session_doctor.privacy import redact_home
 
-from .aggregate_queries import base_sessions_cte, latest_analysis_sql, session_filters
+from .aggregate_queries import (
+    RISK_SCORE_THRESHOLD,
+    base_sessions_cte,
+    label_groups_sql,
+    latest_analysis_sql,
+    score_features_sql,
+    session_filters,
+)
 from .connection import read_connection
 from .models import (
     AgentSessionCount,
@@ -21,19 +28,6 @@ from .models import (
     SummaryFilters,
 )
 
-RISK_LABELS = (
-    "user_stuck",
-    "tooling_blocked",
-    "agent_looping",
-    "agent_misunderstood",
-    "prompt_ambiguous",
-    "task_too_large",
-    "repo_complexity_high",
-    "abandoned_or_stopped",
-)
-
-PRIMARY_RISK_LABELS = ("user_stuck", "tooling_blocked", "agent_looping")
-RISK_SCORE_THRESHOLD = 0.55
 PROBLEMATIC_SESSION_SCORE_THRESHOLD = 0.55
 MUTATING_FILE_OPERATIONS = ("edit", "update", "write", "patch", "move", "delete")
 
@@ -227,6 +221,7 @@ def recent_risk_sessions(
         f"""
         WITH {base_sessions_sql},
         latest_analysis AS ({latest_analysis_sql()}),
+        eligible_analysis AS (SELECT * FROM latest_analysis),
         score_features AS ({score_features_sql()}),
         label_groups AS ({label_groups_sql()})
         SELECT
@@ -359,6 +354,7 @@ def repeated_files(
         f"""
         WITH {base_sessions_sql},
         latest_analysis AS ({latest_analysis_sql()}),
+        eligible_analysis AS (SELECT * FROM latest_analysis),
         score_features AS ({score_features_sql()}),
         label_groups AS ({label_groups_sql()}),
         problematic_sessions AS (
@@ -491,43 +487,6 @@ def recommendations_for_summary(
     if not recommendations:
         recommendations.append("No obvious aggregate risk pattern found in the current filters.")
     return tuple(recommendations[:4])
-
-
-def score_features_sql() -> str:
-    return """
-    SELECT
-        sf.session_id,
-        MAX(CASE WHEN sf.feature_name = 'friction_score' THEN sf.score END) AS friction_score,
-        MAX(CASE WHEN sf.feature_name = 'stuckness_score' THEN sf.score END) AS stuckness_score,
-        MAX(CASE WHEN sf.feature_name = 'prompt_clarity_risk' THEN sf.score END)
-            AS prompt_clarity_risk,
-        MAX(CASE WHEN sf.feature_name = 'agent_fit_risk' THEN sf.score END) AS agent_fit_risk,
-        MAX(CASE WHEN sf.feature_name = 'project_complexity_signal' THEN sf.score END)
-            AS project_complexity_signal
-    FROM session_features AS sf
-    JOIN latest_analysis AS la ON la.analysis_run_id = sf.analysis_run_id
-    GROUP BY sf.session_id
-    """
-
-
-def label_groups_sql() -> str:
-    risk_labels = sql_string_list(RISK_LABELS)
-    primary_risk_labels = sql_string_list(PRIMARY_RISK_LABELS)
-    return f"""
-    SELECT
-        sc.session_id,
-        string_agg(DISTINCT sc.label, ',' ORDER BY sc.label) AS labels,
-        SUM(CASE WHEN sc.label IN ({risk_labels}) THEN 1 ELSE 0 END) AS risk_label_count,
-        SUM(CASE WHEN sc.label IN ({primary_risk_labels}) THEN 1 ELSE 0 END)
-            AS primary_risk_label_count
-    FROM session_classifications AS sc
-    JOIN latest_analysis AS la ON la.analysis_run_id = sc.analysis_run_id
-    GROUP BY sc.session_id
-    """
-
-
-def sql_string_list(values: tuple[str, ...]) -> str:
-    return ", ".join(f"'{value}'" for value in values)
 
 
 def split_labels(value: object) -> tuple[str, ...]:

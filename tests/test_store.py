@@ -144,6 +144,26 @@ def test_store_classifies_filtered_analysis_targets_and_orders_untimed_last(tmp_
     assert targets[2].analyzer_version is None
 
 
+def test_store_project_root_scope_includes_absolute_paths(tmp_path) -> None:
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    session = Session(
+        session_id="session-root-scope",
+        source_id="source-root-scope",
+        agent_name=AgentName.CODEX,
+        project_path="/work/project",
+    )
+    source = SessionSource(
+        source_id=session.source_id,
+        agent_name=session.agent_name,
+        source_path="/tmp/root-scope.jsonl",
+    )
+    store.insert_parsed_bundle(source, ParsedSessionBundle(session=session))
+
+    targets = store.list_analysis_targets(SessionScopeFilters(project_path="/"))
+
+    assert [target.session_id for target in targets] == ["session-root-scope"]
+
+
 def test_store_initialize_rejects_stale_schema_without_modifying_it(tmp_path) -> None:
     database_path = tmp_path / "session-doctor.duckdb"
     with duckdb.connect(str(database_path)) as connection:
