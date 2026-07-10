@@ -31,6 +31,7 @@ from .cli_options import (
     require_analysis_output_format,
     require_current_database_schema,
     require_existing_database_path,
+    require_graph_output_format,
     require_positive_limit,
     require_report_output_format,
     require_summary_output_format,
@@ -60,6 +61,8 @@ from .cli_renderers import (
     render_ingest_summary as _render_ingest_summary,
 )
 from .config import supports_current_python
+from .graph_payload import graph_payload
+from .graph_projection import project_graph
 from .ingest_workflow import IngestSummary, ingest_sources
 from .report_payload import build_session_report
 from .report_renderers import render_session_report, render_session_report_markdown
@@ -618,21 +621,37 @@ def report(
 
 
 @app.command()
-def graph(session_id: str) -> None:
-    """Reserved for future graph projection."""
-    _ = session_id
-    not_implemented("graph")
+def graph(
+    session_id: str,
+    db: Annotated[
+        Path | None,
+        typer.Option(
+            "--db",
+            help="DuckDB path to inspect. Defaults to SESSION_DOCTOR_DB or app data.",
+        ),
+    ] = None,
+    output_format: Annotated[
+        str,
+        typer.Option("--format", help="Output format: json."),
+    ] = "json",
+) -> None:
+    """Project a complete conservative exact-session evidence graph."""
+    require_graph_output_format(output_format)
+    database_path = database_path_from_option(db)
+    require_valid_database_path(database_path)
+    require_existing_database_path(database_path)
+    require_current_database_schema(database_path)
+    snapshot = DuckDBStore(database_path).load_diagnostic_snapshot(session_id)
+    if snapshot is None:
+        console.print(f"[red]Session not found:[/red] {session_id}")
+        raise typer.Exit(1)
+    typer.echo(json.dumps(graph_payload(project_graph(snapshot)), indent=2, sort_keys=True))
 
 
 app.add_typer(adapters_app, name="adapters")
 app.add_typer(db_app, name="db")
 app.add_typer(sessions_app, name="sessions")
 app.add_typer(projects_app, name="projects")
-
-
-def not_implemented(command_name: str) -> None:
-    console.print(f"[yellow]{command_name} is not implemented yet.[/yellow]")
-    raise typer.Exit(2)
 
 
 def render_ingest_summary(summary: IngestSummary, database_path: Path) -> None:

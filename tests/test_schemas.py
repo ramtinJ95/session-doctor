@@ -89,10 +89,9 @@ def test_enum_validation_rejects_unknown_agent_string() -> None:
 def test_graph_edge_confidence_bounds() -> None:
     edge = GraphEdge(
         edge_id="edge-1",
-        session_id="session-1",
         source_node_id="node-1",
         target_node_id="node-2",
-        edge_type="responds_to",
+        edge_type="derived_from",
         confidence=0.75,
     )
     assert edge.confidence == 0.75
@@ -100,10 +99,9 @@ def test_graph_edge_confidence_bounds() -> None:
     with pytest.raises(ValidationError):
         GraphEdge(
             edge_id="edge-2",
-            session_id="session-1",
             source_node_id="node-1",
             target_node_id="node-2",
-            edge_type="responds_to",
+            edge_type="derived_from",
             confidence=2.0,
         )
 

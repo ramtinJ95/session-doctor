@@ -111,6 +111,13 @@ def require_report_output_format(output_format: str) -> None:
     raise typer.Exit(2)
 
 
+def require_graph_output_format(output_format: str) -> None:
+    if output_format == "json":
+        return
+    console.print("[red]Invalid --format:[/red] expected json")
+    raise typer.Exit(2)
+
+
 def require_positive_limit(limit: int) -> None:
     if limit > 0:
         return
