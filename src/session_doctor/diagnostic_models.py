@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Literal
@@ -91,12 +92,89 @@ class UnresolvedDiagnosticReferences:
 
 
 @dataclass(frozen=True)
+class RecurrenceFamilyExclusions:
+    orphan_parent: int = 0
+    cycle: int = 0
+    cross_agent_parent: int = 0
+
+
+@dataclass(frozen=True)
+class RecurrenceTemporalExclusions:
+    untimed_sessions: int = 0
+    before_window_sessions: int = 0
+    after_cutoff_sessions: int = 0
+    untimed_events: int = 0
+    before_window_events: int = 0
+    after_cutoff_events: int = 0
+
+
+@dataclass(frozen=True)
+class RecurrenceAnalysisExclusions:
+    stale: int = 0
+    missing: int = 0
+
+
+@dataclass(frozen=True)
+class RecurrenceEvidence:
+    event_count: int
+    selected_session_event_count: int
+    session_count: int
+    root_family_count: int
+    top_level_session_count: int
+    sidechain_session_count: int
+    agents: tuple[str, ...]
+    first_at: datetime
+    most_recent_at: datetime
+
+
+@dataclass(frozen=True)
+class DiagnosticFailedCommandPattern:
+    pattern_id: str
+    command_display: str
+    evidence: RecurrenceEvidence
+
+
+@dataclass(frozen=True)
+class DiagnosticFailedToolPattern:
+    pattern_id: str
+    tool_name: str
+    fingerprint: str
+    evidence: RecurrenceEvidence
+
+
+@dataclass(frozen=True)
+class DiagnosticProblematicFilePattern:
+    pattern_id: str
+    display_path: str
+    evidence: RecurrenceEvidence
+
+
+@dataclass(frozen=True)
+class DiagnosticRecurrenceContext:
+    status: Literal["available", "unavailable"]
+    reason: str | None
+    scope_path: str | None
+    scope_source: str | None
+    window_start: datetime | None
+    evidence_cutoff: datetime | None
+    family_exclusions: RecurrenceFamilyExclusions
+    temporal_exclusions: RecurrenceTemporalExclusions
+    problematic_file_analysis_exclusions: RecurrenceAnalysisExclusions
+    problematic_files_status: Literal["available", "unavailable"]
+    problematic_files_reason: str | None
+    failed_commands: tuple[DiagnosticFailedCommandPattern, ...]
+    failed_tool_results: tuple[DiagnosticFailedToolPattern, ...]
+    problematic_files: tuple[DiagnosticProblematicFilePattern, ...]
+
+
+@dataclass(frozen=True)
 class DiagnosticSnapshot:
     normalized: NormalizedSessionData
     topology_references: tuple[TopologyReference, ...]
     analysis: DiagnosticAnalysis
     indexes: DiagnosticIndexes
     unresolved: UnresolvedDiagnosticReferences
+    recurrence: DiagnosticRecurrenceContext
 
 
 def immutable_index[Value](values: Mapping[str, Value]) -> Mapping[str, Value]:

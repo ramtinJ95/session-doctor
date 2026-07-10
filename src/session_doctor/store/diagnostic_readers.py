@@ -28,6 +28,7 @@ from session_doctor.schemas import (
 from .analysis_readers import AnalysisCompatibility, analysis_compatibility
 from .connection import read_connection, transaction
 from .json_values import parse_metadata, parse_string_list
+from .recurrence_context import load_recurrence_context
 from .row_loaders import (
     load_command_runs,
     load_file_activities,
@@ -71,6 +72,7 @@ def load_diagnostic_snapshot(
             analysis=analysis,
             indexes=indexes,
             unresolved=find_unresolved_references(normalized, analysis, indexes),
+            recurrence=load_recurrence_context(connection, normalized, analysis.compatibility),
         )
 
 
