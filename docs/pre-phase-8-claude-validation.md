@@ -2,7 +2,7 @@
 
 Date: 2026-07-09
 
-Branch: `feat/claude-completion-validation`
+Merged in: PR #22 (`main` at `1b8def1`)
 
 Validation used a temporary isolated copy of one Claude root transcript, its
 session directory, and the related subagent and sidecar files. No native

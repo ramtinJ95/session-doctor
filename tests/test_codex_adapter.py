@@ -162,6 +162,59 @@ def test_codex_parse_source_emits_warnings_without_stopping() -> None:
     assert bundle.session.metadata["compacted_record_count"] == 1
 
 
+def test_codex_handles_current_metadata_drift_without_unsupported_warnings(tmp_path) -> None:
+    session_path = tmp_path / "metadata-drift.jsonl"
+    records = [
+        {
+            "timestamp": "2026-07-10T10:00:00Z",
+            "type": "session_meta",
+            "payload": {"id": "metadata-drift", "cwd": "/tmp"},
+        },
+        *(
+            {
+                "timestamp": f"2026-07-10T10:00:0{index}Z",
+                "type": "event_msg",
+                "payload": {"type": payload_type},
+            }
+            for index, payload_type in enumerate(
+                (
+                    "context_compacted",
+                    "entered_review_mode",
+                    "exited_review_mode",
+                    "thread_settings_applied",
+                ),
+                start=1,
+            )
+        ),
+        {
+            "timestamp": "2026-07-10T10:00:05Z",
+            "type": "world_state",
+            "payload": {"state": "PRIVATE_WORLD_STATE"},
+        },
+        {
+            "timestamp": "2026-07-10T10:00:06Z",
+            "type": "event_msg",
+            "payload": {"type": "turn_aborted", "reason": "PRIVATE_ABORT_REASON"},
+        },
+    ]
+    session_path.write_text("\n".join(json.dumps(record) for record in records))
+
+    bundle = CodexAdapter().parse_source(source_for_fixture(session_path))
+
+    assert bundle.session is not None
+    assert bundle.session.metadata["codex_expected_ignored_counts"] == {
+        "event_msg.context_compacted": 1,
+        "event_msg.entered_review_mode": 1,
+        "event_msg.exited_review_mode": 1,
+        "event_msg.thread_settings_applied": 1,
+        "record.world_state": 1,
+    }
+    assert bundle.session.metadata["compacted_record_count"] == 1
+    assert [warning.metadata["code"] for warning in bundle.parse_warnings] == ["codex_turn_aborted"]
+    assert "PRIVATE_WORLD_STATE" not in bundle.model_dump_json()
+    assert "PRIVATE_ABORT_REASON" not in bundle.model_dump_json()
+
+
 def test_codex_parse_source_keeps_repeated_fallback_messages_across_turns(tmp_path) -> None:
     session_path = tmp_path / "repeat.jsonl"
     records = [

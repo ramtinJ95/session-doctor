@@ -22,6 +22,8 @@ Implemented scope:
 - Kept Phase 6 local-only and deterministic, without schema migrations, LLM
   calls, embeddings, ML dependencies, aggregate commands, reports, or graph
   projection.
+- Recorded current Codex/Pi copied-local smoke evidence in
+  [`pre-phase-8-codex-pi-validation.md`](pre-phase-8-codex-pi-validation.md).
 
 ## Goal
 
