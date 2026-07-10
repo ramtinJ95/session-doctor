@@ -82,6 +82,7 @@ def test_native_three_adapter_reports_and_graphs_include_linked_sidechain(tmp_pa
     sidechain_parent_id = session_rows[sidechain_id][2]
     assert sidechain_parent_id is not None
 
+    disclosed_evidence_texts = 0
     for session_id in top_level_ids.values():
         terminal = runner.invoke(app, ["report", session_id, "--db", str(database_path)])
         markdown = runner.invoke(
@@ -115,9 +116,10 @@ def test_native_three_adapter_reports_and_graphs_include_linked_sidechain(tmp_pa
         assert report_payload["privacy"]["message_text_included"] is False
         snapshot = store.load_diagnostic_snapshot(session_id)
         assert snapshot is not None
-        assert_report_privacy(
+        disclosed_evidence_texts += assert_report_privacy(
             snapshot,
             (terminal.stdout, markdown.stdout, report_json.stdout),
+            report_json.stdout,
             show_text,
             graph_json.stdout,
         )
@@ -146,9 +148,10 @@ def test_native_three_adapter_reports_and_graphs_include_linked_sidechain(tmp_pa
     assert sidechain_report_payload["session"]["parent_session_id"] == sidechain_parent_id
     sidechain_snapshot = store.load_diagnostic_snapshot(sidechain_id)
     assert sidechain_snapshot is not None
-    assert_report_privacy(
+    disclosed_evidence_texts += assert_report_privacy(
         sidechain_snapshot,
         (sidechain_report.stdout,),
+        sidechain_report.stdout,
         sidechain_show_text,
         sidechain_graph.stdout,
     )
@@ -172,6 +175,7 @@ def test_native_three_adapter_reports_and_graphs_include_linked_sidechain(tmp_pa
         if node["node_type"] == "message"
     }
     assert parent_message_ids.isdisjoint(projected_message_ids)
+    assert disclosed_evidence_texts > 0
 
     assert {table: store.table_count(table) for table in TABLE_NAMES} == before
     assert not (tmp_path / "artifacts").exists()
@@ -226,7 +230,13 @@ def assert_graph_payload(result, store: DuckDBStore, session_id: str) -> None:
     )
 
 
-def assert_report_privacy(snapshot, default_outputs, show_text_result, graph_output) -> None:
+def assert_report_privacy(
+    snapshot,
+    default_outputs,
+    default_json_output,
+    show_text_result,
+    graph_output,
+) -> int:
     assert show_text_result.exit_code == 0
     show_payload = cast("dict[str, Any]", json.loads(show_text_result.stdout))
     authorized_ids = {feature.message_id for feature in snapshot.analysis.message_features}
@@ -236,16 +246,20 @@ def assert_report_privacy(snapshot, default_outputs, show_text_result, graph_out
         for item in section["items"]
         if item.get("text") is not None
     ]
-    assert all(item["message_id"] in authorized_ids for item in disclosed)
+    expected_disclosed_ids = {
+        item["message_id"]
+        for section in show_payload["evidence"].values()
+        for item in section["items"]
+        if item["item_type"] == "message_signal"
+        and item["message_id"] in snapshot.indexes.messages_by_id
+    }
+    assert {item["message_id"] for item in disclosed} == expected_disclosed_ids
+    assert expected_disclosed_ids.issubset(authorized_ids)
     assert all(
         item["text"] == snapshot.indexes.messages_by_id[item["message_id"]].text
         for item in disclosed
     )
-    private_texts = [
-        message.text
-        for message in snapshot.normalized.messages
-        if message.text and len(message.text) >= 24
-    ]
+    private_texts = [message.text for message in snapshot.normalized.messages if message.text]
     for output in default_outputs:
         assert all(text not in output for text in private_texts)
     assert all(json.dumps(text)[1:-1] not in graph_output for text in private_texts)
@@ -258,10 +272,22 @@ def assert_report_privacy(snapshot, default_outputs, show_text_result, graph_out
     )
     all_outputs = (*default_outputs, show_text_result.stdout, graph_output)
     assert all(marker not in output for marker in forbidden for output in all_outputs)
-    output_keys = recursive_keys(show_payload) | recursive_keys(json.loads(graph_output))
+    default_payload = cast("dict[str, Any]", json.loads(default_json_output))
+    assert all(
+        item.get("text") is None
+        for section in default_payload["evidence"].values()
+        for item in section["items"]
+        if item["item_type"] == "message_signal"
+    )
+    output_keys = (
+        recursive_keys(default_payload)
+        | recursive_keys(show_payload)
+        | recursive_keys(json.loads(graph_output))
+    )
     assert output_keys.isdisjoint(
         {"arguments_hash", "output_hash", "content_hash", "source_path", "metadata"}
     )
+    return len(disclosed)
 
 
 def recursive_keys(value: object) -> set[str]:
