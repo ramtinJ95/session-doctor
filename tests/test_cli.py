@@ -157,7 +157,7 @@ def test_stale_database_is_inspectable_but_operational_commands_require_rebuild(
         result = runner.invoke(app, command)
         assert result.exit_code == 1
         assert "Incompatible database" in result.stdout
-        assert "expected 3" in result.stdout
+        assert "expected 4" in result.stdout
         assert "Delete it and recreate it" in result.stdout
         assert "BinderException" not in result.stdout
 

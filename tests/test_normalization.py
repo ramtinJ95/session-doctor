@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from session_doctor.normalization import canonical_command_identity, canonical_file_identity
+from session_doctor.privacy import display_file_path, display_project_hint, public_fingerprint
 
 
 def test_command_identity_unwraps_only_recognized_shell_payloads() -> None:
@@ -119,3 +122,36 @@ def test_file_identity_preserves_outside_project_and_missing_base_states() -> No
     assert unresolved.canonical_path is None
     assert unresolved.project_relative_path is None
     assert unresolved.resolution == "unresolved"
+
+
+def test_diagnostic_display_helpers_prefer_safe_specific_paths() -> None:
+    home_path = str(Path.home() / "private-project")
+
+    assert display_project_hint(home_path, "/fallback") == (
+        "~/private-project",
+        "session_project_path",
+    )
+    assert (
+        display_file_path(
+            project_relative_path="src/app.py",
+            normalized_path=home_path + "/src/app.py",
+            canonical_path=home_path + "/src/app.py",
+        )
+        == "src/app.py"
+    )
+    assert (
+        display_file_path(
+            project_relative_path=None,
+            normalized_path=home_path + "/src/app.py",
+            canonical_path=home_path + "/src/app.py",
+        )
+        == "~/private-project/src/app.py"
+    )
+
+
+def test_public_fingerprint_is_stable_without_exposing_private_identity() -> None:
+    fingerprint = public_fingerprint("tool-result", "PRIVATE_NATIVE_HASH")
+
+    assert fingerprint == public_fingerprint("tool-result", "PRIVATE_NATIVE_HASH")
+    assert "PRIVATE_NATIVE_HASH" not in fingerprint
+    assert fingerprint != public_fingerprint("command", "PRIVATE_NATIVE_HASH")

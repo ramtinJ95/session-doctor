@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from session_doctor.adapters import ParsedSessionBundle
+from session_doctor.diagnostic_models import DiagnosticSnapshot
 from session_doctor.schemas import (
     AnalysisRun,
     MessageFeature,
@@ -13,6 +14,7 @@ from session_doctor.schemas import (
 
 from .analysis_readers import AnalysisTarget, list_analysis_targets
 from .connection import initialize_database, inspection_connection
+from .diagnostic_readers import load_diagnostic_snapshot
 from .json_values import duckdb_value, metadata_json, parse_metadata, parse_string_list
 from .migrations import require_current_schema
 from .models import AggregateSummary, SessionScopeFilters, SessionSummary, StoreInfo, SummaryFilters
@@ -131,6 +133,9 @@ class DuckDBStore:
 
     def load_session_bundle(self, session_id: str) -> ParsedSessionBundle | None:
         return load_session_bundle(self.database_path, session_id)
+
+    def load_diagnostic_snapshot(self, session_id: str) -> DiagnosticSnapshot | None:
+        return load_diagnostic_snapshot(self.database_path, session_id)
 
     def info(self) -> StoreInfo:
         return store_info(self.database_path)

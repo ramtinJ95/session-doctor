@@ -90,8 +90,6 @@ def delete_source_records(connection: duckdb.DuckDBPyConnection, source_id: str)
             "session_features",
             "session_classifications",
             "analysis_runs",
-            "graph_nodes",
-            "graph_edges",
         ):
             connection.execute(
                 f"DELETE FROM {table_name} WHERE session_id = ?",

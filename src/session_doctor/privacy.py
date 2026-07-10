@@ -68,3 +68,32 @@ def redact_command_for_display(command: str) -> str:
     home = str(Path.home())
     redacted_command = redacted_command.replace(f"{home}/", "~/")
     return redact_home(redacted_command)
+
+
+def display_project_hint(
+    project_path: str | None, cwd: str | None
+) -> tuple[str | None, str | None]:
+    if project_path:
+        return redact_home(project_path), "session_project_path"
+    if cwd:
+        return redact_home(cwd), "session_cwd"
+    return None, None
+
+
+def display_file_path(
+    *,
+    project_relative_path: str | None,
+    normalized_path: str,
+    canonical_path: str | None,
+) -> str:
+    if project_relative_path:
+        return project_relative_path
+    if normalized_path and not Path(normalized_path).is_absolute():
+        return normalized_path
+    return redact_home(canonical_path or normalized_path)
+
+
+def public_fingerprint(kind: str, private_identity: str) -> str:
+    from .ids import stable_id
+
+    return stable_id("public-fingerprint", kind, private_identity)
