@@ -1755,7 +1755,7 @@ message_feature_17 --repeats_request_of--> message_3
 tool_result_8 --member_of_failure_group--> failure_group_2
 command_run_12 --targets_file--> file:src/foo.py
 classification_4 --derived_from--> raw_event_13
-message_feature_17 --supports_classification--> classification_4
+raw_event_13 --supports_classification--> classification_4
 ```
 
 Graph view exposes persisted structure and deterministic findings that can help
