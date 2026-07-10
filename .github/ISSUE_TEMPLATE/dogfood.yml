@@ -38,7 +38,7 @@ body:
     attributes:
       label: Public command
       description: Command and safe flags only. Remove database/source paths, session IDs, project names, and secrets.
-      placeholder: session-doctor report SESSION_ID --format json
+      placeholder: session-doctor report '<redacted>' --format json
     validations:
       required: true
   - type: dropdown
