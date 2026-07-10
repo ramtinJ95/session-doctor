@@ -57,22 +57,30 @@ Phase 7 adds aggregate summaries:
 - terminal and JSON views over analysis coverage, labels, risky sessions,
   failed commands, repeated files, and next-step recommendations
 
-Pre-Phase-8 PR 1 hardens that foundation:
+Pre-Phase-8 PR 1 hardened that foundation:
 
 - conservative canonical command and file identities shared by Codex and Pi
 - explicit non-zero ingestion failures without hiding persistence errors
 - all five risk scores in aggregate output with stable JSON precision
 - deduplicated aggregate evidence IDs
 
-Pre-Phase-8 PR 2 adds the Claude Code root-session vertical slice:
+Pre-Phase-8 PR 2 added the Claude Code root-session vertical slice:
 
 - tolerant Claude root JSONL parsing into the existing normalized models
 - `session-doctor ingest --agent claude` for root transcripts
 - existing `sessions list`, `analyze`, and `summary` behavior over Claude roots
 - hashed tool/command output and edit/write bodies without persisted thinking text
 
-Claude subagents, metadata and tool-result sidecars, and copied-local validation
-remain deliberately deferred to Pre-Phase-8 PR 3.
+Pre-Phase-8 PR 3 completes the Claude adapter:
+
+- root and subagent transcripts become separate linked sessions
+- subagent metadata enriches sessions without becoming a session itself
+- explicitly referenced tool-result sidecars contribute only hashes, lengths,
+  and truncation facts
+- memory, orphan sidecars, and auxiliary files remain visible but deliberately
+  excluded from session ingestion
+- copied-local validation exercises discovery, ingestion, analysis, summary,
+  parent linkage, and privacy invariants
 
 ## Usage
 
@@ -140,7 +148,7 @@ If `--source` is omitted, Pi ingestion scans the default Pi session root:
 uv run session-doctor ingest --agent pi --db /tmp/session-doctor-test.duckdb
 ```
 
-Ingest a Claude Code root session:
+Ingest one Claude Code root or subagent transcript:
 
 ```bash
 uv run session-doctor ingest --agent claude \
@@ -149,9 +157,11 @@ uv run session-doctor ingest --agent claude \
 ```
 
 If `--source` is omitted, Claude ingestion scans `~/.claude/projects` but
-selects only root-session JSONL files. Subagents, metadata, persisted tool
-results, memory files, and auxiliary files are classified but not ingested in
-this root-session MVP.
+selects root and subagent JSONL transcripts. Matched subagent metadata and
+explicitly referenced persisted tool results enrich those sessions without
+creating standalone sessions. Memory files, auxiliary files, and unreferenced
+sidecars remain excluded; ingest output reports parsed and ignored source-kind
+counts.
 
 Analyze an ingested session:
 

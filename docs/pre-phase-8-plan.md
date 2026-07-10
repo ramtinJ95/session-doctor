@@ -23,8 +23,8 @@ complete only after its acceptance criteria and full quality gate pass.
 | Workstream | Status | Pull request | Evidence |
 | --- | --- | --- | --- |
 | PR 1: ingestion and aggregate hardening | complete | #20 | schema v3; 145 tests; full gate; cross-adapter fixture smoke |
-| PR 2: Claude root-session vertical slice | in progress | #21 | 170 tests; full gate; root fixture CLI/store smoke |
-| PR 3: Claude completion and validation | planned | | |
+| PR 2: Claude root-session vertical slice | complete | #21 | 170 tests; full gate; root fixture CLI/store smoke |
+| PR 3: Claude completion and validation | in progress | | implementation complete on branch; 177 tests; full gate; copied-local validation |
 | Pre-Phase-8 milestone | planned | | |
 
 Allowed status values:
@@ -156,9 +156,12 @@ The inspected corpus also confirms:
 - a root transcript can contain more than one `cwd`
 - many non-message records omit `sessionId`
 - subagent records use `isSidechain=true`
-- subagent JSONL contains `agentId` and `sourceToolAssistantUUID` linkage
+- subagent JSONL contains `agentId`; copied-local validation showed
+  `sourceToolAssistantUUID` identifies an event inside that subagent rather
+  than its parent
 - subagent `.meta.json` contains useful agent type, task, model, nesting, and
-  permission metadata
+  permission metadata; observed parent forms use `parentAgentId`/`toolUseId`,
+  while top-level agents expose `spawnDepth=0`
 - persisted tool-result files can be large and must never be stored verbatim by
   default
 
@@ -581,88 +584,88 @@ Memory and auxiliary files:
 
 Subagents:
 
-- [ ] Add synthetic root-plus-subagent fixture trees.
-- [ ] Derive parent source/session identity from the directory and event linkage.
-- [ ] Parse subagent JSONL through the shared Claude record handlers.
-- [ ] Preserve sidechain/agent linkage and metadata.
-- [ ] Add missing, ambiguous, and mismatched parent-link tests.
-- [ ] Prove root and subagent re-ingestion replacement behavior.
+- [x] Add synthetic root-plus-subagent fixture trees.
+- [x] Derive parent source/session identity from the directory and event linkage.
+- [x] Parse subagent JSONL through the shared Claude record handlers.
+- [x] Preserve sidechain/agent linkage and metadata.
+- [x] Add missing, ambiguous, and mismatched parent-link tests.
+- [x] Prove root and subagent re-ingestion replacement behavior.
 
 Metadata and tool-result sidecars:
 
-- [ ] Correlate subagent `.meta.json` without creating standalone sessions.
-- [ ] Correlate explicitly referenced tool-result sidecars.
-- [ ] Hash sidecar output and record safe length/truncation/error facts.
-- [ ] Add malformed/orphaned sidecar warnings.
-- [ ] Assert that raw sidecar content never enters models, DuckDB, artifacts, or
+- [x] Correlate subagent `.meta.json` without creating standalone sessions.
+- [x] Correlate explicitly referenced tool-result sidecars.
+- [x] Hash sidecar output and record safe length/truncation/error facts.
+- [x] Add malformed/orphaned sidecar warnings.
+- [x] Assert that raw sidecar content never enters models, DuckDB, artifacts, or
   CLI output.
 
 End-to-end behavior:
 
-- [ ] Analyze root and subagent Claude fixtures through the existing analysis
+- [x] Analyze root and subagent Claude fixtures through the existing analysis
   workflow.
-- [ ] Include root/subagent Claude sessions in aggregate summary counts and
+- [x] Include root/subagent Claude sessions in aggregate summary counts and
   filters.
-- [ ] Verify canonical commands/files group correctly across Codex, Pi, and
+- [x] Verify canonical commands/files group correctly across Codex, Pi, and
   Claude fixtures.
-- [ ] Add discovery/ingest output for parsed versus deliberately ignored Claude
+- [x] Add discovery/ingest output for parsed versus deliberately ignored Claude
   source kinds.
 
 Copied-local validation:
 
-- [ ] Copy selected root and subagent sources to a temporary isolated tree.
-- [ ] Run discovery, ingestion, listing, analysis, and summary against the copy.
-- [ ] Record source counts, Claude versions, normalized row counts, warning
+- [x] Copy selected root and subagent sources to a temporary isolated tree.
+- [x] Run discovery, ingestion, listing, analysis, and summary against the copy.
+- [x] Record source counts, Claude versions, normalized row counts, warning
   counts/codes, unsupported shapes, and observed false positives.
-- [ ] Record whether any session/file was skipped and why.
-- [ ] Confirm privacy invariants without retaining message or output content.
-- [ ] Remove temporary copied sources and databases after validation.
+- [x] Record whether any session/file was skipped and why.
+- [x] Confirm privacy invariants without retaining message or output content.
+- [x] Remove temporary copied sources and databases after validation.
 
 Documentation:
 
-- [ ] Mark Claude parsing complete in `docs/session-doctor-design.md`.
-- [ ] Update the implemented vertical slice and current limitations.
-- [ ] Update README phase/capability and usage sections.
-- [ ] Document Claude root/subagent/sidecar semantics.
-- [ ] Update this plan's progress ledger and PR 3 status/evidence.
+- [x] Mark Claude parsing complete in `docs/session-doctor-design.md`.
+- [x] Update the implemented vertical slice and current limitations.
+- [x] Update README phase/capability and usage sections.
+- [x] Document Claude root/subagent/sidecar semantics.
+- [x] Update this plan's progress ledger and PR 3 status/evidence.
 - [ ] Mark this milestone complete only after every milestone criterion passes.
 
 ### PR 3 Acceptance Criteria
 
-- [ ] Root and subagent Claude sessions are normalized as separate sessions.
-- [ ] Deterministic parent links are correct and ambiguous links warn.
-- [ ] Metadata and tool-result sidecars enrich related records without becoming
+- [x] Root and subagent Claude sessions are normalized as separate sessions.
+- [x] Deterministic parent links are correct and ambiguous links warn.
+- [x] Metadata and tool-result sidecars enrich related records without becoming
   sessions.
-- [ ] Memory and auxiliary files remain deliberately excluded.
-- [ ] Root and subagent sessions can be listed, analyzed, and summarized.
-- [ ] Claude-derived analysis requires no Claude-specific feature or
+- [x] Memory and auxiliary files remain deliberately excluded.
+- [x] Root and subagent sessions can be listed, analyzed, and summarized.
+- [x] Claude-derived analysis requires no Claude-specific feature or
   classification rules.
-- [ ] Canonical command/file identities work across all three adapters.
-- [ ] No raw thinking, tool output, command output, sidecar content, diff, or
+- [x] Canonical command/file identities work across all three adapters.
+- [x] No raw thinking, tool output, command output, sidecar content, diff, or
   write/edit body is persisted or displayed.
-- [ ] Copied-local validation evidence is recorded in a privacy-safe form.
-- [ ] Design and README describe the actual completed behavior.
-- [ ] The full quality gate passes.
+- [x] Copied-local validation evidence is recorded in a privacy-safe form.
+- [x] Design and README describe the actual completed behavior.
+- [x] The full quality gate passes.
 
 ## Milestone Acceptance Criteria
 
 The pre-Phase-8 milestone is complete when:
 
 - [ ] PR 1, PR 2, and PR 3 are complete in order.
-- [ ] All PR-specific acceptance criteria are checked.
-- [ ] Codex, Pi, and Claude pass the same ingest/list/analyze/summary contract.
-- [ ] Cross-adapter command and file aggregation has explicit regression tests.
-- [ ] Ingestion cannot silently turn systemic failures into successful skips.
-- [ ] Aggregate ranking is fully explainable from exposed score fields.
-- [ ] Claude root and subagent topology is represented without guessed links.
-- [ ] Ignored Claude source categories remain visible and deliberate.
-- [ ] Privacy invariants are covered by fixtures and copied-local validation.
-- [ ] No Phase 8 trend query or command has been introduced.
-- [ ] `uv run ruff format --check .` passes.
-- [ ] `uv run ruff check .` passes.
-- [ ] `uv run ty check` passes.
-- [ ] `uv run pytest -q` passes.
-- [ ] `docs/session-doctor-design.md` and README match the implemented state.
+- [x] All PR-specific acceptance criteria are checked.
+- [x] Codex, Pi, and Claude pass the same ingest/list/analyze/summary contract.
+- [x] Cross-adapter command and file aggregation has explicit regression tests.
+- [x] Ingestion cannot silently turn systemic failures into successful skips.
+- [x] Aggregate ranking is fully explainable from exposed score fields.
+- [x] Claude root and subagent topology is represented without guessed links.
+- [x] Ignored Claude source categories remain visible and deliberate.
+- [x] Privacy invariants are covered by fixtures and copied-local validation.
+- [x] No Phase 8 trend query or command has been introduced.
+- [x] `uv run ruff format --check .` passes.
+- [x] `uv run ruff check .` passes.
+- [x] `uv run ty check` passes.
+- [x] `uv run pytest -q` passes.
+- [x] `docs/session-doctor-design.md` and README match the implemented state.
 - [ ] The progress ledger at the top of this document is complete.
 
 ## Suggested Validation Note Format
@@ -694,14 +697,14 @@ Quality gate result:
 1. Review and approve this plan.
 2. Implement and merge PR 1.
 3. Rebuild local/fixture DuckDB data if the clean model changes.
-4. Implement and merge PR 2.
-5. Implement and merge PR 3.
+4. Implement and merge PR 2. Complete in #21.
+5. Implement and merge PR 3. In progress.
 6. Update the progress ledger and mark the milestone complete.
 7. Reassess and plan Phase 8 using the resulting three-adapter aggregate model.
 
 ## Open Questions During Implementation
 
-No product decision currently blocks starting PR 1.
+No product decision currently blocks starting PR 3.
 
 Implementation should stop for steering if evidence forces a material change to
 one of these contracts:

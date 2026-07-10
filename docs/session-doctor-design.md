@@ -66,11 +66,12 @@ The first complete product iteration should support:
 - deterministic features and explainable scoring
 - a planned graph command and graph projection model
 
-The current implementation parses Codex and Pi sessions plus ordinary Claude
-Code root transcripts. Claude subagent and sidecar correlation remains part of
-the next pre-Phase-8 pull request. OpenCode and other agents should be
-considered future adapters. The architecture should make adding them
-straightforward, but they are not part of the first implementation slice.
+The current implementation parses Codex, Pi, and Claude Code root/subagent
+transcripts. Claude metadata and explicitly referenced persisted tool results
+enrich their related sessions without becoming standalone sessions. OpenCode
+and other agents should be considered future adapters. The architecture should
+make adding them straightforward, but they are not part of the first
+implementation slice.
 
 ## Current Repository State
 
@@ -78,13 +79,13 @@ As of the current repository state, Phase 5 deterministic feature hardening,
 Phase 6 classification scoring, and Phase 7 aggregate summaries are
 implemented.
 The repository has a working local CLI for ingesting and analyzing Codex, Pi,
-and Claude Code root-session logs. Claude discovery also classifies subagents,
-metadata, persisted tool results, memory, and auxiliary files, but those source
-kinds remain deliberately unparsed until Pre-Phase-8 PR 3. The implemented
-vertical slice is:
+and Claude Code root/subagent logs. Claude discovery also classifies metadata,
+persisted tool results, memory, and auxiliary files. Related sidecars are
+correlated deliberately; unrelated categories remain excluded but visible in
+discovery and ingest counts. The implemented vertical slice is:
 
 ```text
-Codex/Pi/Claude root JSONL source
+Codex/Pi/Claude root or subagent JSONL source
   -> adapter-specific parser
   -> normalized Pydantic bundle
   -> DuckDB store
@@ -105,8 +106,9 @@ The tool can currently:
 - initialize and inspect a local DuckDB database
 - ingest Codex JSONL sessions from the default root, a directory, or one file
 - ingest Pi JSONL sessions from the default root, a directory, or one file
-- ingest Claude Code root-session JSONL from the default root, a directory, or
-  one file while excluding non-root Claude source kinds
+- ingest Claude Code root/subagent JSONL from the default root, a directory, or
+  one file while correlating matched metadata and referenced tool-result
+  sidecars
 - delete and replace normalized rows for a source when that source is re-ingested
 - list ingested sessions with agent, start time, message count, command count,
   warning count, and source path
@@ -133,11 +135,12 @@ session-doctor db init [--db PATH]
 session-doctor db info [--db PATH]
 session-doctor ingest --agent codex [--source PATH] [--db PATH]
 session-doctor ingest --agent pi [--source PATH] [--db PATH]
+session-doctor ingest --agent claude [--source PATH] [--db PATH]
 session-doctor sessions list [--db PATH]
 session-doctor analyze <session-id> [--db PATH] [--format terminal|json]
 session-doctor analyze <session-id> [--artifact PATH | --no-artifact]
 session-doctor summary [--db PATH] [--format terminal|json]
-session-doctor summary [--agent codex|pi] [--project PATH] [--limit N]
+session-doctor summary [--agent codex|claude|pi] [--project PATH] [--limit N]
 ```
 
 Reserved commands that exist but exit as not implemented:
@@ -198,7 +201,7 @@ Pi parsing currently normalizes:
 - model usage/cost rows from assistant usage payloads
 - metadata-only record counts and parse warnings for unsupported roles/types
 
-Claude Code root-session parsing currently normalizes:
+Claude Code parsing currently normalizes:
 
 - raw events for every valid native record, with malformed rows represented as
   parse warnings
@@ -211,10 +214,20 @@ Claude Code root-session parsing currently normalizes:
 - Bash command runs and Read/Edit/Write file activity through the shared
   canonical identity contracts
 - model usage and deliberate metadata-only/unknown-shape counts and warnings
-
-Claude subagent JSONL, subagent metadata, persisted tool-result sidecars, memory
-files, and auxiliary files are classified but remain unparsed until
-Pre-Phase-8 PR 3.
+- root and subagent transcripts as separate sessions, with `is_sidechain`,
+  deterministic parent source/session links, native agent IDs, and nesting
+  metadata
+- top-level subagents linked to the one root in the same native session
+  directory only when metadata reports `spawnDepth=0`; nested subagents linked
+  through agreeing `parentAgentId` and `toolUseId` evidence
+- adjacent subagent metadata through safe agent/task/model/permission fields
+  plus hashes and lengths for descriptions
+- explicitly referenced persisted tool results through hashes, lengths, and
+  truncation facts without raw sidecar content
+- missing, ambiguous, mismatched, malformed, and orphan topology as explicit
+  warnings rather than guessed links
+- parsed-versus-ignored source-kind counts while memory and unrelated auxiliary
+  files remain excluded
 
 ### Storage And Analysis Coverage
 
@@ -286,8 +299,9 @@ where applicable.
 
 ### Current Limitations
 
-- Claude Code parsing is currently a root-session MVP; subagents and sidecars
-  are not correlated or ingested yet.
+- Claude memory files and unrelated auxiliary files are deliberately excluded;
+  orphan metadata/tool-result sidecars are reported rather than guessed into a
+  session.
 - Markdown/terminal reports beyond the `analyze` summary tables are not
   implemented.
 - Graph tables and Pydantic graph schemas exist, but no graph projection writer
@@ -308,12 +322,12 @@ parsing, Claude root parsing, ingest behavior, session listing, feature
 extraction, classification, analysis persistence, analysis artifacts, aggregate
 summaries, and privacy helpers.
 
-The next milestone before project-level trends is the named Pre-Phase-8 work in
-`docs/pre-phase-8-plan.md`: PR 1 hardened cross-adapter identities and ingestion
-failures, PR 2 adds Claude root parsing, and PR 3 completes Claude subagents,
-sidecars, and copied-local validation. Human-readable reports and graph
-projection remain after trend views so they can reuse the same aggregate queries
-and evidence model rather than inventing a parallel reporting layer.
+The named Pre-Phase-8 work in `docs/pre-phase-8-plan.md` hardens cross-adapter
+identities and ingestion failures, adds Claude root parsing, and completes
+Claude subagents, sidecars, and copied-local validation before project-level
+trends begin. Human-readable reports and graph projection remain after trend
+views so they can reuse the same aggregate queries and evidence model rather
+than inventing a parallel reporting layer.
 
 ## Local Session Inspection Findings
 
