@@ -600,7 +600,18 @@ def render_pattern_table(
     table = Table(title=title)
     for column in identity_columns:
         table.add_column(column)
-    for column in ("Events", "Sessions", "Families", "Top", "Side", "Buckets", "Recent"):
+    for column in (
+        "Events",
+        "Sessions",
+        "Families",
+        "Top",
+        "Side",
+        "Agents",
+        "Buckets",
+        "First",
+        "Recent",
+        "Example session",
+    ):
         table.add_column(column)
     for row in materialized_rows:
         *identity, evidence = row
@@ -612,8 +623,11 @@ def render_pattern_table(
             str(evidence.root_family_count),
             str(evidence.top_level_session_count),
             str(evidence.sidechain_session_count),
+            ", ".join(evidence.agents),
             str(evidence.active_bucket_count),
+            format_timestamp(evidence.first_at),
             format_timestamp(evidence.most_recent_at),
+            evidence.example_session_id,
         )
     console.print(table)
 

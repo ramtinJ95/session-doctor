@@ -45,10 +45,18 @@ def redact_command_for_display(command: str) -> str:
     value = r"(?:\"[^\"]*\"|'[^']*'|[^\s'\"]+)"
     patterns = (
         (
-            r"(?i)(\bauthorization\s*:\s*(?:bearer|basic|token)\s+)[^\s'\"]+",
+            r"(?i)([\"']authorization\s*:\s*(?:bearer|basic|token)?\s*)[^\"']*([\"'])",
+            r"\1<redacted>\2",
+        ),
+        (
+            rf"(?i)([\"']{sensitive_key}\s*:\s*)[^\"']*([\"'])",
+            r"\1<redacted>\2",
+        ),
+        (
+            r"(?i)(\bauthorization\s*:\s*(?:bearer|basic|token)\s+)[^'\"|;&]+",
             r"\1<redacted>",
         ),
-        (r"(?i)(\bbearer\s+)[^\s'\"]+", r"\1<redacted>"),
+        (r"(?i)(\bbearer\s+)[^'\"|;&]+", r"\1<redacted>"),
         (rf"(?i)(\b{sensitive_key}\s*=\s*){value}", r"\1<redacted>"),
         (rf"(?i)(--?{sensitive_key}\s+){value}", r"\1<redacted>"),
         (rf"(?i)(\b{sensitive_key}\s*:\s*){value}", r"\1<redacted>"),

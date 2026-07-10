@@ -507,7 +507,7 @@ def test_recurring_patterns_require_distinct_valid_filtered_root_families(tmp_pa
         commands=(recurring_command,),
     )
     add_analysis(store, "side-a", score=0.8)
-    add_analysis(store, "side-b", score=0.8)
+    add_analysis(store, "side-b", score=0.8, analyzer_version="phase5")
 
     report = store.trends(TrendFilters(project_path="/work/project", periods=4, limit=10))
     payload = trend_payload(report)
@@ -545,6 +545,20 @@ def test_recurring_patterns_require_distinct_valid_filtered_root_families(tmp_pa
     assert "unknown-output-hash" not in serialized
     assert str(Path.home()) not in serialized
     assert "one-family-command" not in serialized
+    terminal_result = runner.invoke(
+        app,
+        [
+            "trends",
+            "--db",
+            str(store.database_path),
+            "--project",
+            "/work/project",
+            "--periods",
+            "4",
+        ],
+    )
+    assert terminal_result.exit_code == 0
+    assert "Recurring failed commands" in terminal_result.stdout
 
 
 @pytest.mark.parametrize(
