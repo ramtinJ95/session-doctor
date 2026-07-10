@@ -13,6 +13,7 @@ from .claude_files import FILE_TOOL_OPERATIONS, file_activity_from_tool_use
 from .claude_messages import message_from_record, unsupported_content_shapes
 from .claude_metadata import ClaudeSessionMetadata, extract_session_metadata
 from .claude_records import raw_event_for_record, read_claude_jsonl
+from .claude_sidecars import add_topology_warnings, enrich_tool_result_from_sidecar
 from .claude_tools import (
     assistant_tool_use_blocks,
     model_usage_from_record,
@@ -21,6 +22,7 @@ from .claude_tools import (
     tool_result_from_block,
     user_tool_result_blocks,
 )
+from .claude_topology import enrich_claude_sources
 from .common import (
     bool_value,
     dict_value,
@@ -51,6 +53,7 @@ CLAUDE_MESSAGE_TYPES = {"assistant", "system", "user"}
 class ClaudeCodeAdapter(BaseAdapter):
     name = AgentName.CLAUDE
     display_name = "Claude Code"
+    ingestible_source_kinds = (SourceKind.ROOT_SESSION, SourceKind.SUBSESSION)
 
     def default_roots(self) -> tuple[Path, ...]:
         return (Path.home() / ".claude" / "projects",)
@@ -60,18 +63,20 @@ class ClaudeCodeAdapter(BaseAdapter):
         if not discovery_root.exists():
             return []
 
-        return [
+        sources = [
             self._source_for_path(path, discovery_root)
             for path in sorted(discovery_root.rglob("*"))
             if path.is_file()
         ]
+        enrich_claude_sources(self._topology_context(sources, discovery_root))
+        return sources
 
     def parse_source(self, source: SessionSource) -> ParsedSessionBundle:
         source_path = Path(source.source_path).expanduser()
-        if source.source_kind is not SourceKind.ROOT_SESSION:
+        if source.source_kind not in self.ingestible_source_kinds:
             raise SourceFormatError(
                 source_path,
-                f"Claude Code source kind {source.source_kind.value} is not parsed in PR 2",
+                f"Claude Code source kind {source.source_kind.value} is not a session transcript",
             )
 
         valid_records, malformed_warnings = read_claude_jsonl(source, source_path)
@@ -81,6 +86,7 @@ class ClaudeCodeAdapter(BaseAdapter):
             parse_warnings=malformed_warnings,
         )
         add_session_identity_warnings(bundle, source, session_metadata)
+        add_topology_warnings(bundle, source)
 
         metadata_only_counts: dict[str, int] = {}
         tool_uses: list[ClaudeToolUse] = []
@@ -96,13 +102,23 @@ class ClaudeCodeAdapter(BaseAdapter):
             )
             bundle.raw_events.append(event)
 
-            if bool_value(record.get("isSidechain")) is True:
+            is_sidechain_record = bool_value(record.get("isSidechain"))
+            if source.source_kind is SourceKind.ROOT_SESSION and is_sidechain_record is True:
                 bundle.parse_warnings.append(
                     warning_for_record(
                         source,
                         record_index,
                         "unexpected_sidechain_record",
                         "Root Claude source contains a sidechain record",
+                    )
+                )
+            elif source.source_kind is SourceKind.SUBSESSION and is_sidechain_record is False:
+                bundle.parse_warnings.append(
+                    warning_for_record(
+                        source,
+                        record_index,
+                        "unexpected_root_record",
+                        "Claude Code subagent source contains a non-sidechain record",
                     )
                 )
 
@@ -144,13 +160,33 @@ class ClaudeCodeAdapter(BaseAdapter):
 
     def source_for_path(self, path: Path) -> SessionSource:
         source_kind = classify_claude_path(path)
-        return SessionSource(
+        if source_kind is SourceKind.SUBSESSION:
+            discovery_root = path.parents[2]
+            discovered = self.discover(discovery_root)
+            matched = next(
+                (source for source in discovered if Path(source.source_path) == path),
+                None,
+            )
+            if matched is not None:
+                return matched
+        source = SessionSource(
             source_id=source_id_for_path(self.name, path),
             agent_name=self.name,
             source_path=str(path),
             source_kind=source_kind,
-            metadata={"ignored": source_kind is not SourceKind.ROOT_SESSION},
+            metadata={"ignored": source_kind not in self.ingestible_source_kinds},
         )
+        if source_kind is SourceKind.ROOT_SESSION:
+            session_dir = path.parent / path.stem
+            related_sources = [source]
+            if session_dir.is_dir():
+                related_sources.extend(
+                    self._source_for_path(candidate, path.parent)
+                    for candidate in sorted(session_dir.rglob("*"))
+                    if candidate.is_file()
+                )
+            enrich_claude_sources(related_sources)
+        return source
 
     def _source_for_path(self, path: Path, root: Path) -> SessionSource:
         source_kind = classify_claude_path(path, root)
@@ -161,9 +197,28 @@ class ClaudeCodeAdapter(BaseAdapter):
             source_kind=source_kind,
             metadata={
                 "relative_path": str(path.relative_to(root)),
-                "ignored": source_kind is not SourceKind.ROOT_SESSION,
+                "ignored": source_kind not in self.ingestible_source_kinds,
             },
         )
+
+    def _topology_context(
+        self,
+        sources: list[SessionSource],
+        discovery_root: Path,
+    ) -> list[SessionSource]:
+        if discovery_root.name == "subagents":
+            session_dir = discovery_root.parent
+        elif (discovery_root / "subagents").is_dir():
+            session_dir = discovery_root
+        else:
+            return sources
+
+        root_path = session_dir.parent / f"{session_dir.name}.jsonl"
+        if not root_path.is_file() or any(
+            Path(source.source_path) == root_path for source in sources
+        ):
+            return sources
+        return [*sources, self._source_for_path(root_path, session_dir.parent)]
 
 
 def parse_message_record(
@@ -352,13 +407,20 @@ def parse_user_tool_results(
             )
         tool_result = ClaudeToolResult(event=event, record=record, block=block)
         tool_results.append(tool_result)
+        normalized_result = tool_result_from_block(
+            session_metadata.session_id,
+            event,
+            record,
+            block,
+            block_index,
+        )
         bundle.tool_results.append(
-            tool_result_from_block(
-                session_metadata.session_id,
-                event,
+            enrich_tool_result_from_sidecar(
+                bundle,
+                source,
+                record_index,
                 record,
-                block,
-                block_index,
+                normalized_result,
             )
         )
 

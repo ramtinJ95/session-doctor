@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Any
 
 from session_doctor.ids import stable_id
-from session_doctor.schemas import AgentName, Session, SessionSource
+from session_doctor.schemas import AgentName, Session, SessionSource, SourceKind
 
-from .common import dict_value, parse_timestamp, string_value
+from .common import dict_value, int_value, parse_timestamp, string_value
 
 
 @dataclass(frozen=True)
@@ -43,6 +43,9 @@ def extract_session_metadata(
     )
     cwd = first_chronological_cwd(records)
 
+    is_sidechain = source.source_kind is SourceKind.SUBSESSION
+    source_metadata = source.metadata
+    sidecar_metadata = dict_value(source_metadata.get("claude_subagent_metadata"))
     session = Session(
         session_id=session_id,
         source_id=source.source_id,
@@ -55,7 +58,8 @@ def extract_session_metadata(
         agent_version=latest_chronological_string(records, "version"),
         model_provider=latest_chronological_message_string(records, "provider"),
         model=latest_chronological_message_string(records, "model"),
-        is_sidechain=False,
+        parent_session_id=string_value(source_metadata.get("claude_parent_session_id")),
+        is_sidechain=is_sidechain,
         metadata={
             "source_path": source.source_path,
             "observed_cwds": list(observed_cwds),
@@ -66,6 +70,13 @@ def extract_session_metadata(
             "entrypoints": list(entrypoints),
             "models": list(models),
             "providers": list(providers),
+            "agent_ids": list(ordered_strings(records, "agentId")),
+            "source_tool_assistant_uuids": list(
+                ordered_strings(records, "sourceToolAssistantUUID")
+            ),
+            "parent_link_status": string_value(source_metadata.get("claude_parent_link_status")),
+            "nesting_depth": int_value(source_metadata.get("claude_nesting_depth")),
+            "subagent_metadata": sidecar_metadata if is_sidechain else {},
         },
     )
     return ClaudeSessionMetadata(

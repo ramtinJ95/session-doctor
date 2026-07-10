@@ -145,6 +145,15 @@ def render_ingest_summary(summary: IngestSummary, database_path: Path, console: 
     table.add_column("Value")
     table.add_row("Database", str(database_path))
     table.add_row("Sources", str(summary.source_count))
+    if summary.discovered_source_counts:
+        parsed_counts = summary.selected_source_counts or {}
+        ignored_counts = {
+            key: count - parsed_counts.get(key, 0)
+            for key, count in summary.discovered_source_counts.items()
+            if count > parsed_counts.get(key, 0)
+        }
+        table.add_row("Discovered parsed kinds", format_source_counts(parsed_counts))
+        table.add_row("Deliberately ignored kinds", format_source_counts(ignored_counts))
     table.add_row("Skipped sources", str(summary.skipped_source_count))
     table.add_row("Sessions", str(summary.session_count))
     table.add_row("Messages", str(summary.message_count))
@@ -161,6 +170,10 @@ def render_ingest_summary(summary: IngestSummary, database_path: Path, console: 
 
     if summary.skipped_source_count:
         raise typer.Exit(1)
+
+
+def format_source_counts(counts: dict[str, int]) -> str:
+    return ", ".join(f"{key}={value}" for key, value in sorted(counts.items())) or "0"
 
 
 def render_analysis_summary(

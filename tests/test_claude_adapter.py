@@ -15,6 +15,7 @@ from session_doctor.schemas import AgentName, NormalizedRole, SessionSource, Sou
 from session_doctor.store import DuckDBStore
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "claude"
+TOPOLOGY_FIXTURE_DIR = FIXTURE_DIR / "topology"
 
 
 def source_for_fixture(
@@ -651,7 +652,7 @@ def test_claude_idless_duplicate_file_tools_persist_with_explicit_false(tmp_path
     assert store.table_count("file_activities") == 2
 
 
-def test_claude_discovery_classifies_all_sources_but_ingests_only_roots(tmp_path) -> None:
+def test_claude_discovery_classifies_all_sources_and_ingests_transcripts(tmp_path) -> None:
     project_dir = tmp_path / "project"
     session_dir = project_dir / "session-1"
     subagents_dir = session_dir / "subagents"
@@ -674,16 +675,22 @@ def test_claude_discovery_classifies_all_sources_but_ingests_only_roots(tmp_path
     discovered = adapter.discover(tmp_path)
     assert {Path(source.source_path): source.source_kind for source in discovered} == paths
     assert [source.source_kind for source in sources_for_ingest(adapter, tmp_path)] == [
-        SourceKind.ROOT_SESSION
+        SourceKind.ROOT_SESSION,
+        SourceKind.SUBSESSION,
     ]
     assert classify_claude_path(subagents_dir / "agent-a.jsonl", tmp_path) is (
         SourceKind.SUBSESSION
     )
     assert [source.source_kind for source in sources_for_ingest(adapter, project_dir)] == [
-        SourceKind.ROOT_SESSION
+        SourceKind.ROOT_SESSION,
+        SourceKind.SUBSESSION,
     ]
-    assert sources_for_ingest(adapter, session_dir) == []
-    assert sources_for_ingest(adapter, subagents_dir) == []
+    assert [source.source_kind for source in sources_for_ingest(adapter, session_dir)] == [
+        SourceKind.SUBSESSION
+    ]
+    assert [source.source_kind for source in sources_for_ingest(adapter, subagents_dir)] == [
+        SourceKind.SUBSESSION
+    ]
     assert sources_for_ingest(adapter, tool_results_dir) == []
 
 
@@ -713,10 +720,272 @@ def test_claude_explicit_file_classification_matches_discovery(tmp_path) -> None
     assert adapter.source_for_path(sidecar_path).source_kind is SourceKind.TOOL_RESULT
 
 
-def test_claude_rejects_non_root_source_kind() -> None:
+def test_claude_rejects_non_transcript_source_kind() -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
 
-    with pytest.raises(SourceFormatError, match="is not parsed in PR 2"):
+    with pytest.raises(SourceFormatError, match="is not a session transcript"):
         ClaudeCodeAdapter().parse_source(
-            source_for_fixture(fixture_path, source_kind=SourceKind.SUBSESSION)
+            source_for_fixture(fixture_path, source_kind=SourceKind.TOOL_RESULT)
         )
+
+
+def test_claude_topology_links_root_and_nested_subagents() -> None:
+    adapter = ClaudeCodeAdapter()
+    selected = sources_for_ingest(adapter, TOPOLOGY_FIXTURE_DIR)
+    root_source, agent_a_source, agent_b_source = selected
+
+    assert [source.source_kind for source in selected] == [
+        SourceKind.ROOT_SESSION,
+        SourceKind.SUBSESSION,
+        SourceKind.SUBSESSION,
+    ]
+    assert agent_a_source.parent_source_id == root_source.source_id
+    assert agent_b_source.parent_source_id == agent_a_source.source_id
+
+    root_bundle = adapter.parse_source(root_source)
+    agent_a_bundle = adapter.parse_source(agent_a_source)
+    agent_b_bundle = adapter.parse_source(agent_b_source)
+
+    assert root_bundle.session is not None
+    assert agent_a_bundle.session is not None
+    assert agent_b_bundle.session is not None
+    assert root_bundle.session.is_sidechain is False
+    assert agent_a_bundle.session.is_sidechain is True
+    assert agent_b_bundle.session.is_sidechain is True
+    assert agent_a_bundle.session.parent_session_id == root_bundle.session.session_id
+    assert agent_b_bundle.session.parent_session_id == agent_a_bundle.session.session_id
+    assert agent_a_bundle.session.metadata["nesting_depth"] == 1
+    assert agent_b_bundle.session.metadata["nesting_depth"] == 2
+    assert agent_a_bundle.session.metadata["agent_ids"] == ["agent-a"]
+    assert agent_a_bundle.session.metadata["subagent_metadata"]["agent_type"] == "Explore"
+    assert agent_b_bundle.session.metadata["subagent_metadata"]["permission_mode"] == "plan"
+
+    root_warning_codes = {warning.metadata["code"] for warning in root_bundle.parse_warnings}
+    assert "orphan_subagent_metadata" in root_warning_codes
+    assert "orphan_tool_result_sidecar" in root_warning_codes
+
+    directly_selected = sources_for_ingest(
+        adapter,
+        TOPOLOGY_FIXTURE_DIR / "project/session-root/subagents",
+    )
+    assert len(directly_selected) == 2
+    assert all(source.parent_source_id is not None for source in directly_selected)
+
+
+def test_claude_correlates_tool_result_sidecar_without_raw_content() -> None:
+    adapter = ClaudeCodeAdapter()
+    root_source = sources_for_ingest(adapter, TOPOLOGY_FIXTURE_DIR)[0]
+
+    bundle = adapter.parse_source(root_source)
+
+    tool_result = bundle.tool_results[0]
+    expected_output = (
+        TOPOLOGY_FIXTURE_DIR / "project/session-root/tool-results/result-a.txt"
+    ).read_bytes()
+    assert tool_result.output_hash == hash_text(expected_output.decode())
+    assert tool_result.output_length == len(expected_output)
+    assert tool_result.metadata["sidecar_correlated"] is True
+    assert tool_result.metadata["sidecar_length"] == len(expected_output)
+    serialized = bundle.model_dump_json()
+    assert "PRIVATE_PERSISTED_TOOL_OUTPUT" not in serialized
+    assert "PRIVATE_ORPHAN_TOOL_OUTPUT" not in serialized
+    assert "PRIVATE_SUBAGENT_TASK" not in serialized
+
+
+def test_claude_subagent_without_parent_signal_warns_instead_of_guessing(tmp_path) -> None:
+    project_dir = tmp_path / "project"
+    subagents_dir = project_dir / "session-1" / "subagents"
+    subagents_dir.mkdir(parents=True)
+    (project_dir / "session-1.jsonl").write_text(
+        '{"type":"assistant","sessionId":"session-1","uuid":"root-1"}\n'
+    )
+    subagent_path = subagents_dir / "agent-a.jsonl"
+    subagent_path.write_text(
+        '{"type":"assistant","sessionId":"session-1","uuid":"sub-1",'
+        '"isSidechain":true,"message":{"role":"assistant","content":[]}}\n'
+    )
+    adapter = ClaudeCodeAdapter()
+    subagent_source = next(
+        source
+        for source in adapter.discover(tmp_path)
+        if source.source_kind is SourceKind.SUBSESSION
+    )
+
+    bundle = adapter.parse_source(subagent_source)
+
+    assert subagent_source.parent_source_id is None
+    assert bundle.session is not None
+    assert bundle.session.parent_session_id is None
+    assert {warning.metadata["code"] for warning in bundle.parse_warnings} >= {
+        "subagent_parent_missing",
+        "subagent_metadata_missing",
+    }
+
+
+def test_claude_subagent_ambiguous_parent_signals_remain_unlinked(tmp_path) -> None:
+    project_dir = tmp_path / "project"
+    subagents_dir = project_dir / "session-1" / "subagents"
+    subagents_dir.mkdir(parents=True)
+    (project_dir / "session-1.jsonl").write_text(
+        json.dumps(assistant_agent_record("root-parent", "shared-tool", sidechain=False))
+    )
+    (subagents_dir / "agent-parent.jsonl").write_text(
+        json.dumps(assistant_agent_record("sub-parent", "shared-tool", sidechain=True))
+    )
+    child_path = subagents_dir / "agent-child.jsonl"
+    child_path.write_text(
+        json.dumps(assistant_text_record("child", sidechain=True, agent_id="child"))
+    )
+    child_path.with_suffix(".meta.json").write_text(
+        json.dumps({"agentType": "Explore", "toolUseId": "shared-tool"})
+    )
+    adapter = ClaudeCodeAdapter()
+    child_source = next(
+        source for source in adapter.discover(tmp_path) if Path(source.source_path) == child_path
+    )
+
+    bundle = adapter.parse_source(child_source)
+
+    assert child_source.parent_source_id is None
+    assert child_source.metadata["claude_parent_link_status"] == "ambiguous"
+    assert child_source.metadata["claude_parent_candidate_count"] == 2
+    assert "subagent_parent_ambiguous" in {
+        warning.metadata["code"] for warning in bundle.parse_warnings
+    }
+
+
+def test_claude_subagent_conflicting_parent_signals_warn(tmp_path) -> None:
+    project_dir = tmp_path / "project"
+    subagents_dir = project_dir / "session-1" / "subagents"
+    subagents_dir.mkdir(parents=True)
+    root_record = assistant_agent_record("root-parent", "root-tool", sidechain=False)
+    root_record["agentId"] = "root-agent"
+    (project_dir / "session-1.jsonl").write_text(json.dumps(root_record))
+    sub_parent_record = assistant_agent_record("sub-parent", "sub-tool", sidechain=True)
+    sub_parent_record["agentId"] = "sub-parent-agent"
+    (subagents_dir / "agent-parent.jsonl").write_text(json.dumps(sub_parent_record))
+    child_path = subagents_dir / "agent-child.jsonl"
+    child_record = assistant_text_record("child", sidechain=True, agent_id="child")
+    child_path.write_text(json.dumps(child_record))
+    child_path.with_suffix(".meta.json").write_text(
+        json.dumps(
+            {
+                "agentType": "Explore",
+                "parentAgentId": "root-agent",
+                "toolUseId": "sub-tool",
+            }
+        )
+    )
+    adapter = ClaudeCodeAdapter()
+    child_source = next(
+        source for source in adapter.discover(tmp_path) if Path(source.source_path) == child_path
+    )
+
+    bundle = adapter.parse_source(child_source)
+
+    assert child_source.parent_source_id is None
+    assert child_source.metadata["claude_parent_link_status"] == "mismatched"
+    assert "subagent_parent_mismatched" in {
+        warning.metadata["code"] for warning in bundle.parse_warnings
+    }
+
+
+def test_claude_malformed_and_mismatched_metadata_warns(tmp_path) -> None:
+    project_dir = tmp_path / "project"
+    subagents_dir = project_dir / "session-1" / "subagents"
+    subagents_dir.mkdir(parents=True)
+    (project_dir / "session-1.jsonl").write_text(
+        json.dumps(assistant_agent_record("root-parent", "agent-tool", sidechain=False))
+    )
+    malformed_path = subagents_dir / "agent-malformed.jsonl"
+    malformed_record = assistant_text_record(
+        "malformed", sidechain=True, agent_id="agent-malformed"
+    )
+    malformed_record["sourceToolAssistantUUID"] = "root-parent"
+    malformed_path.write_text(json.dumps(malformed_record))
+    malformed_path.with_suffix(".meta.json").write_text("not json")
+    mismatch_path = subagents_dir / "agent-mismatch.jsonl"
+    mismatch_record = assistant_text_record("mismatch", sidechain=True, agent_id="agent-mismatch")
+    mismatch_record["sourceToolAssistantUUID"] = "root-parent"
+    mismatch_path.write_text(json.dumps(mismatch_record))
+    mismatch_path.with_suffix(".meta.json").write_text(
+        json.dumps({"agentId": "different-agent", "agentType": "Explore"})
+    )
+    adapter = ClaudeCodeAdapter()
+    sources = {Path(source.source_path): source for source in adapter.discover(tmp_path)}
+
+    malformed_bundle = adapter.parse_source(sources[malformed_path])
+    mismatch_bundle = adapter.parse_source(sources[mismatch_path])
+
+    assert "subagent_metadata_malformed" in {
+        warning.metadata["code"] for warning in malformed_bundle.parse_warnings
+    }
+    assert "subagent_metadata_mismatched" in {
+        warning.metadata["code"] for warning in mismatch_bundle.parse_warnings
+    }
+
+
+def test_claude_missing_and_unsafe_tool_result_sidecars_warn(tmp_path) -> None:
+    root_path = tmp_path / "session-1.jsonl"
+    session_dir = tmp_path / "session-1"
+    (session_dir / "tool-results").mkdir(parents=True)
+    records = []
+    for index, persisted_path in enumerate(
+        ("tool-results/missing.txt", str(tmp_path / "outside.txt"))
+    ):
+        record = {
+            "type": "user",
+            "sessionId": "session-1",
+            "uuid": f"result-{index}",
+            "message": {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": f"tool-{index}"}],
+            },
+            "toolUseResult": {"persistedOutputPath": persisted_path},
+        }
+        records.append(record)
+    root_path.write_text("\n".join(json.dumps(record) for record in records))
+
+    bundle = ClaudeCodeAdapter().parse_source(ClaudeCodeAdapter().source_for_path(root_path))
+
+    assert {warning.metadata["code"] for warning in bundle.parse_warnings} >= {
+        "missing_tool_result_sidecar",
+        "unsafe_tool_result_sidecar_path",
+    }
+    assert str(tmp_path / "outside.txt") not in bundle.model_dump_json()
+
+
+def assistant_agent_record(uuid: str, tool_use_id: str, *, sidechain: bool) -> dict:
+    return {
+        "type": "assistant",
+        "sessionId": "session-1",
+        "uuid": uuid,
+        "isSidechain": sidechain,
+        "message": {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": tool_use_id,
+                    "name": "Agent",
+                    "input": {},
+                }
+            ],
+        },
+    }
+
+
+def assistant_text_record(
+    uuid: str,
+    *,
+    sidechain: bool,
+    agent_id: str,
+) -> dict:
+    return {
+        "type": "assistant",
+        "sessionId": "session-1",
+        "uuid": uuid,
+        "agentId": agent_id,
+        "isSidechain": sidechain,
+        "message": {"role": "assistant", "content": []},
+    }

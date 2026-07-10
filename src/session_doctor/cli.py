@@ -24,6 +24,7 @@ from .cli_options import (
     require_existing_database_path,
     require_summary_output_format,
     require_valid_database_path,
+    source_selection_for_ingest,
     sources_for_ingest,
     summary_filters_from_options,
 )
@@ -228,7 +229,8 @@ def ingest(
     database_path = database_path_from_option(db)
     require_valid_database_path(database_path)
     require_current_database_schema(database_path, allow_empty=True)
-    sources = sources_for_ingest(adapter, source)
+    selection = source_selection_for_ingest(adapter, source)
+    sources = list(selection.sources)
     store = DuckDBStore(database_path)
     continue_on_source_error = source is None or source.expanduser().is_dir()
     try:
@@ -238,6 +240,7 @@ def ingest(
             store,
             console,
             continue_on_source_error=continue_on_source_error,
+            discovered_source_counts=selection.discovered_counts,
         )
     except RecoverableSourceError as exc:
         console.print(

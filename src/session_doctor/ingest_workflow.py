@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 
 from rich.console import Console
@@ -35,6 +36,8 @@ class IngestSummary:
     file_activity_count: int = 0
     model_usage_count: int = 0
     warning_count: int = 0
+    discovered_source_counts: dict[str, int] | None = None
+    selected_source_counts: dict[str, int] | None = None
     skipped_sources: tuple[SkippedSource, ...] = ()
 
 
@@ -45,8 +48,16 @@ def ingest_sources(
     console: Console,
     *,
     continue_on_source_error: bool,
+    discovered_source_counts: dict[str, int] | None = None,
 ) -> IngestSummary:
-    summary = IngestSummary(agent_display_name=adapter.display_name, source_count=len(sources))
+    summary = IngestSummary(
+        agent_display_name=adapter.display_name,
+        source_count=len(sources),
+        discovered_source_counts=discovered_source_counts,
+        selected_source_counts=dict(
+            sorted(Counter(source.source_kind.value for source in sources).items())
+        ),
+    )
 
     for session_source in sources:
         try:
