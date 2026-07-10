@@ -175,12 +175,15 @@ Commands not currently present: `explain`, `export`.
 src/session_doctor/
   cli.py, cli_options.py, cli_renderers.py
   ingest_workflow.py, analysis_workflow.py, batch_analysis.py
-  summary_payload.py, trend_payload.py
+  diagnostic_models.py, report_models.py
+  summary_payload.py, trend_payload.py, report_payload.py, report_renderers.py
+  graph_projection.py, graph_payload.py
   normalization.py, privacy.py, ids.py, config.py
   adapters/   discovery plus agent-specific record/entity normalization
   analysis/   deterministic features, scores, evidence, and classifications
-  schemas/    strict normalized Pydantic entities
-  store/      DuckDB persistence/loading plus summary, trend, project, and pattern readers
+  schemas/    strict normalized and derived graph Pydantic entities
+  store/      DuckDB persistence/loading plus diagnostic, recurrence, summary,
+              trend, project, and pattern readers
 ```
 
 The map stays at responsibility level deliberately. Individual adapter,
