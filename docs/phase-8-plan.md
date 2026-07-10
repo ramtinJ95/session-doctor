@@ -740,7 +740,9 @@ tests depend on real local session stores or the current date.
 
 ### Shared Aggregate Refactor
 
-- Phase 7 summary output remains unchanged after helper extraction.
+- Phase 7 summary metrics and payload structure remain unchanged after helper
+  extraction. Shared command examples may become more aggressively redacted as
+  the deliberate privacy fix required before recurring-command output.
 - Latest-analysis selection remains deterministic under timestamp ties.
 - current, stale, and never-analyzed states are mutually exclusive
 - mixed analyzer versions never enter one Phase 8 metric
