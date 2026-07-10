@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from session_doctor.analysis.classification_constants import NEGATIVE_LABELS
+
 from .models import SessionScopeFilters
 
 SCORE_NAMES = (
@@ -8,16 +10,6 @@ SCORE_NAMES = (
     "prompt_clarity_risk",
     "agent_fit_risk",
     "project_complexity_signal",
-)
-RISK_LABELS = (
-    "user_stuck",
-    "tooling_blocked",
-    "agent_looping",
-    "agent_misunderstood",
-    "prompt_ambiguous",
-    "task_too_large",
-    "repo_complexity_high",
-    "abandoned_or_stopped",
 )
 PRIMARY_RISK_LABELS = ("user_stuck", "tooling_blocked", "agent_looping")
 RISK_SCORE_THRESHOLD = 0.55
@@ -87,7 +79,7 @@ def score_features_sql() -> str:
 
 
 def label_groups_sql() -> str:
-    risk_labels = sql_string_list(RISK_LABELS)
+    risk_labels = sql_string_list(tuple(sorted(NEGATIVE_LABELS)))
     primary_risk_labels = sql_string_list(PRIMARY_RISK_LABELS)
     return f"""
     SELECT
