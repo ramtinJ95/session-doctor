@@ -677,6 +677,8 @@ def test_native_three_adapter_flow_reaches_trends_and_projects(tmp_path) -> None
     assert all(judgment["status"] == "insufficient_data" for judgment in top_level["judgments"])
     assert monthly_result.exit_code == 0
     assert "Session trends" in monthly_result.stdout
+    assert "Sidechain buckets" in monthly_result.stdout
+    assert "Sidechain agent observations" in monthly_result.stdout
     assert projects_result.exit_code == 0
     project_payload = cast("dict[str, Any]", json.loads(projects_result.stdout))
     assert project_payload["unknown_project_sessions"] == 0
