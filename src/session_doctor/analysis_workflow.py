@@ -108,11 +108,17 @@ def analyze_session(
         classifications,
     )
 
-    if artifact_path:
+    staged_artifact_path = None
+    if artifact_path is not None:
+        if artifact_path.is_dir():
+            raise AnalysisArtifactError(artifact_path)
+        staged_artifact_path = artifact_path.with_name(
+            f".{artifact_path.name}.{analysis_run_id}.tmp"
+        )
         try:
-            write_analysis_artifact(artifact_path, payload)
+            write_analysis_artifact(staged_artifact_path, payload)
         except ArtifactWriteError as exc:
-            raise AnalysisArtifactError(exc.path) from exc
+            raise AnalysisArtifactError(artifact_path) from exc
 
     try:
         store.replace_analysis_rows(
@@ -122,7 +128,25 @@ def analyze_session(
             classifications,
         )
     except Exception as exc:
+        discard_staged_artifact(staged_artifact_path)
         raise AnalysisPersistenceError from exc
+
+    if staged_artifact_path is not None and artifact_path is not None:
+        try:
+            staged_artifact_path.replace(artifact_path)
+        except OSError as exc:
+            discard_staged_artifact(staged_artifact_path)
+            analysis_run = analysis_run.model_copy(update={"artifact_path": None})
+            try:
+                store.replace_analysis_rows(
+                    analysis_run,
+                    extracted_features.message_features,
+                    extracted_features.session_features,
+                    classifications,
+                )
+            except Exception as persistence_exc:
+                raise AnalysisPersistenceError from persistence_exc
+            raise AnalysisArtifactError(artifact_path) from exc
 
     return AnalysisResult(
         analysis_run=analysis_run,
@@ -130,3 +154,12 @@ def analyze_session(
         classifications=classifications,
         payload=payload,
     )
+
+
+def discard_staged_artifact(path: Path | None) -> None:
+    if path is None:
+        return
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass

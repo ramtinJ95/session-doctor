@@ -1031,6 +1031,36 @@ def test_analyze_no_artifact_skips_default_artifact(tmp_path) -> None:
     assert not (tmp_path / "artifacts" / f"{session_id}-analysis.json").exists()
 
 
+def test_analyze_artifact_failure_does_not_expose_path(tmp_path) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    store = DuckDBStore(database_path)
+    insert_batch_session(
+        store,
+        session_id="session-artifact-failure",
+        project_path="/work/project",
+        started_at=None,
+    )
+    private_artifact_path = tmp_path / "private-TOP_SECRET" / "result.json"
+    private_artifact_path.parent.write_text("not a directory", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "analyze",
+            "session-artifact-failure",
+            "--db",
+            str(database_path),
+            "--artifact",
+            str(private_artifact_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Could not write analysis artifact" in result.stdout
+    assert "TOP_SECRET" not in result.stdout
+    assert str(private_artifact_path) not in result.stdout
+
+
 def test_analyze_all_selects_stale_and_missing_then_skips_current(tmp_path) -> None:
     database_path = tmp_path / "session-doctor.duckdb"
     store = DuckDBStore(database_path)

@@ -368,7 +368,7 @@ def analyze(
             console.print("[red]Session could not be loaded.[/red]")
         raise typer.Exit(1) from exc
     except AnalysisArtifactError as exc:
-        console.print(f"[red]Could not write artifact:[/red] {exc.path}")
+        console.print("[red]Could not write analysis artifact.[/red]")
         raise typer.Exit(1) from exc
     except AnalysisPersistenceError as exc:
         console.print("[red]Could not persist analysis results.[/red]")

@@ -68,12 +68,31 @@ def test_analysis_workflow_maps_persistence_failure_and_preserves_cause(
             "session-a",
             database_path,
             artifact=None,
-            no_artifact=True,
+            no_artifact=False,
         )
 
     assert failure.value.code.value == "persistence_failed"
     assert failure.value.safe_message == "Analysis results could not be persisted"
     assert isinstance(failure.value.__cause__, RuntimeError)
+    assert not (tmp_path / "artifacts" / "session-a-analysis.json").exists()
+    assert list((tmp_path / "artifacts").glob("*.tmp")) == []
+
+
+def test_analysis_workflow_publishes_artifact_after_persistence(tmp_path) -> None:
+    database_path, store = store_with_empty_session(tmp_path)
+
+    result = analyze_session(
+        store,
+        "session-a",
+        database_path,
+        artifact=None,
+        no_artifact=False,
+    )
+
+    artifact_path = tmp_path / "artifacts" / "session-a-analysis.json"
+    assert artifact_path.exists()
+    assert result.analysis_run.artifact_path == str(artifact_path)
+    assert list(artifact_path.parent.glob("*.tmp")) == []
 
 
 def store_with_empty_session(tmp_path: Path) -> tuple[Path, DuckDBStore]:
