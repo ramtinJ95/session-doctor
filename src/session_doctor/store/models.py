@@ -29,9 +29,13 @@ class SessionSummary:
 
 
 @dataclass(frozen=True)
-class SummaryFilters:
+class SessionScopeFilters:
     agent_name: str | None = None
     project_path: str | None = None
+
+
+@dataclass(frozen=True)
+class SummaryFilters(SessionScopeFilters):
     limit: int = 10
 
 

@@ -11,10 +11,11 @@ from session_doctor.schemas import (
     SessionSource,
 )
 
+from .analysis_readers import AnalysisTarget, list_analysis_targets
 from .connection import initialize_database, inspection_connection
 from .json_values import duckdb_value, metadata_json, parse_metadata, parse_string_list
 from .migrations import require_current_schema
-from .models import AggregateSummary, SessionSummary, StoreInfo, SummaryFilters
+from .models import AggregateSummary, SessionScopeFilters, SessionSummary, StoreInfo, SummaryFilters
 from .readers import (
     list_session_summaries,
     load_session_bundle,
@@ -112,6 +113,12 @@ class DuckDBStore:
 
     def aggregate_summary(self, filters: SummaryFilters) -> AggregateSummary:
         return read_aggregate_summary(self.database_path, filters)
+
+    def list_analysis_targets(
+        self,
+        filters: SessionScopeFilters,
+    ) -> tuple[AnalysisTarget, ...]:
+        return list_analysis_targets(self.database_path, filters)
 
     def load_session_bundle(self, session_id: str) -> ParsedSessionBundle | None:
         return load_session_bundle(self.database_path, session_id)

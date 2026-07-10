@@ -7,7 +7,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from .analysis import analyze_features, classify_session
+from .analysis import ANALYZER_VERSION, analyze_features, classify_session
 from .artifacts import analysis_payload, artifact_path_for_analysis, write_analysis_artifact
 from .ids import stable_id
 from .schemas import AnalysisRun, SessionClassification, SessionFeature
@@ -50,7 +50,7 @@ def analyze_session(
         session_id=session_id,
         started_at=started_at,
         completed_at=datetime.now(UTC),
-        analyzer_version="phase6",
+        analyzer_version=ANALYZER_VERSION,
         artifact_path=str(artifact_path) if artifact_path else None,
     )
     payload = analysis_payload(
