@@ -40,7 +40,10 @@ session-doctor ingest --agent codex [--source PATH] [--db PATH]
 session-doctor ingest --agent pi [--source PATH] [--db PATH]
 session-doctor sessions list
 session-doctor analyze <session-id> [--format terminal|json] [--artifact PATH] [--no-artifact]
+session-doctor analyze --all [--project PATH] [--agent AGENT] [--force]
 session-doctor summary [--format terminal|json] [--project PATH] [--agent AGENT] [--limit N]
+session-doctor trends [--project PATH] [--agent AGENT] [--bucket week|month] [--periods N]
+session-doctor projects list [--agent AGENT] [--limit N] [--format terminal|json]
 session-doctor report <session-id>
 session-doctor graph <session-id>
 ```
@@ -64,6 +67,7 @@ The first complete product iteration should support:
 - normalized event storage
 - DuckDB-backed local analysis
 - deterministic features and explainable scoring
+- deterministic project-level trend and recurrence views
 - a planned graph command and graph projection model
 
 The current implementation parses Codex, Pi, and Claude Code root/subagent
@@ -76,8 +80,8 @@ implementation slice.
 ## Current Repository State
 
 As of the current repository state, Phase 5 deterministic feature hardening,
-Phase 6 classification scoring, and Phase 7 aggregate summaries are
-implemented.
+Phase 6 classification scoring, Phase 7 aggregate summaries, and Phase 8
+project-level trends are implemented.
 The repository has a working local CLI for ingesting and analyzing Codex, Pi,
 and Claude Code root/subagent logs. Claude discovery also classifies metadata,
 persisted tool results, memory, and auxiliary files. Related sidecars are
@@ -94,6 +98,7 @@ Codex/Pi/Claude root or subagent JSONL source
   -> deterministic classification
   -> persisted analysis rows + optional JSON artifact
   -> aggregate summary queries over ingested/analyzed sessions
+  -> aligned project/agent/cohort trend and recurrence views
 ```
 
 ### Implemented Capabilities
@@ -119,10 +124,19 @@ The tool can currently:
   classifications
 - write machine-readable JSON analysis artifacts by default, or print the same
   payload with `analyze --format json`
+- restore stale or missing current analysis deliberately with filtered
+  `analyze --all`, without writing batch artifacts by default
 - summarize all ingested sessions with optional agent/project filters
 - print aggregate summaries as terminal tables or JSON, including analysis
   coverage, labels, risky sessions, failed commands, repeated files, and
   deterministic next-step recommendations
+- calculate read-only weekly/monthly series anchored to the latest matching
+  timed session, with explicit empty periods and analysis compatibility
+- keep top-level and sidechain scores, classifications, risk rates, judgments,
+  and agent observations separate
+- list exact observed project/CWD hints without inferred repository identity
+- correlate recurring failed commands, opaque failed-tool fingerprints, and
+  problematic files only across distinct valid root-session families
 
 Implemented commands:
 
@@ -139,8 +153,14 @@ session-doctor ingest --agent claude [--source PATH] [--db PATH]
 session-doctor sessions list [--db PATH]
 session-doctor analyze <session-id> [--db PATH] [--format terminal|json]
 session-doctor analyze <session-id> [--artifact PATH | --no-artifact]
+session-doctor analyze --all [--project PATH] [--agent codex|claude|pi]
+session-doctor analyze --all [--force] [--write-artifacts] [--format terminal|json]
 session-doctor summary [--db PATH] [--format terminal|json]
 session-doctor summary [--agent codex|claude|pi] [--project PATH] [--limit N]
+session-doctor trends [--db PATH] [--format terminal|json]
+session-doctor trends [--project PATH] [--agent codex|claude|pi]
+session-doctor trends [--bucket week|month] [--periods 1..120] [--limit N]
+session-doctor projects list [--db PATH] [--agent codex|claude|pi] [--limit N]
 ```
 
 Reserved commands that exist but exit as not implemented:
@@ -157,12 +177,13 @@ Commands not currently present: `explain`, `export`.
 ```text
 src/session_doctor/
   cli.py, cli_options.py, cli_renderers.py
-  ingest_workflow.py, analysis_workflow.py, summary_payload.py
+  ingest_workflow.py, analysis_workflow.py, batch_analysis.py
+  summary_payload.py, trend_payload.py
   normalization.py, privacy.py, ids.py, config.py
   adapters/   discovery plus agent-specific record/entity normalization
   analysis/   deterministic features, scores, evidence, and classifications
   schemas/    strict normalized Pydantic entities
-  store/      DuckDB migrations, mapping, persistence, loading, and summaries
+  store/      DuckDB persistence/loading plus summary, trend, project, and pattern readers
 ```
 
 The map stays at responsibility level deliberately. Individual adapter,
@@ -306,7 +327,12 @@ where applicable.
   implemented.
 - Graph tables and Pydantic graph schemas exist, but no graph projection writer
   or reader is implemented yet.
-- Project-trend commands are not implemented yet.
+- Observed project paths are hints, not inferred VCS roots or a project
+  registry; nested paths remain distinct.
+- Directional judgments deliberately remain unavailable without explicit
+  project scope or when fixed density, sample, and coverage gates fail.
+- Recurring fingerprints are correlational identifiers, not secrets and not
+  protection against guessing low-entropy tool output.
 - Export commands are not implemented.
 - The tool is local-only and deterministic; it does not call LLMs or external
   APIs.
@@ -320,14 +346,15 @@ The repository also has synthetic tests for CLI behavior, schema validation,
 DuckDB initialization and round-tripping, adapter discovery, Codex parsing, Pi
 parsing, Claude root parsing, ingest behavior, session listing, feature
 extraction, classification, analysis persistence, analysis artifacts, aggregate
-summaries, and privacy helpers.
+summaries, weekly/monthly trends, project discovery, family recurrence, and
+privacy helpers.
 
-The named Pre-Phase-8 work in `docs/pre-phase-8-plan.md` hardens cross-adapter
-identities and ingestion failures, adds Claude root parsing, and completes
+The named Pre-Phase-8 work in `docs/pre-phase-8-plan.md` hardened cross-adapter
+identities and ingestion failures, added Claude root parsing, and completed
 Claude subagents, sidecars, and copied-local validation before project-level
-trends begin. Human-readable reports and graph projection remain after trend
-views so they can reuse the same aggregate queries and evidence model rather
-than inventing a parallel reporting layer.
+trends. Human-readable reports and graph projection remain after trend views so
+they can reuse the same aggregate queries and evidence model rather than
+inventing a parallel reporting layer.
 
 ## Local Session Inspection Findings
 
@@ -1959,8 +1986,8 @@ Detailed plan: `docs/phase-7-plan.md`.
 
 ### Phase 8: Project-Level Trends
 
-Plan a read-only trend query layer over normalized sessions and latest persisted
-analysis, plus an explicit batch-analysis recovery command:
+Implemented a read-only trend query layer over normalized sessions and latest
+persisted analysis, plus an explicit batch-analysis recovery command:
 
 - aligned weekly/monthly project scopes
 - current-analyzer coverage, explicit stale analysis, and a filtered
@@ -1975,7 +2002,7 @@ analysis, plus an explicit batch-analysis recovery command:
 This phase should provide the first useful view over all sessions and over a
 specific folder/project. It should still stay deterministic and local-only.
 
-Likely command shape:
+Command shape:
 
 ```bash
 session-doctor trends
@@ -1983,10 +2010,13 @@ session-doctor trends --project /path/to/project
 session-doctor projects list
 ```
 
-Status: planned. The detailed plan completed grilling and is approved for
-implementation; Phase 8 code has not started.
+Status: complete. Trends and project discovery remain local-only and read-only;
+batch analysis is a separate explicit mutation. Fixture and copied-local
+validation cover Codex, Claude Code, and Pi. Sparse copied-local history returned
+honest `insufficient_data` rather than weakening fixed gates.
 
 Detailed plan: `docs/phase-8-plan.md`.
+Validation: `docs/phase-8-validation.md`.
 
 ### Phase 9: Reports And Graph Projection
 

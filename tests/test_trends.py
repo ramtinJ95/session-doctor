@@ -42,6 +42,7 @@ from session_doctor.store.trend_readers import (
 from session_doctor.trend_payload import trend_payload
 
 runner = CliRunner()
+FIXTURE_ROOT = Path(__file__).parent / "fixtures"
 
 
 def test_trends_aligns_weekly_scope_coverage_and_cohorts(tmp_path) -> None:
@@ -587,6 +588,90 @@ def test_trends_rejects_missing_database(tmp_path) -> None:
 
     assert result.exit_code == 1
     assert "Database does not exist" in result.stdout
+
+
+def test_native_three_adapter_flow_reaches_trends_and_projects(tmp_path) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    for agent in ("codex", "claude", "pi"):
+        ingest_result = runner.invoke(
+            app,
+            [
+                "ingest",
+                "--agent",
+                agent,
+                "--source",
+                str(FIXTURE_ROOT / agent / "repeated-failure-session.jsonl"),
+                "--db",
+                str(database_path),
+            ],
+        )
+        assert ingest_result.exit_code == 0
+
+    analysis_result = runner.invoke(
+        app,
+        ["analyze", "--all", "--db", str(database_path), "--format", "json"],
+    )
+    weekly_result = runner.invoke(
+        app,
+        ["trends", "--db", str(database_path), "--format", "json"],
+    )
+    monthly_result = runner.invoke(
+        app,
+        [
+            "trends",
+            "--db",
+            str(database_path),
+            "--project",
+            "/tmp/session-doctor",
+            "--bucket",
+            "month",
+            "--periods",
+            "3",
+        ],
+    )
+    projects_result = runner.invoke(
+        app,
+        ["projects", "list", "--db", str(database_path), "--format", "json"],
+    )
+
+    assert analysis_result.exit_code == 0
+    analysis_payload = cast("dict[str, Any]", json.loads(analysis_result.stdout))
+    assert analysis_payload["counts"] == {
+        "matching": 3,
+        "selected": 3,
+        "succeeded": 3,
+        "skipped": 0,
+        "failed": 0,
+    }
+    assert weekly_result.exit_code == 0
+    weekly_payload = cast("dict[str, Any]", json.loads(weekly_result.stdout))
+    assert weekly_payload["scope"]["matching_sessions"] == 3
+    top_level = cast("dict[str, Any]", weekly_payload["cohorts"]["top_level"])
+    assert {row["agent"] for row in top_level["agents"]} == {"codex", "claude", "pi"}
+    assert all(judgment["status"] == "insufficient_data" for judgment in top_level["judgments"])
+    assert monthly_result.exit_code == 0
+    assert "Session trends" in monthly_result.stdout
+    assert projects_result.exit_code == 0
+    project_payload = cast("dict[str, Any]", json.loads(projects_result.stdout))
+    assert project_payload["unknown_project_sessions"] == 0
+    assert project_payload["projects"] == [
+        {
+            "project": "/tmp/session-doctor",
+            "sessions": 3,
+            "top_level_sessions": 3,
+            "sidechain_sessions": 0,
+            "analysis": {
+                "current": 3,
+                "stale": 0,
+                "never": 0,
+                "version_counts": {ANALYZER_VERSION: 3},
+            },
+            "first_session_at": "2026-05-06T09:00:00",
+            "latest_session_at": "2026-05-08T12:00:00",
+            "agents": ["claude", "codex", "pi"],
+        }
+    ]
+    assert not (tmp_path / "artifacts").exists()
 
 
 def add_session(

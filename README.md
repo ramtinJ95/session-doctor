@@ -82,6 +82,19 @@ Pre-Phase-8 PR 3 completes the Claude adapter:
 - copied-local validation exercises discovery, ingestion, analysis, summary,
   parent linkage, and privacy invariants
 
+Phase 8 adds deterministic project-level trends:
+
+- filtered `analyze --all` recovery for stale and never-analyzed sessions
+- aligned weekly/monthly `trends` over current analyzer-version rows
+- explicit coverage, score samples, classification/risk denominators, and empty
+  periods
+- separate top-level and sidechain cohorts with guarded project-scoped
+  directions
+- non-causal agent observations and exact observed project-path hints
+- root-family recurring failed commands, opaque failed-tool fingerprints, and
+  problematic files without exposing native output or content
+- `projects list` discovery without guessed repository roots
+
 ## Usage
 
 Install dependencies:
@@ -181,6 +194,20 @@ By default, `analyze` writes a JSON artifact beside the DuckDB file:
 Use `--no-artifact` to skip artifact writing or `--artifact <path>` to choose a
 specific output path.
 
+Restore current analysis coverage deliberately across matching sessions:
+
+```bash
+uv run session-doctor analyze --all --db /tmp/session-doctor-test.duckdb
+uv run session-doctor analyze --all \
+  --db /tmp/session-doctor-test.duckdb \
+  --project /tmp/session-doctor \
+  --agent codex
+```
+
+Batch analysis skips already-current sessions by default, continues after
+per-session failures, and writes no artifacts unless `--write-artifacts` is
+specified. Use `--force` to reanalyze already-current matching sessions.
+
 Summarize the local store after ingesting and optionally analyzing sessions:
 
 ```bash
@@ -195,6 +222,28 @@ uv run session-doctor summary \
 
 `summary --limit` controls the maximum rows shown in ranked/detail sections,
 such as risky sessions, failed commands, and repeated files.
+
+Inspect aligned project-level trends and exact observed path hints:
+
+```bash
+uv run session-doctor trends --db /tmp/session-doctor-test.duckdb
+uv run session-doctor trends \
+  --db /tmp/session-doctor-test.duckdb \
+  --project /tmp/session-doctor
+uv run session-doctor trends \
+  --db /tmp/session-doctor-test.duckdb \
+  --bucket month \
+  --periods 12 \
+  --format json
+uv run session-doctor projects list \
+  --db /tmp/session-doctor-test.duckdb \
+  --format json
+```
+
+Trend commands are read-only and never trigger ingestion or analysis. Global
+views expose raw series but reserve directional judgments for an explicit
+`--project` scope. Missing timestamps, stale analysis, sparse periods, and
+insufficient samples remain visible rather than being filled or guessed.
 
 Run the quality gate:
 
@@ -216,4 +265,5 @@ Design references:
 - [Phase 6 Plan](docs/phase-6-plan.md)
 - [Phase 7 Plan](docs/phase-7-plan.md)
 - [Phase 8 Plan](docs/phase-8-plan.md)
+- [Phase 8 Validation](docs/phase-8-validation.md)
 - [Pre-Phase-8 Plan](docs/pre-phase-8-plan.md)
