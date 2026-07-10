@@ -36,6 +36,7 @@ from .cli_options import (
     source_selection_for_ingest,
     sources_for_ingest,
     summary_filters_from_options,
+    trend_filters_from_options,
 )
 from .cli_renderers import (
     ANALYSIS_SUMMARY_FEATURES,
@@ -45,6 +46,7 @@ from .cli_renderers import (
     render_doctor_table,
     render_sessions_table,
     render_summary,
+    render_trends,
     scan_adapter_summary,
 )
 from .cli_renderers import (
@@ -58,6 +60,7 @@ from .ingest_workflow import IngestSummary, ingest_sources
 from .schemas import AnalysisRun, SessionClassification, SessionFeature
 from .store import TABLE_NAMES, DuckDBStore
 from .summary_payload import summary_payload
+from .trend_payload import trend_payload
 
 console = Console()
 
@@ -467,6 +470,61 @@ def summary(
         return
 
     render_summary(aggregate, database_path, console)
+
+
+@app.command()
+def trends(
+    db: Annotated[
+        Path | None,
+        typer.Option(
+            "--db",
+            help="DuckDB path to inspect. Defaults to SESSION_DOCTOR_DB or app data.",
+        ),
+    ] = None,
+    project: Annotated[
+        Path | None,
+        typer.Option(
+            "--project",
+            help="Only include sessions whose project_path or cwd is under this path.",
+        ),
+    ] = None,
+    agent: Annotated[
+        str | None,
+        typer.Option(
+            "--agent",
+            help="Only include sessions from this agent, for example codex, claude, or pi.",
+        ),
+    ] = None,
+    bucket: Annotated[
+        str,
+        typer.Option("--bucket", help="Calendar bucket size: week or month."),
+    ] = "week",
+    periods: Annotated[
+        int,
+        typer.Option("--periods", help="Number of aligned buckets, from 1 to 120."),
+    ] = 12,
+    limit: Annotated[
+        int,
+        typer.Option("--limit", help="Maximum rows for ranked/detail sections."),
+    ] = 10,
+    output_format: Annotated[
+        str,
+        typer.Option("--format", help="Output format: terminal or json."),
+    ] = "terminal",
+) -> None:
+    """Show deterministic project-level session trends."""
+    require_summary_output_format(output_format)
+    filters = trend_filters_from_options(agent, project, bucket, periods, limit)
+    database_path = database_path_from_option(db)
+    require_valid_database_path(database_path)
+    require_existing_database_path(database_path)
+    require_current_database_schema(database_path)
+    report = DuckDBStore(database_path).trends(filters)
+
+    if output_format == "json":
+        typer.echo(json.dumps(trend_payload(report), indent=2, sort_keys=True))
+        return
+    render_trends(report, database_path, console)
 
 
 @app.command()
