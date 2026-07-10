@@ -67,6 +67,16 @@ class SessionTrendRow:
 def read_trends(database_path: Path, filters: TrendFilters) -> TrendReport:
     with read_connection(database_path) as connection:
         rows = session_trend_rows(connection, filters)
+        return build_trend_report(connection, filters, rows)
+
+
+def build_trend_report(
+    connection: duckdb.DuckDBPyConnection,
+    filters: TrendFilters,
+    rows: tuple[SessionTrendRow, ...],
+) -> TrendReport:
+    from .pattern_readers import read_recurring_patterns
+
     latest_session_at = max(
         (row.started_at for row in rows if row.started_at is not None),
         default=None,
@@ -101,6 +111,7 @@ def read_trends(database_path: Path, filters: TrendFilters) -> TrendReport:
             sidechain=build_cohort(sidechain_rows, intervals, filters),
         ),
         projects=project_observations(windowed_rows, filters.limit),
+        recurring_patterns=read_recurring_patterns(connection, filters, window, rows),
     )
 
 

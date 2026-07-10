@@ -9,6 +9,7 @@ from .store.trend_models import (
     AnalysisCompatibilityCounts,
     ProjectObservation,
     ProjectReport,
+    RecurrenceEvidence,
     TrendBucket,
     TrendCohort,
     TrendJudgment,
@@ -52,6 +53,7 @@ def trend_payload(report: TrendReport) -> dict[str, object]:
         },
         "projects": [project_observation_payload(row) for row in report.projects.rows],
         "unknown_project_sessions": report.projects.unknown_sessions,
+        "recurring_patterns": recurring_patterns_payload(report),
     }
 
 
@@ -165,4 +167,47 @@ def project_payload(report: ProjectReport) -> dict[str, object]:
         "filters": {"agent": report.filters.agent_name, "limit": report.filters.limit},
         "projects": [project_observation_payload(row) for row in report.observations.rows],
         "unknown_project_sessions": report.observations.unknown_sessions,
+    }
+
+
+def recurring_patterns_payload(report: TrendReport) -> dict[str, object]:
+    patterns = report.recurring_patterns
+    return {
+        "family_exclusions": {
+            "scope": "matching_sessions",
+            "orphan_parent": patterns.family_exclusions.orphan_parent,
+            "cycle": patterns.family_exclusions.cycle,
+            "cross_agent_parent": patterns.family_exclusions.cross_agent_parent,
+        },
+        "failed_commands": [
+            {"command": row.command, **recurrence_evidence_payload(row.evidence)}
+            for row in patterns.failed_commands
+        ],
+        "failed_tool_results": [
+            {
+                "tool_name": row.tool_name,
+                "fingerprint_id": row.fingerprint_id,
+                **recurrence_evidence_payload(row.evidence),
+            }
+            for row in patterns.failed_tool_results
+        ],
+        "problematic_files": [
+            {"path": redact_home(row.path), **recurrence_evidence_payload(row.evidence)}
+            for row in patterns.problematic_files
+        ],
+    }
+
+
+def recurrence_evidence_payload(evidence: RecurrenceEvidence) -> dict[str, object]:
+    return {
+        "events": evidence.event_count,
+        "sessions": evidence.session_count,
+        "root_families": evidence.root_family_count,
+        "top_level_sessions": evidence.top_level_session_count,
+        "sidechain_sessions": evidence.sidechain_session_count,
+        "agents": list(evidence.agents),
+        "active_buckets": evidence.active_bucket_count,
+        "first_at": timestamp_value(evidence.first_at),
+        "most_recent_at": timestamp_value(evidence.most_recent_at),
+        "example_session_id": evidence.example_session_id,
     }

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -19,6 +19,7 @@ from .store.models import AggregateSummary, SessionSummary, StoreInfo
 from .store.trend_models import (
     ProjectObservation,
     ProjectReport,
+    RecurrenceEvidence,
     TrendCohort,
     TrendMetrics,
     TrendReport,
@@ -418,6 +419,8 @@ def render_trends(report: TrendReport, database_path: Path, console: Console) ->
 
     render_trend_cohort("Top-level", report.cohorts.top_level, console)
     render_trend_cohort("Sidechain", report.cohorts.sidechain, console)
+    render_project_observations(report.projects.rows, report.projects.unknown_sessions, console)
+    render_recurring_patterns(report, console)
 
 
 def render_trend_cohort(title: str, cohort: TrendCohort, console: Console) -> None:
@@ -473,6 +476,9 @@ def render_trend_cohort(title: str, cohort: TrendCohort, console: Console) -> No
         agent_table.add_column("Current")
         agent_table.add_column("Coverage")
         agent_table.add_column("Risk rate")
+        for score_name in SCORE_NAMES:
+            agent_table.add_column(score_name.removesuffix("_score").replace("_risk", ""))
+        agent_table.add_column("Classifications")
         for observation in cohort.agents:
             agent_table.add_row(
                 observation.agent_name,
@@ -480,6 +486,14 @@ def render_trend_cohort(title: str, cohort: TrendCohort, console: Console) -> No
                 str(observation.metrics.current_analyzed),
                 format_rate(observation.metrics.current_analysis_coverage),
                 format_rate(observation.metrics.risky_session_rate),
+                *(
+                    format_score_metric(observation.metrics, score_name)
+                    for score_name in SCORE_NAMES
+                ),
+                ", ".join(
+                    f"{row.label}={row.session_count}/{format_rate(row.rate)}"
+                    for row in observation.metrics.classifications
+                ),
             )
         console.print(agent_table)
 
@@ -518,6 +532,7 @@ def render_project_observations(
     table.add_column("Current")
     table.add_column("Stale")
     table.add_column("Never")
+    table.add_column("Versions")
     table.add_column("First")
     table.add_column("Latest")
     table.add_column("Agents")
@@ -530,14 +545,77 @@ def render_project_observations(
             str(row.analysis.current),
             str(row.analysis.stale),
             str(row.analysis.never),
+            ", ".join(
+                f"{version.analyzer_version}={version.session_count}"
+                for version in row.analysis.version_counts
+            ),
             format_timestamp(row.first_session_at),
             format_timestamp(row.latest_session_at),
             ", ".join(row.agents),
         )
     if not rows:
-        table.add_row("none", "0", "0", "0", "0", "0", "0", "", "", "")
+        table.add_row("none", "0", "0", "0", "0", "0", "0", "", "", "", "")
     console.print(table)
     console.print(f"Unknown project sessions: {unknown_sessions}")
+
+
+def render_recurring_patterns(report: TrendReport, console: Console) -> None:
+    patterns = report.recurring_patterns
+    exclusions = patterns.family_exclusions
+    console.print(
+        "Topology exclusions (matching scope): "
+        f"orphan={exclusions.orphan_parent}, cycle={exclusions.cycle}, "
+        f"cross-agent={exclusions.cross_agent_parent}"
+    )
+    render_pattern_table(
+        "Recurring failed commands",
+        ("Command",),
+        ((row.command, row.evidence) for row in patterns.failed_commands),
+        console,
+    )
+    render_pattern_table(
+        "Recurring failed tool results",
+        ("Tool", "Fingerprint"),
+        ((row.tool_name, row.fingerprint_id, row.evidence) for row in patterns.failed_tool_results),
+        console,
+    )
+    render_pattern_table(
+        "Recurring problematic files",
+        ("Path",),
+        ((redact_home(row.path), row.evidence) for row in patterns.problematic_files),
+        console,
+    )
+
+
+def render_pattern_table(
+    title: str,
+    identity_columns: tuple[str, ...],
+    rows: Iterable[tuple[object, ...]],
+    console: Console,
+) -> None:
+    materialized_rows = list(rows)
+    if not materialized_rows:
+        console.print(f"{title}: none")
+        return
+    table = Table(title=title)
+    for column in identity_columns:
+        table.add_column(column)
+    for column in ("Events", "Sessions", "Families", "Top", "Side", "Buckets", "Recent"):
+        table.add_column(column)
+    for row in materialized_rows:
+        *identity, evidence = row
+        assert isinstance(evidence, RecurrenceEvidence)
+        table.add_row(
+            *(str(value) for value in identity),
+            str(evidence.event_count),
+            str(evidence.session_count),
+            str(evidence.root_family_count),
+            str(evidence.top_level_session_count),
+            str(evidence.sidechain_session_count),
+            str(evidence.active_bucket_count),
+            format_timestamp(evidence.most_recent_at),
+        )
+    console.print(table)
 
 
 def format_optional_score(value: float | None) -> str:

@@ -881,6 +881,53 @@ def test_store_aggregate_summary_redacts_commands_and_home_paths(tmp_path) -> No
     assert summary.repeated_files[0].path.startswith("~/")
 
 
+def test_store_aggregate_summary_uses_structured_command_failure_metadata(tmp_path) -> None:
+    source = SessionSource(
+        source_id="source-structured-command-failure",
+        agent_name=AgentName.CODEX,
+        source_path="/tmp/structured-command-failure.jsonl",
+    )
+    session = Session(
+        session_id="session-structured-command-failure",
+        source_id=source.source_id,
+        agent_name=source.agent_name,
+    )
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    store.insert_parsed_bundle(
+        source,
+        ParsedSessionBundle(
+            session=session,
+            command_runs=[
+                CommandRun(
+                    command_run_id="command-not-cancelled",
+                    session_id=session.session_id,
+                    command="echo safe",
+                    exit_code=0,
+                    metadata={"cancelled": False, "note": 'contains "interrupted": true text'},
+                ),
+                CommandRun(
+                    command_run_id="command-interrupted",
+                    session_id=session.session_id,
+                    command="echo interrupted",
+                    exit_code=0,
+                    metadata={"interrupted": True},
+                ),
+            ],
+        ),
+    )
+    with duckdb.connect(str(store.database_path)) as connection:
+        connection.execute(
+            "UPDATE command_runs SET command_display = ? WHERE command_run_id = ?",
+            ["tool --api-key TOP_SECRET", "command-interrupted"],
+        )
+
+    summary = store.aggregate_summary(SummaryFilters())
+
+    assert len(summary.failed_commands) == 1
+    assert summary.failed_commands[0].command == "tool --api-key <redacted>"
+    assert "TOP_SECRET" not in summary.failed_commands[0].command
+
+
 def test_store_aggregate_summary_recommendations_use_uncapped_labels(tmp_path) -> None:
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
     sessions = [

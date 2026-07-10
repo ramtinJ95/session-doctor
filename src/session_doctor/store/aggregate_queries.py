@@ -13,6 +13,7 @@ SCORE_NAMES = (
 )
 PRIMARY_RISK_LABELS = ("user_stuck", "tooling_blocked", "agent_looping")
 RISK_SCORE_THRESHOLD = 0.55
+MUTATING_FILE_OPERATIONS = ("edit", "update", "write", "patch", "move", "delete")
 
 
 def base_sessions_cte(filters: SessionScopeFilters) -> tuple[str, list[object]]:
@@ -97,3 +98,17 @@ def label_groups_sql() -> str:
 
 def sql_string_list(values: tuple[str, ...]) -> str:
     return ", ".join(f"'{value}'" for value in values)
+
+
+def failed_command_predicate(alias: str) -> str:
+    return f"""
+    ({alias}.exit_code IS NOT NULL AND {alias}.exit_code != 0)
+    OR COALESCE(
+        TRY_CAST(json_extract({alias}.metadata_json, '$.cancelled') AS BOOLEAN),
+        FALSE
+    )
+    OR COALESCE(
+        TRY_CAST(json_extract({alias}.metadata_json, '$.interrupted') AS BOOLEAN),
+        FALSE
+    )
+    """
