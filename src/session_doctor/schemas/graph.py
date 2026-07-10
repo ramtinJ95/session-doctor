@@ -227,12 +227,18 @@ class GraphReport(GraphModel):
 
     @model_validator(mode="after")
     def validate_graph(self) -> GraphReport:
+        from session_doctor.ids import stable_id
+
         node_ids = [node.node_id for node in self.nodes]
         edge_ids = [edge.edge_id for edge in self.edges]
         if len(node_ids) != len(set(node_ids)):
             raise ValueError("graph node IDs must be unique")
         if len(edge_ids) != len(set(edge_ids)):
             raise ValueError("graph edge IDs must be unique")
+        session_nodes = [node for node in self.nodes if node.node_type == "session"]
+        if len(session_nodes) != 1:
+            raise ValueError("graph must have exactly one session anchor")
+        session_node = session_nodes[0]
         known_nodes = set(node_ids)
         if any(
             edge.source_node_id not in known_nodes or edge.target_node_id not in known_nodes
@@ -241,4 +247,39 @@ class GraphReport(GraphModel):
             raise ValueError("graph edges must have existing endpoints")
         if self.counts.nodes != len(self.nodes) or self.counts.edges != len(self.edges):
             raise ValueError("graph totals must match projected rows")
+        expected_session_node_id = stable_id(
+            "graph-node", self.session_id, "session", self.session_id
+        )
+        if session_node.node_id != expected_session_node_id:
+            raise ValueError("graph session anchor must match the selected session")
+        contained_targets = {
+            edge.target_node_id
+            for edge in self.edges
+            if edge.edge_type == "contains" and edge.source_node_id == session_node.node_id
+        }
+        expected_contained_targets = {
+            node.node_id
+            for node in self.nodes
+            if node.node_type not in {"session", "session_reference"}
+        }
+        if contained_targets != expected_contained_targets:
+            raise ValueError("every exact-session node must be contained by the session anchor")
+        topology_edges = {
+            (edge.edge_type, edge.target_node_id)
+            for edge in self.edges
+            if edge.source_node_id == session_node.node_id
+            and edge.edge_type in {"parent_session_reference", "child_session_reference"}
+        }
+        expected_topology_edges = {
+            (
+                "parent_session_reference"
+                if node.relationship == "parent"
+                else "child_session_reference",
+                node.node_id,
+            )
+            for node in self.nodes
+            if isinstance(node, SessionReferenceGraphNode)
+        }
+        if topology_edges != expected_topology_edges:
+            raise ValueError("session references must terminate at topology-only nodes")
         return self

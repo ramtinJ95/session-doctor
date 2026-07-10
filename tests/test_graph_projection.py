@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from analysis.fixtures import analysis_fixture_bundle
+from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from session_doctor.adapters import ParsedSessionBundle
@@ -62,6 +63,15 @@ def test_graph_projects_complete_supported_rows_with_stable_endpoints(tmp_path) 
     assert graph.model_dump_json() == repeated.model_dump_json()
     assert set(graph.counts.nodes_by_type) == set(NODE_TYPE_ORDER)
     assert set(graph.counts.edges_by_type) == set(EDGE_TYPE_ORDER)
+
+    without_anchor = graph.model_dump()
+    without_anchor["nodes"] = [
+        node for node in without_anchor["nodes"] if node["node_type"] != "session"
+    ]
+    without_anchor["counts"]["nodes"] -= 1
+    without_anchor["counts"]["nodes_by_type"]["session"] = 0
+    with pytest.raises(ValidationError, match="exactly one session anchor"):
+        type(graph).model_validate(without_anchor)
 
 
 def test_graph_uses_only_conservative_supported_relations(tmp_path) -> None:
