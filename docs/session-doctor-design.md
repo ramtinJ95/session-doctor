@@ -37,6 +37,7 @@ session-doctor adapters list [--scan]
 session-doctor db init
 session-doctor db info
 session-doctor ingest --agent codex [--source PATH] [--db PATH]
+session-doctor ingest --agent claude [--source PATH] [--db PATH]
 session-doctor ingest --agent pi [--source PATH] [--db PATH]
 session-doctor sessions list
 session-doctor analyze <session-id> [--format terminal|json] [--artifact PATH] [--no-artifact]
