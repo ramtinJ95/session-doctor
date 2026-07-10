@@ -129,6 +129,47 @@ uv run session-doctor adapters list
 uv run session-doctor adapters list --scan
 ```
 
+## Optional Agent Skill
+
+Phase 10 ships one portable `session-doctor` Agent Skill for Codex, Claude
+Code, and Pi. It covers the public CLI without reading native transcripts or
+DuckDB directly. It confirms before database/artifact writes, shell-completion
+installation, or evidence-message disclosure.
+
+Locate and inspect the exact skill bundled with the installed CLI:
+
+```bash
+skill_source="$(session-doctor integrations path)"
+printf '%s\n' "$skill_source"
+cat "$skill_source/SKILL.md"
+```
+
+When running from this source checkout, replace `session-doctor` above with
+`uv run session-doctor`.
+
+Install manually only after checking that the destination does not already
+exist. Codex and Pi can share one global copy:
+
+```bash
+test ! -e "$HOME/.agents/skills/session-doctor"
+mkdir -p "$HOME/.agents/skills"
+cp -R "$skill_source" "$HOME/.agents/skills/session-doctor"
+```
+
+Claude Code uses its global skill root:
+
+```bash
+test ! -e "$HOME/.claude/skills/session-doctor"
+mkdir -p "$HOME/.claude/skills"
+cp -R "$skill_source" "$HOME/.claude/skills/session-doctor"
+```
+
+Pi may alternatively use `~/.pi/agent/skills/session-doctor`. Invoke the skill
+as `$session-doctor` in Codex, `/session-doctor` in Claude Code, or
+`/skill:session-doctor` in Pi. The skill requires exactly the CLI version named
+in its frontmatter. Replace or remove an existing destination only through an
+explicit manual decision; `session-doctor` never modifies agent configuration.
+
 Initialize and inspect a DuckDB store:
 
 ```bash

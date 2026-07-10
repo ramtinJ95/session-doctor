@@ -39,6 +39,21 @@ python-version = "3.12"
 [tool.ty.src]
 include = ["src", "tests"]
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/session_doctor"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/session_doctor/integrations/session-doctor/SKILL.md" = "session_doctor/integrations/session-doctor/SKILL.md"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/README.md",
+    "/pyproject.toml",
+    "/src",
+    "/tests",
+    "/uv.lock",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
