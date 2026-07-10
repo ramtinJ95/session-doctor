@@ -31,6 +31,8 @@ from .cli_options import (
     require_analysis_output_format,
     require_current_database_schema,
     require_existing_database_path,
+    require_positive_limit,
+    require_report_output_format,
     require_summary_output_format,
     require_valid_database_path,
     scope_filters_from_options,
@@ -59,6 +61,8 @@ from .cli_renderers import (
 )
 from .config import supports_current_python
 from .ingest_workflow import IngestSummary, ingest_sources
+from .report_payload import build_session_report
+from .report_renderers import render_session_report, render_session_report_markdown
 from .schemas import AnalysisRun, SessionClassification, SessionFeature
 from .store import TABLE_NAMES, DuckDBStore
 from .summary_payload import summary_payload
@@ -570,10 +574,47 @@ def projects_list(
 
 
 @app.command()
-def report(session_id: str) -> None:
-    """Reserved for future report generation."""
-    _ = session_id
-    not_implemented("report")
+def report(
+    session_id: str,
+    db: Annotated[
+        Path | None,
+        typer.Option(
+            "--db",
+            help="DuckDB path to inspect. Defaults to SESSION_DOCTOR_DB or app data.",
+        ),
+    ] = None,
+    output_format: Annotated[
+        str,
+        typer.Option("--format", help="Output format: terminal, markdown, or json."),
+    ] = "terminal",
+    limit: Annotated[
+        int,
+        typer.Option("--limit", help="Maximum rows per bounded evidence section."),
+    ] = 10,
+    show_text: Annotated[
+        bool,
+        typer.Option("--show-text", help="Include text for displayed evidence messages only."),
+    ] = False,
+) -> None:
+    """Generate a privacy-safe exact-session diagnostic report."""
+    require_report_output_format(output_format)
+    require_positive_limit(limit)
+    database_path = database_path_from_option(db)
+    require_valid_database_path(database_path)
+    require_existing_database_path(database_path)
+    require_current_database_schema(database_path)
+    snapshot = DuckDBStore(database_path).load_diagnostic_snapshot(session_id)
+    if snapshot is None:
+        console.print(f"[red]Session not found:[/red] {session_id}")
+        raise typer.Exit(1)
+    payload = build_session_report(snapshot, limit=limit, show_text=show_text)
+    if output_format == "json":
+        typer.echo(payload.model_dump_json(indent=2))
+        return
+    if output_format == "markdown":
+        typer.echo(render_session_report_markdown(payload), nl=False)
+        return
+    render_session_report(payload, console)
 
 
 @app.command()

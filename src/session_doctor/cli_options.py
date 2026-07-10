@@ -104,6 +104,20 @@ def require_summary_output_format(output_format: str) -> None:
     raise typer.Exit(2)
 
 
+def require_report_output_format(output_format: str) -> None:
+    if output_format in {"terminal", "markdown", "json"}:
+        return
+    console.print("[red]Invalid --format:[/red] expected terminal, markdown, or json")
+    raise typer.Exit(2)
+
+
+def require_positive_limit(limit: int) -> None:
+    if limit > 0:
+        return
+    console.print("[red]Invalid --limit:[/red] expected a positive integer")
+    raise typer.Exit(2)
+
+
 def summary_filters_from_options(
     agent: str | None,
     project: Path | None,
