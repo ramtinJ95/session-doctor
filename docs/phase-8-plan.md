@@ -330,6 +330,13 @@ Apply `--limit` independently to each pattern section.
 
 #### Failed Commands
 
+- Before exposing recurring command examples, harden the shared command-display
+  redactor used by summary and trends. It must cover sensitive option names in
+  both `--key=value` and `--key value` forms, credential-bearing environment
+  assignments and URLs, and authorization/header token forms such as Bearer
+  credentials. Add privacy sentinels for each supported shape. If a value cannot
+  be separated safely, omit the display example rather than exposing the native
+  command.
 - Reuse `command_identity_hash` as identity and `command_display` as the
   redacted example.
 - Count non-zero exits and deliberately normalized cancelled/interrupted command
@@ -926,6 +933,7 @@ Deliverables:
 - add observed project rows and unknown-project counts
 - add cohort-specific agent observations
 - add recurring failed-command groups
+- harden shared command-display redaction before exposing recurring examples
 - add recurring failed-tool-result fingerprints
 - add recurring problematic-file groups
 - add recursive root-family attribution for recurrence only
