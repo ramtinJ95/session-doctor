@@ -15,11 +15,13 @@ content, native hashes, or project names are recorded here.
 One automated flow now:
 
 1. ingests each adapter's repeated-failure fixture through the CLI
-2. restores analysis with `analyze --all --format json`
-3. runs global weekly trends in JSON
-4. runs project-scoped monthly trends in terminal format
-5. runs `projects list` in JSON
-6. verifies all three agent observations, current coverage, honest
+2. ingests Claude's native linked root/nested-subagent topology directory
+3. restores analysis for all six sessions with `analyze --all --format json`
+4. runs a 20-week global trend window that includes both Claude sidechains
+5. runs project-scoped monthly trends in terminal format
+6. runs `projects list` in JSON
+7. verifies all three top-level agent observations, the separate Claude
+   sidechain cohort, current coverage, parent-linked analysis, honest
    `insufficient_data`, observed project output, read-only trend behavior, and
    absence of default batch artifacts
 

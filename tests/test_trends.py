@@ -606,6 +606,19 @@ def test_native_three_adapter_flow_reaches_trends_and_projects(tmp_path) -> None
             ],
         )
         assert ingest_result.exit_code == 0
+    topology_result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "claude",
+            "--source",
+            str(FIXTURE_ROOT / "claude" / "topology"),
+            "--db",
+            str(database_path),
+        ],
+    )
+    assert topology_result.exit_code == 0
 
     analysis_result = runner.invoke(
         app,
@@ -613,7 +626,15 @@ def test_native_three_adapter_flow_reaches_trends_and_projects(tmp_path) -> None
     )
     weekly_result = runner.invoke(
         app,
-        ["trends", "--db", str(database_path), "--format", "json"],
+        [
+            "trends",
+            "--db",
+            str(database_path),
+            "--periods",
+            "20",
+            "--format",
+            "json",
+        ],
     )
     monthly_result = runner.invoke(
         app,
@@ -626,7 +647,7 @@ def test_native_three_adapter_flow_reaches_trends_and_projects(tmp_path) -> None
             "--bucket",
             "month",
             "--periods",
-            "3",
+            "6",
         ],
     )
     projects_result = runner.invoke(
@@ -637,17 +658,22 @@ def test_native_three_adapter_flow_reaches_trends_and_projects(tmp_path) -> None
     assert analysis_result.exit_code == 0
     analysis_payload = cast("dict[str, Any]", json.loads(analysis_result.stdout))
     assert analysis_payload["counts"] == {
-        "matching": 3,
-        "selected": 3,
-        "succeeded": 3,
+        "matching": 6,
+        "selected": 6,
+        "succeeded": 6,
         "skipped": 0,
         "failed": 0,
     }
     assert weekly_result.exit_code == 0
     weekly_payload = cast("dict[str, Any]", json.loads(weekly_result.stdout))
-    assert weekly_payload["scope"]["matching_sessions"] == 3
+    assert weekly_payload["scope"]["matching_sessions"] == 6
+    assert weekly_payload["scope"]["windowed_sessions"] == 6
     top_level = cast("dict[str, Any]", weekly_payload["cohorts"]["top_level"])
+    sidechain = cast("dict[str, Any]", weekly_payload["cohorts"]["sidechain"])
     assert {row["agent"] for row in top_level["agents"]} == {"codex", "claude", "pi"}
+    assert sidechain["totals"]["sessions"] == 2
+    assert [row["agent"] for row in sidechain["agents"]] == ["claude"]
+    assert len(sidechain["buckets"]) == 20
     assert all(judgment["status"] == "insufficient_data" for judgment in top_level["judgments"])
     assert monthly_result.exit_code == 0
     assert "Session trends" in monthly_result.stdout
@@ -657,16 +683,16 @@ def test_native_three_adapter_flow_reaches_trends_and_projects(tmp_path) -> None
     assert project_payload["projects"] == [
         {
             "project": "/tmp/session-doctor",
-            "sessions": 3,
-            "top_level_sessions": 3,
-            "sidechain_sessions": 0,
+            "sessions": 6,
+            "top_level_sessions": 4,
+            "sidechain_sessions": 2,
             "analysis": {
-                "current": 3,
+                "current": 6,
                 "stale": 0,
                 "never": 0,
-                "version_counts": {ANALYZER_VERSION: 3},
+                "version_counts": {ANALYZER_VERSION: 6},
             },
-            "first_session_at": "2026-05-06T09:00:00",
+            "first_session_at": "2026-01-01T00:00:00",
             "latest_session_at": "2026-05-08T12:00:00",
             "agents": ["claude", "codex", "pi"],
         }
