@@ -21,9 +21,12 @@ from .aggregate_queries import (
 from .analysis_readers import AnalysisCompatibility, analysis_compatibility
 from .connection import read_connection
 from .trend_models import (
+    AgentObservation,
     AnalysisCompatibilityCounts,
     AnalyzerVersionCount,
     ClassificationAggregate,
+    ProjectObservation,
+    ProjectObservations,
     ScoreAggregate,
     TrendBucket,
     TrendBucketSize,
@@ -49,8 +52,11 @@ NEUTRAL_SIGNAL_NAMES = {"agent_fit_risk", "project_complexity_signal"}
 @dataclass(frozen=True)
 class SessionTrendRow:
     session_id: str
+    agent_name: str
+    parent_session_id: str | None
     started_at: datetime | None
     is_sidechain: bool
+    project_path: str | None
     analyzer_version: str | None
     compatibility: AnalysisCompatibility
     scores: tuple[float | None, ...]
@@ -94,6 +100,7 @@ def read_trends(database_path: Path, filters: TrendFilters) -> TrendReport:
             top_level=build_cohort(top_level_rows, intervals, filters),
             sidechain=build_cohort(sidechain_rows, intervals, filters),
         ),
+        projects=project_observations(windowed_rows, filters.limit),
     )
 
 
@@ -113,8 +120,11 @@ def session_trend_rows(
         label_groups AS ({label_groups_sql()})
         SELECT
             b.session_id,
+            b.agent_name,
+            b.parent_session_id,
             b.started_at,
             b.is_sidechain,
+            COALESCE(NULLIF(b.project_path, ''), NULLIF(b.cwd, '')) AS project_path,
             la.analyzer_version,
             sf.friction_score,
             sf.stuckness_score,
@@ -136,22 +146,25 @@ def session_trend_rows(
 
 
 def session_trend_row(row: tuple[object, ...]) -> SessionTrendRow:
-    analyzer_version = str(row[3]) if row[3] is not None else None
-    scores = tuple(optional_float(value) for value in row[4:9])
-    labels = tuple(label for label in str(row[9]).split(",") if label)
+    analyzer_version = str(row[6]) if row[6] is not None else None
+    scores = tuple(optional_float(value) for value in row[7:12])
+    labels = tuple(label for label in str(row[12]).split(",") if label)
     compatibility = analysis_compatibility(analyzer_version)
     max_score = max((score for score in scores if score is not None), default=0.0)
     return SessionTrendRow(
         session_id=str(row[0]),
-        started_at=row[1] if isinstance(row[1], datetime) else None,
-        is_sidechain=bool(row[2]),
+        agent_name=str(row[1]),
+        parent_session_id=str(row[2]) if row[2] is not None else None,
+        started_at=row[3] if isinstance(row[3], datetime) else None,
+        is_sidechain=bool(row[4]),
+        project_path=str(row[5]) if row[5] is not None else None,
         analyzer_version=analyzer_version,
         compatibility=compatibility,
         scores=scores,
         labels=labels,
         is_risky=(
             compatibility is AnalysisCompatibility.CURRENT
-            and (int(str(row[10])) > 0 or max_score >= RISK_SCORE_THRESHOLD)
+            and (int(str(row[13])) > 0 or max_score >= RISK_SCORE_THRESHOLD)
         ),
     )
 
@@ -241,7 +254,54 @@ def build_cohort(
         build_judgment(metric_name, buckets, filters.project_path is not None)
         for metric_name in (*SCORE_NAMES, "risky_session_rate")
     )
-    return TrendCohort(totals=totals, buckets=buckets, judgments=judgments)
+    agents = tuple(
+        AgentObservation(
+            agent_name=agent_name,
+            metrics=metrics_for_rows(tuple(row for row in rows if row.agent_name == agent_name)),
+        )
+        for agent_name in sorted({row.agent_name for row in rows})
+    )
+    return TrendCohort(totals=totals, buckets=buckets, judgments=judgments, agents=agents)
+
+
+def project_observations(
+    rows: tuple[SessionTrendRow, ...],
+    limit: int,
+) -> ProjectObservations:
+    grouped: dict[str, list[SessionTrendRow]] = {}
+    unknown_sessions = 0
+    for row in rows:
+        if row.project_path is None:
+            unknown_sessions += 1
+            continue
+        grouped.setdefault(row.project_path, []).append(row)
+    observations = [
+        project_observation(path, tuple(project_rows)) for path, project_rows in grouped.items()
+    ]
+    observations.sort(key=lambda row: row.project_path)
+    observations.sort(
+        key=lambda row: row.latest_session_at or datetime.min,
+        reverse=True,
+    )
+    observations.sort(key=lambda row: row.sessions, reverse=True)
+    return ProjectObservations(rows=tuple(observations[:limit]), unknown_sessions=unknown_sessions)
+
+
+def project_observation(
+    project_path: str,
+    rows: tuple[SessionTrendRow, ...],
+) -> ProjectObservation:
+    timestamps = [row.started_at for row in rows if row.started_at is not None]
+    return ProjectObservation(
+        project_path=project_path,
+        sessions=len(rows),
+        top_level_sessions=sum(not row.is_sidechain for row in rows),
+        sidechain_sessions=sum(row.is_sidechain for row in rows),
+        analysis=compatibility_counts(rows),
+        first_session_at=min(timestamps, default=None),
+        latest_session_at=max(timestamps, default=None),
+        agents=tuple(sorted({row.agent_name for row in rows})),
+    )
 
 
 def metrics_for_rows(rows: tuple[SessionTrendRow, ...]) -> TrendMetrics:

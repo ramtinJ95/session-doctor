@@ -16,7 +16,13 @@ from .schemas import AnalysisRun, SessionClassification, SessionFeature, SourceK
 from .store import TABLE_NAMES
 from .store.aggregate_queries import SCORE_NAMES
 from .store.models import AggregateSummary, SessionSummary, StoreInfo
-from .store.trend_models import TrendCohort, TrendMetrics, TrendReport
+from .store.trend_models import (
+    ProjectObservation,
+    ProjectReport,
+    TrendCohort,
+    TrendMetrics,
+    TrendReport,
+)
 
 ANALYSIS_SUMMARY_FEATURES = (
     "friction_score",
@@ -460,6 +466,23 @@ def render_trend_cohort(title: str, cohort: TrendCohort, console: Console) -> No
         )
     console.print(judgment_table)
 
+    if cohort.agents:
+        agent_table = Table(title=f"{title} agent observations")
+        agent_table.add_column("Agent")
+        agent_table.add_column("Sessions")
+        agent_table.add_column("Current")
+        agent_table.add_column("Coverage")
+        agent_table.add_column("Risk rate")
+        for observation in cohort.agents:
+            agent_table.add_row(
+                observation.agent_name,
+                str(observation.metrics.sessions),
+                str(observation.metrics.current_analyzed),
+                format_rate(observation.metrics.current_analysis_coverage),
+                format_rate(observation.metrics.risky_session_rate),
+            )
+        console.print(agent_table)
+
 
 def format_score_metric(metrics: TrendMetrics, metric_name: str) -> str:
     score = next(row for row in metrics.scores if row.metric_name == metric_name)
@@ -472,6 +495,49 @@ def format_rate(value: float | None) -> str:
 
 def format_timestamp(value: datetime | None) -> str:
     return value.isoformat() if value is not None else ""
+
+
+def render_project_report(report: ProjectReport, console: Console) -> None:
+    render_project_observations(
+        report.observations.rows,
+        report.observations.unknown_sessions,
+        console,
+    )
+
+
+def render_project_observations(
+    rows: Sequence[ProjectObservation],
+    unknown_sessions: int,
+    console: Console,
+) -> None:
+    table = Table(title="Observed projects")
+    table.add_column("Project/CWD")
+    table.add_column("Sessions")
+    table.add_column("Top-level")
+    table.add_column("Sidechain")
+    table.add_column("Current")
+    table.add_column("Stale")
+    table.add_column("Never")
+    table.add_column("First")
+    table.add_column("Latest")
+    table.add_column("Agents")
+    for row in rows:
+        table.add_row(
+            redact_home(row.project_path),
+            str(row.sessions),
+            str(row.top_level_sessions),
+            str(row.sidechain_sessions),
+            str(row.analysis.current),
+            str(row.analysis.stale),
+            str(row.analysis.never),
+            format_timestamp(row.first_session_at),
+            format_timestamp(row.latest_session_at),
+            ", ".join(row.agents),
+        )
+    if not rows:
+        table.add_row("none", "0", "0", "0", "0", "0", "0", "", "", "")
+    console.print(table)
+    console.print(f"Unknown project sessions: {unknown_sessions}")
 
 
 def format_optional_score(value: float | None) -> str:

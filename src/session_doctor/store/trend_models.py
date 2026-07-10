@@ -29,6 +29,11 @@ class TrendFilters(SessionScopeFilters):
 
 
 @dataclass(frozen=True)
+class ProjectFilters(SessionScopeFilters):
+    limit: int = 10
+
+
+@dataclass(frozen=True)
 class AnalyzerVersionCount:
     analyzer_version: str
     session_count: int
@@ -132,6 +137,37 @@ class TrendCohort:
     totals: TrendMetrics
     buckets: tuple[TrendBucket, ...]
     judgments: tuple[TrendJudgment, ...]
+    agents: tuple[AgentObservation, ...]
+
+
+@dataclass(frozen=True)
+class AgentObservation:
+    agent_name: str
+    metrics: TrendMetrics
+
+
+@dataclass(frozen=True)
+class ProjectObservation:
+    project_path: str
+    sessions: int
+    top_level_sessions: int
+    sidechain_sessions: int
+    analysis: AnalysisCompatibilityCounts
+    first_session_at: datetime | None
+    latest_session_at: datetime | None
+    agents: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ProjectObservations:
+    rows: tuple[ProjectObservation, ...]
+    unknown_sessions: int
+
+
+@dataclass(frozen=True)
+class ProjectReport:
+    filters: ProjectFilters
+    observations: ProjectObservations
 
 
 @dataclass(frozen=True)
@@ -146,3 +182,4 @@ class TrendReport:
     window: TrendWindow
     scope: TrendScope
     cohorts: TrendCohorts
+    projects: ProjectObservations
