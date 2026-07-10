@@ -112,3 +112,15 @@ def failed_command_predicate(alias: str) -> str:
         FALSE
     )
     """
+
+
+def risky_session_predicate(score_alias: str = "sf", label_alias: str = "lg") -> str:
+    score_values = ",\n        ".join(
+        f"COALESCE({score_alias}.{score_name}, 0)" for score_name in SCORE_NAMES
+    )
+    return f"""
+    COALESCE({label_alias}.risk_label_count, 0) > 0
+    OR GREATEST(
+        {score_values}
+    ) >= ?
+    """

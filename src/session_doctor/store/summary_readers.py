@@ -15,6 +15,7 @@ from .aggregate_queries import (
     failed_command_predicate,
     label_groups_sql,
     latest_analysis_sql,
+    risky_session_predicate,
     score_features_sql,
     session_filters,
 )
@@ -29,8 +30,6 @@ from .models import (
     RepeatedFileSummary,
     SummaryFilters,
 )
-
-PROBLEMATIC_SESSION_SCORE_THRESHOLD = 0.55
 
 
 @dataclass
@@ -249,14 +248,7 @@ def recent_risk_sessions(
         JOIN latest_analysis AS la ON la.session_id = b.session_id
         LEFT JOIN score_features AS sf ON sf.session_id = b.session_id
         LEFT JOIN label_groups AS lg ON lg.session_id = b.session_id
-        WHERE COALESCE(lg.risk_label_count, 0) > 0
-           OR GREATEST(
-                COALESCE(sf.friction_score, 0),
-                COALESCE(sf.stuckness_score, 0),
-                COALESCE(sf.agent_fit_risk, 0),
-                COALESCE(sf.prompt_clarity_risk, 0),
-                COALESCE(sf.project_complexity_signal, 0)
-            ) >= ?
+        WHERE {risky_session_predicate()}
         ORDER BY
             max_risk_score DESC,
             primary_risk_label_count DESC,
@@ -362,14 +354,7 @@ def repeated_files(
             JOIN latest_analysis AS la ON la.session_id = b.session_id
             LEFT JOIN score_features AS sf ON sf.session_id = b.session_id
             LEFT JOIN label_groups AS lg ON lg.session_id = b.session_id
-            WHERE COALESCE(lg.risk_label_count, 0) > 0
-               OR GREATEST(
-                    COALESCE(sf.friction_score, 0),
-                    COALESCE(sf.stuckness_score, 0),
-                    COALESCE(sf.agent_fit_risk, 0),
-                    COALESCE(sf.prompt_clarity_risk, 0),
-                    COALESCE(sf.project_complexity_signal, 0)
-                ) >= ?
+            WHERE {risky_session_predicate()}
         )
         SELECT
             f.normalized_path,
@@ -384,7 +369,7 @@ def repeated_files(
         JOIN base_sessions AS b ON b.session_id = f.session_id
         WHERE lower(f.operation) IN ({operation_placeholders})
         """,
-        [*params, PROBLEMATIC_SESSION_SCORE_THRESHOLD, *MUTATING_FILE_OPERATIONS],
+        [*params, RISK_SCORE_THRESHOLD, *MUTATING_FILE_OPERATIONS],
     ).fetchall()
 
     grouped: dict[tuple[str, ...], FileGroup] = {}

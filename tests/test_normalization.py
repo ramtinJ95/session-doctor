@@ -52,6 +52,7 @@ def test_command_identity_redacts_display_after_deriving_identity() -> None:
         "tool --token='TOP_SECRET'",
         "TOKEN=TOP_SECRET tool",
         "curl -H 'Authorization: Bearer TOP_SECRET' https://example.test",
+        'curl -H "Authorization: Bearer TOP SECRET" https://example.test',
         "curl -H 'Authorization: Basic TOP_SECRET' https://example.test",
         "curl -H 'X-API-Key: TOP_SECRET' https://example.test",
         "curl https://user:TOP_SECRET@example.test/path",
@@ -61,7 +62,7 @@ def test_command_identity_redacts_display_after_deriving_identity() -> None:
 def test_command_identity_redacts_common_secret_shapes(command) -> None:
     identity = canonical_command_identity(command)
 
-    assert "TOP_SECRET" not in identity.display
+    assert "SECRET" not in identity.display
     assert "<redacted>" in identity.display
 
 

@@ -11,7 +11,15 @@ import duckdb
 from session_doctor.ids import stable_id
 from session_doctor.privacy import redact_command_for_display
 
-from .aggregate_queries import MUTATING_FILE_OPERATIONS, failed_command_predicate
+from .aggregate_queries import (
+    MUTATING_FILE_OPERATIONS,
+    RISK_SCORE_THRESHOLD,
+    failed_command_predicate,
+    label_groups_sql,
+    latest_analysis_sql,
+    risky_session_predicate,
+    score_features_sql,
+)
 from .trend_models import (
     FailedCommandPattern,
     FailedToolResultPattern,
@@ -92,7 +100,7 @@ def read_recurring_patterns(
             filters,
             topology,
             eligible_roots,
-            {row.session_id for row in matching_rows if row.is_risky},
+            latest_problematic_session_ids(connection),
         ),
     )
 
@@ -290,6 +298,27 @@ def problematic_file_patterns(
         if len(group.root_session_ids) >= 2
     ]
     return tuple(sorted_patterns(patterns, filters.limit, lambda row: row.path))
+
+
+def latest_problematic_session_ids(
+    connection: duckdb.DuckDBPyConnection,
+) -> set[str]:
+    rows = connection.execute(
+        f"""
+        WITH latest_analysis AS ({latest_analysis_sql()}),
+        eligible_analysis AS (SELECT * FROM latest_analysis),
+        score_features AS ({score_features_sql()}),
+        label_groups AS ({label_groups_sql()})
+        SELECT s.session_id
+        FROM sessions AS s
+        JOIN eligible_analysis AS ea ON ea.session_id = s.session_id
+        LEFT JOIN score_features AS sf ON sf.session_id = s.session_id
+        LEFT JOIN label_groups AS lg ON lg.session_id = s.session_id
+        WHERE {risky_session_predicate()}
+        """,
+        [RISK_SCORE_THRESHOLD],
+    ).fetchall()
+    return {str(row[0]) for row in rows}
 
 
 def recurrence_file_path(
