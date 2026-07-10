@@ -195,6 +195,42 @@ def test_report_bounds_historical_recurrence_and_preserves_totals(tmp_path) -> N
     assert any(row.code == "project_recurrence_observed" for row in report.observations)
 
 
+def test_report_does_not_disclose_or_claim_unresolved_file_loop_paths(tmp_path) -> None:
+    store, session_id = analyzed_store(tmp_path)
+    snapshot = store.load_diagnostic_snapshot(session_id)
+    assert snapshot is not None
+    file_feature = next(
+        row
+        for row in snapshot.analysis.session_features
+        if row.feature_name == "same_file_edited_repeatedly_count"
+    )
+    private_path = "/outside-home/PRIVATE_UNRESOLVED_FILE.py"
+    replaced_features = tuple(
+        row.model_copy(
+            update={
+                "evidence": {
+                    "paths": [private_path],
+                    "source_event_ids_by_path": {private_path: ["event-1", "event-2"]},
+                }
+            }
+        )
+        if row.session_feature_id == file_feature.session_feature_id
+        else row
+        for row in snapshot.analysis.session_features
+    )
+    snapshot = replace(
+        snapshot,
+        analysis=replace(snapshot.analysis, session_features=replaced_features),
+    )
+
+    report = build_session_report(snapshot)
+    serialized = report.model_dump_json()
+
+    assert report.evidence["repeated_file_edits"].items == []
+    assert "PRIVATE_UNRESOLVED_FILE" not in serialized
+    assert any(row.code == "unresolved_analysis_references" for row in report.limitations)
+
+
 def test_report_cli_supports_all_formats_without_mutating_store(tmp_path) -> None:
     store, session_id = analyzed_store(tmp_path)
     before = {table: store.table_count(table) for table in TABLE_NAMES}
