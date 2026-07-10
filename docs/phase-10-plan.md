@@ -1,6 +1,6 @@
 # Phase 10 Plan: Optional Agent Integration And v0.1.0 Dogfood Release
 
-Status: planned; grilling approved.
+Status: complete; annotated tag pending explicit approval.
 
 ## Goal
 
