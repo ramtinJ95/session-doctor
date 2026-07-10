@@ -979,6 +979,43 @@ def test_claude_sidecar_lengths_use_text_characters_for_unicode_output(tmp_path)
     assert persisted_result.output_length == len(output)
 
 
+def test_claude_does_not_apply_one_sidecar_to_multiple_tool_results(tmp_path) -> None:
+    root_path = tmp_path / "session-1.jsonl"
+    tool_results_dir = tmp_path / "session-1" / "tool-results"
+    tool_results_dir.mkdir(parents=True)
+    (tool_results_dir / "ambiguous.txt").write_text("persisted output")
+    root_path.write_text(
+        json.dumps(
+            {
+                "type": "user",
+                "sessionId": "session-1",
+                "uuid": "result-1",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "tool-1"},
+                        {"type": "tool_result", "tool_use_id": "tool-2"},
+                    ],
+                },
+                "toolUseResult": {
+                    "persistedOutputPath": "tool-results/ambiguous.txt",
+                },
+            }
+        )
+    )
+
+    bundle = ClaudeCodeAdapter().parse_source(ClaudeCodeAdapter().source_for_path(root_path))
+
+    assert len(bundle.tool_results) == 2
+    assert all("sidecar_correlated" not in result.metadata for result in bundle.tool_results)
+    warning = next(
+        warning
+        for warning in bundle.parse_warnings
+        if warning.metadata["code"] == "ambiguous_tool_result_sidecar"
+    )
+    assert warning.metadata["tool_result_block_count"] == 2
+
+
 def test_claude_sidecar_hashing_reads_bounded_chunks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
