@@ -9,6 +9,7 @@ import pytest
 from session_doctor.adapters import ParsedSessionBundle
 from session_doctor.adapters.claude import ClaudeCodeAdapter
 from session_doctor.adapters.codex import CodexAdapter
+from session_doctor.analysis import ANALYZER_VERSION
 from session_doctor.ids import source_id_for_path
 from session_doctor.schemas import (
     AgentName,
@@ -30,8 +31,10 @@ from session_doctor.schemas import (
 from session_doctor.store import (
     SCHEMA_VERSION,
     TABLE_NAMES,
+    AnalysisCompatibility,
     DuckDBStore,
     SchemaMismatchError,
+    SessionScopeFilters,
     SummaryFilters,
 )
 
@@ -70,6 +73,75 @@ def test_store_initialize_records_current_internal_schema_version(tmp_path) -> N
         row = connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
 
     assert row == (SCHEMA_VERSION,)
+
+
+def test_store_classifies_filtered_analysis_targets_and_orders_untimed_last(tmp_path) -> None:
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    sessions = (
+        Session(
+            session_id="session-current",
+            source_id="source-current",
+            agent_name=AgentName.CODEX,
+            project_path="/work/project",
+            started_at=datetime(2026, 1, 1, 8, 0),
+        ),
+        Session(
+            session_id="session-stale",
+            source_id="source-stale",
+            agent_name=AgentName.CODEX,
+            project_path="/work/project/subdir",
+            started_at=datetime(2026, 1, 2, 8, 0),
+        ),
+        Session(
+            session_id="session-missing",
+            source_id="source-missing",
+            agent_name=AgentName.CODEX,
+            project_path="/work/project",
+        ),
+        Session(
+            session_id="session-other-agent",
+            source_id="source-other-agent",
+            agent_name=AgentName.PI,
+            project_path="/work/project",
+        ),
+    )
+    for session in sessions:
+        source = SessionSource(
+            source_id=session.source_id,
+            agent_name=session.agent_name,
+            source_path=f"/tmp/{session.source_id}.jsonl",
+        )
+        store.insert_parsed_bundle(source, ParsedSessionBundle(session=session))
+
+    for session_id, version in (
+        ("session-current", ANALYZER_VERSION),
+        ("session-stale", "phase5"),
+    ):
+        store.replace_analysis_rows(
+            AnalysisRun(
+                analysis_run_id=f"analysis-{session_id}",
+                session_id=session_id,
+                analyzer_version=version,
+                started_at=datetime(2026, 1, 3, 8, 0),
+                completed_at=datetime(2026, 1, 3, 8, 1),
+            ),
+            [],
+            [],
+            [],
+        )
+
+    targets = store.list_analysis_targets(
+        SessionScopeFilters(agent_name="codex", project_path="/work/project")
+    )
+
+    assert [(target.session_id, target.compatibility) for target in targets] == [
+        ("session-current", AnalysisCompatibility.CURRENT),
+        ("session-stale", AnalysisCompatibility.STALE),
+        ("session-missing", AnalysisCompatibility.MISSING),
+    ]
+    assert targets[0].analyzer_version == ANALYZER_VERSION
+    assert targets[1].analyzer_version == "phase5"
+    assert targets[2].analyzer_version is None
 
 
 def test_store_initialize_rejects_stale_schema_without_modifying_it(tmp_path) -> None:

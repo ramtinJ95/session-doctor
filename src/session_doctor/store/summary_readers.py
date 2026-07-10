@@ -8,6 +8,7 @@ import duckdb
 
 from session_doctor.privacy import redact_home
 
+from .aggregate_queries import base_sessions_cte, latest_analysis_sql, session_filters
 from .connection import read_connection
 from .models import (
     AgentSessionCount,
@@ -490,51 +491,6 @@ def recommendations_for_summary(
     if not recommendations:
         recommendations.append("No obvious aggregate risk pattern found in the current filters.")
     return tuple(recommendations[:4])
-
-
-def base_sessions_cte(filters: SummaryFilters) -> tuple[str, list[object]]:
-    where_sql, params = session_filters(filters, "s")
-    return f"base_sessions AS (SELECT s.* FROM sessions AS s {where_sql})", params
-
-
-def session_filters(filters: SummaryFilters, alias: str) -> tuple[str, list[object]]:
-    conditions: list[str] = []
-    params: list[object] = []
-    if filters.agent_name:
-        conditions.append(f"{alias}.agent_name = ?")
-        params.append(filters.agent_name)
-    if filters.project_path:
-        project_path = filters.project_path.rstrip("/")
-        project_prefix = f"{project_path}/"
-        conditions.append(
-            "("
-            f"{alias}.project_path = ? OR starts_with({alias}.project_path, ?) "
-            f"OR {alias}.cwd = ? OR starts_with({alias}.cwd, ?)"
-            ")"
-        )
-        params.extend([project_path, project_prefix, project_path, project_prefix])
-    if not conditions:
-        return "", params
-    return "WHERE " + " AND ".join(conditions), params
-
-
-def latest_analysis_sql() -> str:
-    return """
-    SELECT analysis_run_id, session_id
-    FROM (
-        SELECT
-            ar.analysis_run_id,
-            ar.session_id,
-            ROW_NUMBER() OVER (
-                PARTITION BY ar.session_id
-                ORDER BY ar.completed_at DESC NULLS LAST,
-                    ar.started_at DESC NULLS LAST,
-                    ar.analysis_run_id DESC
-            ) AS row_number
-        FROM analysis_runs AS ar
-    )
-    WHERE row_number = 1
-    """
 
 
 def score_features_sql() -> str:
