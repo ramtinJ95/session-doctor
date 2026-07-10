@@ -64,6 +64,7 @@ from .config import supports_current_python
 from .graph_payload import graph_payload
 from .graph_projection import project_graph
 from .ingest_workflow import IngestSummary, ingest_sources
+from .integration_assets import IntegrationAssetError, session_doctor_skill_directory
 from .report_payload import build_session_report
 from .report_renderers import render_session_report, render_session_report_markdown
 from .schemas import AnalysisRun, SessionClassification, SessionFeature
@@ -78,6 +79,7 @@ adapters_app = typer.Typer(help="Inspect built-in session adapters.")
 db_app = typer.Typer(help="Manage the local DuckDB store.")
 sessions_app = typer.Typer(help="Inspect ingested sessions.")
 projects_app = typer.Typer(help="Inspect observed project path hints.")
+integrations_app = typer.Typer(help="Locate optional agent integration assets.")
 
 __all__ = [
     "ANALYSIS_SUMMARY_FEATURES",
@@ -576,6 +578,17 @@ def projects_list(
     render_project_report(report, console)
 
 
+@integrations_app.command("path")
+def integration_path() -> None:
+    """Print the bundled session-doctor Agent Skill directory."""
+    try:
+        skill_directory = session_doctor_skill_directory()
+    except IntegrationAssetError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    typer.echo(skill_directory)
+
+
 @app.command()
 def report(
     session_id: str,
@@ -652,6 +665,7 @@ app.add_typer(adapters_app, name="adapters")
 app.add_typer(db_app, name="db")
 app.add_typer(sessions_app, name="sessions")
 app.add_typer(projects_app, name="projects")
+app.add_typer(integrations_app, name="integrations")
 
 
 def render_ingest_summary(summary: IngestSummary, database_path: Path) -> None:
