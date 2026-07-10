@@ -3,9 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import typer
-from rich.console import Console
-
 from .schemas import (
     AnalysisRun,
     MessageFeature,
@@ -14,7 +11,11 @@ from .schemas import (
     SessionFeature,
 )
 
-console = Console()
+
+class ArtifactWriteError(RuntimeError):
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        super().__init__("analysis artifact could not be written")
 
 
 def artifact_path_for_analysis(
@@ -38,8 +39,7 @@ def write_analysis_artifact(path: Path, payload: dict[str, object]) -> None:
             encoding="utf-8",
         )
     except OSError as exc:
-        console.print(f"[red]Could not write artifact:[/red] {path} ({exc})")
-        raise typer.Exit(1) from exc
+        raise ArtifactWriteError(path) from exc
 
 
 def analysis_payload(

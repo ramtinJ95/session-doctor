@@ -11,8 +11,15 @@ from rich.console import Console
 
 from . import __version__
 from .adapters import RecoverableSourceError, built_in_adapters
-from .analysis_workflow import analyze_session
+from .analysis_workflow import (
+    AnalysisArtifactError,
+    AnalysisPersistenceError,
+    AnalysisWorkflowError,
+    SessionNotLoadableError,
+    analyze_session,
+)
 from .artifacts import analysis_payload, artifact_path_for_analysis, write_analysis_artifact
+from .batch_analysis import analyze_all_sessions, batch_analysis_payload
 from .cli_options import (
     adapter_for_ingest,
     database_info_for_path,
@@ -25,6 +32,7 @@ from .cli_options import (
     require_existing_database_path,
     require_summary_output_format,
     require_valid_database_path,
+    scope_filters_from_options,
     source_selection_for_ingest,
     sources_for_ingest,
     summary_filters_from_options,
@@ -32,6 +40,7 @@ from .cli_options import (
 from .cli_renderers import (
     ANALYSIS_SUMMARY_FEATURES,
     render_adapters_table,
+    render_batch_analysis,
     render_database_info,
     render_doctor_table,
     render_sessions_table,
@@ -252,7 +261,10 @@ def ingest(
 
 @app.command()
 def analyze(
-    session_id: str,
+    session_id: Annotated[
+        str | None,
+        typer.Argument(help="Ingested session ID to analyze."),
+    ] = None,
     db: Annotated[
         Path | None,
         typer.Option(
@@ -281,16 +293,89 @@ def analyze(
             help="Skip writing the default JSON artifact.",
         ),
     ] = False,
+    all_sessions: Annotated[
+        bool,
+        typer.Option("--all", help="Analyze all matching stale or missing sessions."),
+    ] = False,
+    project: Annotated[
+        Path | None,
+        typer.Option(
+            "--project",
+            help="Only include sessions whose project_path or cwd is under this path.",
+        ),
+    ] = None,
+    agent: Annotated[
+        str | None,
+        typer.Option(
+            "--agent",
+            help="Only include sessions from this agent, for example codex, claude, or pi.",
+        ),
+    ] = None,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Reanalyze already-current matching sessions."),
+    ] = False,
+    write_artifacts: Annotated[
+        bool,
+        typer.Option(
+            "--write-artifacts",
+            help="Write normal per-session artifacts during batch analysis.",
+        ),
+    ] = False,
 ) -> None:
-    """Analyze one ingested session and persist derived rows."""
+    """Analyze one session or restore analysis coverage in bulk."""
     require_analysis_output_format(output_format)
+    require_analysis_mode(
+        session_id=session_id,
+        all_sessions=all_sessions,
+        artifact=artifact,
+        no_artifact=no_artifact,
+        project=project,
+        agent=agent,
+        force=force,
+        write_artifacts=write_artifacts,
+    )
     database_path = database_path_from_option(db)
     require_valid_database_path(database_path)
     require_existing_database_path(database_path)
     require_current_database_schema(database_path)
 
     store = DuckDBStore(database_path)
-    result = analyze_session(store, session_id, database_path, artifact, no_artifact, console)
+    if all_sessions:
+        filters = scope_filters_from_options(agent, project)
+        batch_result = analyze_all_sessions(
+            store,
+            database_path,
+            filters,
+            force=force,
+            write_artifacts=write_artifacts,
+        )
+        if output_format == "json":
+            typer.echo(json.dumps(batch_analysis_payload(batch_result), indent=2, sort_keys=True))
+        else:
+            render_batch_analysis(batch_result, console)
+        if batch_result.failures:
+            raise typer.Exit(1)
+        return
+
+    assert session_id is not None
+    try:
+        result = analyze_session(store, session_id, database_path, artifact, no_artifact)
+    except SessionNotLoadableError as exc:
+        if exc.not_found:
+            console.print(f"[red]Session not found:[/red] {session_id}")
+        else:
+            console.print("[red]Session could not be loaded.[/red]")
+        raise typer.Exit(1) from exc
+    except AnalysisArtifactError as exc:
+        console.print(f"[red]Could not write artifact:[/red] {exc.path}")
+        raise typer.Exit(1) from exc
+    except AnalysisPersistenceError as exc:
+        console.print("[red]Could not persist analysis results.[/red]")
+        raise typer.Exit(1) from exc
+    except AnalysisWorkflowError as exc:
+        console.print(f"[red]{exc.safe_message}.[/red]")
+        raise typer.Exit(1) from exc
 
     if output_format == "json":
         typer.echo(json.dumps(result.payload, indent=2, sort_keys=True, default=str))
@@ -302,6 +387,31 @@ def analyze(
         result.session_features,
         result.classifications,
     )
+
+
+def require_analysis_mode(
+    *,
+    session_id: str | None,
+    all_sessions: bool,
+    artifact: Path | None,
+    no_artifact: bool,
+    project: Path | None,
+    agent: str | None,
+    force: bool,
+    write_artifacts: bool,
+) -> None:
+    if (session_id is None and not all_sessions) or (session_id is not None and all_sessions):
+        console.print("[red]Choose exactly one:[/red] SESSION_ID or --all")
+        raise typer.Exit(2)
+    if all_sessions and (artifact is not None or no_artifact):
+        console.print("[red]Batch mode rejects --artifact and --no-artifact.[/red]")
+        raise typer.Exit(2)
+    if not all_sessions and (project is not None or agent is not None or force or write_artifacts):
+        console.print(
+            "[red]Single-session mode rejects --project, --agent, --force, "
+            "and --write-artifacts.[/red]"
+        )
+        raise typer.Exit(2)
 
 
 @app.command()

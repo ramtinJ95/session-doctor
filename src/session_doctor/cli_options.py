@@ -13,7 +13,7 @@ from .config import default_database_path
 from .schemas.common import AgentName, SourceKind
 from .schemas.sessions import SessionSource
 from .store import DatabaseOpenError, DuckDBStore, SchemaMismatchError
-from .store.models import StoreInfo, SummaryFilters
+from .store.models import SessionScopeFilters, StoreInfo, SummaryFilters
 
 console = Console()
 
@@ -112,6 +112,18 @@ def summary_filters_from_options(
         console.print("[red]Invalid --limit:[/red] expected a positive integer")
         raise typer.Exit(2)
 
+    scope_filters = scope_filters_from_options(agent, project)
+    return SummaryFilters(
+        agent_name=scope_filters.agent_name,
+        project_path=scope_filters.project_path,
+        limit=limit,
+    )
+
+
+def scope_filters_from_options(
+    agent: str | None,
+    project: Path | None,
+) -> SessionScopeFilters:
     agent_name = None
     if agent is not None:
         try:
@@ -132,7 +144,7 @@ def summary_filters_from_options(
         else:
             project_path = os.path.normpath(str(Path.cwd() / expanded_project))
 
-    return SummaryFilters(agent_name=agent_name, project_path=project_path, limit=limit)
+    return SessionScopeFilters(agent_name=agent_name, project_path=project_path)
 
 
 def adapter_for_ingest(agent: str) -> BaseAdapter:
