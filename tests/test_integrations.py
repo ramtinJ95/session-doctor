@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+import tarfile
+import venv
+import zipfile
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -97,6 +102,49 @@ def test_integrations_path_does_not_create_files(tmp_path, monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert tuple(tmp_path.iterdir()) == before
+
+
+def test_built_distributions_and_clean_wheel_install_include_skill(tmp_path) -> None:
+    output_directory = tmp_path / "dist"
+    subprocess.run(
+        ["uv", "build", "--out-dir", str(output_directory)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    wheel_path = next(output_directory.glob("*.whl"))
+    sdist_path = next(output_directory.glob("*.tar.gz"))
+    wheel_skill = "session_doctor/integrations/session-doctor/SKILL.md"
+    with zipfile.ZipFile(wheel_path) as wheel:
+        assert wheel_skill in wheel.namelist()
+    with tarfile.open(sdist_path) as sdist:
+        assert any(name.endswith(f"/src/{wheel_skill}") for name in sdist.getnames())
+
+    environment = tmp_path / "clean-environment"
+    venv.EnvBuilder(with_pip=False).create(environment)
+    python = environment / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    subprocess.run(
+        ["uv", "pip", "install", "--python", str(python), "--no-deps", str(wheel_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = subprocess.run(
+        [
+            str(python),
+            "-c",
+            (
+                "from session_doctor.integration_assets import "
+                "session_doctor_skill_directory; print(session_doctor_skill_directory())"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    installed_skill = Path(result.stdout.strip())
+    assert installed_skill.is_dir()
+    assert (installed_skill / "SKILL.md").is_file()
 
 
 def skill_markdown() -> str:
