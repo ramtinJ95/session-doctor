@@ -17,7 +17,12 @@ from session_doctor.diagnostic_models import (
     RecurrenceTemporalExclusions,
 )
 from session_doctor.ids import stable_id
-from session_doctor.privacy import display_file_path, public_fingerprint, redact_command_for_display
+from session_doctor.privacy import (
+    display_file_path,
+    public_fingerprint,
+    redact_command_for_display,
+    redact_home,
+)
 
 from .aggregate_queries import (
     MUTATING_FILE_OPERATIONS,
@@ -160,7 +165,7 @@ def load_recurrence_context(
     return DiagnosticRecurrenceContext(
         status="available",
         reason=None,
-        scope_path=scope_path,
+        scope_path=redact_home(scope_path),
         scope_source=scope_source,
         window_start=window_start,
         evidence_cutoff=cutoff,
@@ -194,7 +199,7 @@ def unavailable_context(
     return DiagnosticRecurrenceContext(
         status="unavailable",
         reason=reason,
-        scope_path=scope_path,
+        scope_path=redact_home(scope_path) if scope_path is not None else None,
         scope_source=scope_source,
         window_start=window_start,
         evidence_cutoff=cutoff,
