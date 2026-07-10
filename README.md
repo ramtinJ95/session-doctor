@@ -2,6 +2,10 @@
 
 `session-doctor` is a local-first CLI for inspecting AI agent sessions.
 
+`v0.1.0` is a source-tag dogfood baseline, not a stable compatibility promise.
+During 0.x, databases and artifacts may need rebuilding after upgrades. The
+project is not yet published to PyPI; install from a source checkout.
+
 The project is being built around a normalized session model so Codex, Claude
 Code, Pi, and future agent logs can be inspected through the same shape. The
 longer-term goal is to classify signs of repeated requests, user frustration,
@@ -341,6 +345,7 @@ uv run ruff format --check .
 uv run ruff check .
 uv run ty check
 uv run pytest -q
+uv build
 ```
 
 Design references:
@@ -358,4 +363,6 @@ Design references:
 - [Phase 9 Plan](docs/phase-9-plan.md)
 - [Phase 9 Validation](docs/phase-9-validation.md)
 - [Phase 10 Plan](docs/phase-10-plan.md)
+- [Phase 10 Validation](docs/phase-10-validation.md)
+- [Changelog](CHANGELOG.md)
 - [Pre-Phase-8 Plan](docs/pre-phase-8-plan.md)

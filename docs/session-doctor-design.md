@@ -47,6 +47,7 @@ session-doctor trends [--project PATH] [--agent AGENT] [--bucket week|month] [--
 session-doctor projects list [--agent AGENT] [--limit N] [--format terminal|json]
 session-doctor report <session-id> [--format terminal|markdown|json] [--limit N] [--show-text]
 session-doctor graph <session-id> [--format json]
+session-doctor integrations path
 ```
 
 `report` and `graph` are exact-session, on-demand read surfaces. `explain` and
@@ -140,6 +141,8 @@ The tool can currently:
 - list exact observed project/CWD hints without inferred repository identity
 - correlate recurring failed commands, opaque failed-tool fingerprints, and
   problematic files only across distinct valid root-session families
+- locate one optional bundled Agent Skill shared by Codex, Claude Code, and Pi
+  without installing or modifying agent configuration
 
 Implemented commands:
 
@@ -167,6 +170,7 @@ session-doctor projects list [--db PATH] [--agent codex|claude|pi] [--limit N]
 session-doctor report <session-id> [--db PATH] [--format terminal|markdown|json]
 session-doctor report <session-id> [--limit N] [--show-text]
 session-doctor graph <session-id> [--db PATH] [--format json]
+session-doctor integrations path
 ```
 
 Commands not currently present: `explain`, `export`.
@@ -180,6 +184,7 @@ src/session_doctor/
   diagnostic_models.py, report_models.py
   summary_payload.py, trend_payload.py, report_payload.py, report_renderers.py
   graph_projection.py, graph_payload.py
+  integration_assets.py, integrations/session-doctor/SKILL.md
   normalization.py, privacy.py, ids.py, config.py
   adapters/   discovery plus agent-specific record/entity normalization
   analysis/   deterministic features, scores, evidence, and classifications
@@ -334,6 +339,8 @@ where applicable.
 - Recurring fingerprints are correlational identifiers, not secrets and not
   protection against guessing low-entropy tool output.
 - Export commands are not implemented.
+- CI, PyPI publication, a GitHub Release, and MCP/query integration remain
+  deferred during the initial dogfood period.
 - The tool is local-only and deterministic; it does not call LLMs or external
   APIs.
 - Privacy hardening is partial: command/file paths and user/assistant message
@@ -2070,9 +2077,13 @@ release:
 MCP/query access, CI, PyPI publication, and a GitHub Release remain deferred
 until dogfooding establishes their contracts.
 
-Status: planned; grilling approved.
+Status: complete. One portable bundled skill covers Codex, Claude Code, and Pi
+through the public CLI only. Local package/install and three-harness structural
+validation passed. The annotated source tag remains a separate explicitly
+approved step; CI, PyPI, GitHub Release, and MCP/query access remain deferred.
 
 Detailed plan: `docs/phase-10-plan.md`.
+Validation: `docs/phase-10-validation.md`.
 
 ## Non-Goals For First Iteration
 

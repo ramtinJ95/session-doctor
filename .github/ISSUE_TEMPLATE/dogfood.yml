@@ -1,0 +1,87 @@
+name: Dogfood finding
+description: Report a privacy-safe session-doctor 0.x problem or refinement.
+title: "dogfood: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not attach DuckDB files or private analysis artifacts. Do not paste transcripts, prompts, message text, source paths, project names, native IDs, hashes/fingerprints, commands containing secrets, tool/command output, arguments, diffs, file names, or file content. Prefer a synthetic reproduction.
+  - type: input
+    id: version
+    attributes:
+      label: session-doctor version
+      description: Output of `session-doctor version`.
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system and Python version only.
+      placeholder: macOS; Python 3.12
+    validations:
+      required: true
+  - type: dropdown
+    id: adapter
+    attributes:
+      label: Adapter
+      options:
+        - codex
+        - claude
+        - pi
+        - not adapter-specific
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Public command
+      description: Command and safe flags only. Remove database/source paths, session IDs, project names, and secrets.
+      placeholder: session-doctor report SESSION_ID --format json
+    validations:
+      required: true
+  - type: dropdown
+    id: analysis_state
+    attributes:
+      label: Analysis state
+      options:
+        - current
+        - stale
+        - missing
+        - not applicable
+    validations:
+      required: true
+  - type: textarea
+    id: structural_evidence
+    attributes:
+      label: Privacy-safe structural evidence
+      description: Exit status, structural counts, and warning codes only. Do not paste native IDs, hashes, paths, message text, commands, output, arguments, diffs, or artifacts.
+      placeholder: Exit status 1; one warning with a synthetic warning code.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Describe behavior without private session content.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal synthetic reproduction
+      description: Use invented values only. Leave blank if a safe reproduction is not available.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I removed transcripts, prompts, message text, source/project paths, private file names, native IDs, hashes/fingerprints, secret-bearing commands, outputs, arguments, diffs, file content, DuckDB files, and private artifacts.
+          required: true

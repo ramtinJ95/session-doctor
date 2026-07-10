@@ -117,6 +117,13 @@ def test_built_distributions_and_clean_wheel_install_include_skill(tmp_path) -> 
     wheel_skill = "session_doctor/integrations/session-doctor/SKILL.md"
     with zipfile.ZipFile(wheel_path) as wheel:
         assert wheel_skill in wheel.namelist()
+        metadata_path = next(name for name in wheel.namelist() if name.endswith("/METADATA"))
+        metadata = wheel.read(metadata_path).decode()
+        assert f"Version: {__version__}" in metadata
+        assert "License-Expression: MIT" in metadata
+        assert "Author: ramtinJ95" in metadata
+        assert "Project-URL: Repository, https://github.com/ramtinJ95/session-doctor" in metadata
+        assert any(name.endswith(".dist-info/licenses/LICENSE") for name in wheel.namelist())
     with tarfile.open(sdist_path) as sdist:
         assert any(name.endswith(f"/src/{wheel_skill}") for name in sdist.getnames())
 

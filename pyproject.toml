@@ -1,9 +1,13 @@
 [project]
 name = "session-doctor"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Local-first CLI foundation for analyzing AI agent sessions."
 readme = "README.md"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "ramtinJ95" }]
+keywords = ["agent", "codex", "claude-code", "duckdb", "session-analysis"]
 dependencies = [
     "duckdb>=1.4.0",
     "pydantic>=2.12.0",
@@ -13,6 +17,10 @@ dependencies = [
 
 [project.scripts]
 session-doctor = "session_doctor.cli:app"
+
+[project.urls]
+Repository = "https://github.com/ramtinJ95/session-doctor"
+Issues = "https://github.com/ramtinJ95/session-doctor/issues"
 
 [dependency-groups]
 dev = [
@@ -47,12 +55,17 @@ packages = ["src/session_doctor"]
 
 [tool.hatch.build.targets.sdist]
 include = [
+    "/CHANGELOG.md",
+    "/LICENSE",
     "/README.md",
     "/pyproject.toml",
     "/src",
     "/tests",
     "/uv.lock",
 ]
+
+[tool.hatch.version]
+path = "src/session_doctor/__init__.py"
 
 [build-system]
 requires = ["hatchling"]
