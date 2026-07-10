@@ -1,0 +1,1 @@
+{"type":"assistant","sessionId":"session-root","uuid":"nested-answer","timestamp":"2026-01-01T00:00:04Z","cwd":"/tmp/session-doctor","isSidechain":true,"agentId":"agent-b","sourceToolAssistantUUID":"subagent-launch","message":{"role":"assistant","model":"claude-test","content":[{"type":"text","text":"Nested result."}],"stop_reason":"end_turn"}}

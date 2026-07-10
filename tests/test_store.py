@@ -564,6 +564,7 @@ def test_store_insert_parsed_bundle_deletes_existing_analysis_rows(tmp_path) -> 
 def test_store_aggregate_summary_counts_sessions_and_analysis(tmp_path) -> None:
     codex_path = FIXTURE_DIR / "repeated-failure-session.jsonl"
     pi_path = Path(__file__).parent / "fixtures" / "pi" / "repeated-failure-session.jsonl"
+    claude_path = CLAUDE_FIXTURE_DIR / "repeated-failure-session.jsonl"
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
     codex_source = source_for_fixture(codex_path)
     pi_source = SessionSource(
@@ -571,49 +572,64 @@ def test_store_aggregate_summary_counts_sessions_and_analysis(tmp_path) -> None:
         agent_name=AgentName.PI,
         source_path=str(pi_path),
     )
+    claude_source = SessionSource(
+        source_id=source_id_for_path(AgentName.CLAUDE, claude_path),
+        agent_name=AgentName.CLAUDE,
+        source_path=str(claude_path),
+    )
     codex_bundle = CodexAdapter().parse_source(codex_source)
     from session_doctor.adapters.pi import PiAdapter
 
     pi_bundle = PiAdapter().parse_source(pi_source)
+    claude_bundle = ClaudeCodeAdapter().parse_source(claude_source)
     assert codex_bundle.session is not None
     assert pi_bundle.session is not None
+    assert claude_bundle.session is not None
     store.insert_parsed_bundle(codex_source, codex_bundle)
     store.insert_parsed_bundle(pi_source, pi_bundle)
+    store.insert_parsed_bundle(claude_source, claude_bundle)
 
     initial_summary = store.aggregate_summary(SummaryFilters())
 
-    assert initial_summary.total_sessions == 2
+    assert initial_summary.total_sessions == 3
     assert initial_summary.analyzed_sessions == 0
-    assert initial_summary.unanalyzed_sessions == 2
-    assert {row.agent_name for row in initial_summary.agent_counts} == {"codex", "pi"}
+    assert initial_summary.unanalyzed_sessions == 3
+    assert {row.agent_name for row in initial_summary.agent_counts} == {
+        "claude",
+        "codex",
+        "pi",
+    }
 
     add_summary_analysis_rows(store, codex_bundle.session.session_id, "user_stuck", 0.8)
     add_summary_analysis_rows(store, pi_bundle.session.session_id, "tooling_blocked", 0.7)
+    add_summary_analysis_rows(store, claude_bundle.session.session_id, "agent_looping", 0.6)
 
     summary = store.aggregate_summary(SummaryFilters())
 
-    assert summary.total_sessions == 2
-    assert summary.analyzed_sessions == 2
+    assert summary.total_sessions == 3
+    assert summary.analyzed_sessions == 3
     assert summary.unanalyzed_sessions == 0
     assert {row.label: row.session_count for row in summary.classification_counts} == {
+        "agent_looping": 1,
         "tooling_blocked": 1,
         "user_stuck": 1,
     }
     assert [row.session_id for row in summary.recent_risk_sessions] == [
         codex_bundle.session.session_id,
         pi_bundle.session.session_id,
+        claude_bundle.session.session_id,
     ]
     assert all(row.prompt_clarity_risk is not None for row in summary.recent_risk_sessions)
     assert all(row.project_complexity_signal is not None for row in summary.recent_risk_sessions)
     assert summary.failed_commands
     assert len(summary.failed_commands) == 1
-    assert summary.failed_commands[0].failure_count == 4
-    assert summary.failed_commands[0].session_count == 2
-    assert summary.failed_commands[0].agents == ("codex", "pi")
+    assert summary.failed_commands[0].failure_count == 5
+    assert summary.failed_commands[0].session_count == 3
+    assert summary.failed_commands[0].agents == ("claude", "codex", "pi")
     assert len(summary.repeated_files) == 1
-    assert summary.repeated_files[0].activity_count == 4
-    assert summary.repeated_files[0].session_count == 2
-    assert summary.repeated_files[0].agents == ("codex", "pi")
+    assert summary.repeated_files[0].activity_count == 5
+    assert summary.repeated_files[0].session_count == 3
+    assert summary.repeated_files[0].agents == ("claude", "codex", "pi")
     assert "Inspect the top failed commands" in " ".join(summary.recommendations)
 
 

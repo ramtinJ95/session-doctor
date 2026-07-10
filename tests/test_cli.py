@@ -20,6 +20,7 @@ from session_doctor.store import SCHEMA_VERSION, DuckDBStore
 runner = CliRunner()
 CODEX_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "codex"
 CLAUDE_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "claude"
+CLAUDE_TOPOLOGY_FIXTURE_DIR = CLAUDE_FIXTURE_DIR / "topology"
 PI_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "pi"
 
 
@@ -284,7 +285,7 @@ def test_ingest_claude_root_fixture_writes_and_replaces_normalized_rows(tmp_path
     assert store.table_count("parse_warnings") == 3
 
 
-def test_ingest_claude_directory_selects_only_root_sessions(
+def test_ingest_claude_directory_selects_root_and_subagent_sessions(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -316,13 +317,17 @@ def test_ingest_claude_directory_selects_only_root_sessions(
 
     assert result.exit_code == 0
     assert "Sources" in result.stdout
+    assert "root_session=1" in result.stdout
+    assert "subsession=1" in result.stdout
+    assert "memory=1" in result.stdout
+    assert "tool_result=2" in result.stdout
     store = DuckDBStore(database_path)
-    assert store.table_count("session_sources") == 1
-    assert store.table_count("sessions") == 1
+    assert store.table_count("session_sources") == 2
+    assert store.table_count("sessions") == 2
     assert store.table_count("raw_events") == 9
 
 
-def test_ingest_claude_rejects_explicit_subagent_source(tmp_path) -> None:
+def test_ingest_claude_accepts_explicit_subagent_source(tmp_path) -> None:
     subagents_dir = tmp_path / "session" / "subagents"
     subagents_dir.mkdir(parents=True)
     source_path = subagents_dir / "agent-a.jsonl"
@@ -341,19 +346,19 @@ def test_ingest_claude_rejects_explicit_subagent_source(tmp_path) -> None:
         ],
     )
 
-    assert result.exit_code == 2
-    assert "Unsupported source kind for Claude Code ingestion" in result.stdout
-    assert "subsession" in result.stdout
+    assert result.exit_code == 0
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    summaries = store.list_session_summaries()
+    assert len(summaries) == 1
+    bundle = store.load_session_bundle(summaries[0].session_id)
+    assert bundle is not None
+    assert bundle.session is not None
+    assert bundle.session.is_sidechain is True
 
 
 @pytest.mark.parametrize(
     ("directory_name", "filename", "content"),
     [
-        (
-            "subagents",
-            "agent-a.jsonl",
-            '{"type":"user","message":{"role":"user","content":"PRIVATE_SUBAGENT"}}\n',
-        ),
         (
             "tool-results",
             "result.jsonl",
@@ -361,7 +366,7 @@ def test_ingest_claude_rejects_explicit_subagent_source(tmp_path) -> None:
         ),
     ],
 )
-def test_ingest_claude_direct_sidecar_directory_selects_no_root_sources(
+def test_ingest_claude_direct_tool_result_directory_selects_no_sessions(
     tmp_path,
     directory_name: str,
     filename: str,
@@ -387,6 +392,69 @@ def test_ingest_claude_direct_sidecar_directory_selects_no_root_sources(
 
     assert result.exit_code == 0
     assert not database_path.exists()
+
+
+def test_ingest_claude_topology_replaces_and_analyzes_all_sessions(tmp_path) -> None:
+    database_path = tmp_path / "claude-topology.duckdb"
+    ingest_command = [
+        "ingest",
+        "--agent",
+        "claude",
+        "--source",
+        str(CLAUDE_TOPOLOGY_FIXTURE_DIR),
+        "--db",
+        str(database_path),
+    ]
+
+    first_result = runner.invoke(app, ingest_command)
+    second_result = runner.invoke(app, ingest_command)
+
+    assert first_result.exit_code == 0
+    assert second_result.exit_code == 0
+    assert "root_session=1" in second_result.stdout
+    assert "subsession=2" in second_result.stdout
+    assert "subagent_metadata=3" in second_result.stdout
+    assert "tool_result=2" in second_result.stdout
+    store = DuckDBStore(database_path)
+    assert store.table_count("session_sources") == 3
+    assert store.table_count("sessions") == 3
+    assert store.table_count("raw_events") == 5
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        source_links = connection.execute(
+            "SELECT source_kind, parent_source_id FROM session_sources ORDER BY source_path"
+        ).fetchall()
+        session_links = connection.execute(
+            "SELECT is_sidechain, parent_session_id FROM sessions ORDER BY session_id"
+        ).fetchall()
+    assert sum(parent_source_id is not None for _, parent_source_id in source_links) == 2
+    assert sum(parent_session_id is not None for _, parent_session_id in session_links) == 2
+    assert sum(bool(is_sidechain) for is_sidechain, _ in session_links) == 2
+
+    summaries = store.list_session_summaries()
+    assert len(summaries) == 3
+    for summary in summaries:
+        analyze_result = runner.invoke(
+            app,
+            [
+                "analyze",
+                summary.session_id,
+                "--db",
+                str(database_path),
+                "--no-artifact",
+            ],
+        )
+        assert analyze_result.exit_code == 0
+
+    summary_result = runner.invoke(
+        app,
+        ["summary", "--agent", "claude", "--db", str(database_path), "--format", "json"],
+    )
+    assert summary_result.exit_code == 0
+    assert json.loads(summary_result.stdout)["totals"] == {
+        "analyzed_sessions": 3,
+        "sessions": 3,
+        "unanalyzed_sessions": 0,
+    }
 
 
 def test_ingest_single_file_fails_immediately_on_recoverable_source_error(

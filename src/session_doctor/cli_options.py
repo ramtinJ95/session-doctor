@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 import typer
@@ -8,12 +9,18 @@ from rich.console import Console
 
 from .adapters import BaseAdapter, built_in_adapters
 from .config import default_database_path
-from .schemas.common import AgentName
+from .schemas.common import AgentName, SourceKind
 from .schemas.sessions import SessionSource
 from .store import DuckDBStore, SchemaMismatchError
 from .store.models import SummaryFilters
 
 console = Console()
+
+
+@dataclass(frozen=True)
+class SourceSelection:
+    sources: tuple[SessionSource, ...]
+    discovered_counts: dict[str, int]
 
 
 def os_access_writable(path: Path) -> bool:
@@ -122,12 +129,16 @@ def adapter_for_ingest(agent: str) -> BaseAdapter:
 
 
 def sources_for_ingest(adapter: BaseAdapter, source: Path | None) -> list[SessionSource]:
+    return list(source_selection_for_ingest(adapter, source).sources)
+
+
+def source_selection_for_ingest(
+    adapter: BaseAdapter,
+    source: Path | None,
+) -> SourceSelection:
     if source is None:
-        return [
-            discovered_source
-            for discovered_source in adapter.discover()
-            if discovered_source.source_kind in adapter.ingestible_source_kinds
-        ]
+        discovered = adapter.discover()
+        return selection_from_discovered(adapter, discovered)
 
     expanded_source = source.expanduser()
     if not expanded_source.exists():
@@ -136,11 +147,8 @@ def sources_for_ingest(adapter: BaseAdapter, source: Path | None) -> list[Sessio
 
     resolved_source = expanded_source.resolve()
     if resolved_source.is_dir():
-        return [
-            discovered_source
-            for discovered_source in adapter.discover(resolved_source)
-            if discovered_source.source_kind in adapter.ingestible_source_kinds
-        ]
+        discovered = adapter.discover(resolved_source)
+        return selection_from_discovered(adapter, discovered)
     if resolved_source.is_file():
         session_source = adapter.source_for_path(resolved_source)
         if session_source.source_kind not in adapter.ingestible_source_kinds:
@@ -149,7 +157,34 @@ def sources_for_ingest(adapter: BaseAdapter, source: Path | None) -> list[Sessio
                 f"{session_source.source_kind.value}"
             )
             raise typer.Exit(2)
-        return [session_source]
+        return SourceSelection(
+            sources=(session_source,),
+            discovered_counts={session_source.source_kind.value: 1},
+        )
 
     console.print(f"[red]Source is not a file or directory:[/red] {resolved_source}")
     raise typer.Exit(1)
+
+
+def selection_from_discovered(
+    adapter: BaseAdapter,
+    discovered: list[SessionSource],
+) -> SourceSelection:
+    counts = {source_kind.value: 0 for source_kind in SourceKind}
+    for discovered_source in discovered:
+        counts[discovered_source.source_kind.value] += 1
+    selected = sorted(
+        (
+            discovered_source
+            for discovered_source in discovered
+            if discovered_source.source_kind in adapter.ingestible_source_kinds
+        ),
+        key=lambda candidate: (
+            candidate.source_kind is not SourceKind.ROOT_SESSION,
+            candidate.source_path,
+        ),
+    )
+    return SourceSelection(
+        sources=tuple(selected),
+        discovered_counts={key: value for key, value in counts.items() if value},
+    )
