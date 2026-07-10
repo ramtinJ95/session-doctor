@@ -809,9 +809,16 @@ def unresolved_analysis_reference_ids(snapshot: DiagnosticSnapshot) -> list[str]
         )
     file_feature = session_feature(snapshot, "same_file_edited_repeatedly_count")
     if file_feature:
+        source_event_ids_by_path = file_feature.evidence.get("source_event_ids_by_path")
         for path in string_list(file_feature.evidence.get("paths")):
+            source_event_ids = (
+                string_list(source_event_ids_by_path.get(path))
+                if isinstance(source_event_ids_by_path, dict)
+                else []
+            )
             resolved_count = sum(
                 path in {row.canonical_path, row.project_relative_path, row.normalized_path}
+                and (not source_event_ids or row.source_event_id in source_event_ids)
                 for row in snapshot.normalized.file_activities
             )
             if resolved_count < 2:
