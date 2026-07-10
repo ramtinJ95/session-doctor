@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from rich.console import Console
 
@@ -38,6 +38,7 @@ class IngestSummary:
     warning_count: int = 0
     discovered_source_counts: dict[str, int] | None = None
     selected_source_counts: dict[str, int] | None = None
+    parsed_source_counts: dict[str, int] = field(default_factory=dict)
     skipped_sources: tuple[SkippedSource, ...] = ()
 
 
@@ -79,6 +80,10 @@ def ingest_sources(
             continue
         store.insert_parsed_bundle(session_source, bundle)
 
+        source_kind = session_source.source_kind.value
+        summary.parsed_source_counts[source_kind] = (
+            summary.parsed_source_counts.get(source_kind, 0) + 1
+        )
         summary.session_count += 1 if bundle.session else 0
         summary.message_count += len(bundle.messages)
         summary.tool_call_count += len(bundle.tool_calls)

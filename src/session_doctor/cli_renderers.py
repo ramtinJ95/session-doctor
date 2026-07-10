@@ -146,11 +146,12 @@ def render_ingest_summary(summary: IngestSummary, database_path: Path, console: 
     table.add_row("Database", str(database_path))
     table.add_row("Sources", str(summary.source_count))
     if summary.discovered_source_counts:
-        parsed_counts = summary.selected_source_counts or {}
+        selected_counts = summary.selected_source_counts or {}
+        parsed_counts = summary.parsed_source_counts or {}
         ignored_counts = {
-            key: count - parsed_counts.get(key, 0)
+            key: count - selected_counts.get(key, 0)
             for key, count in summary.discovered_source_counts.items()
-            if count > parsed_counts.get(key, 0)
+            if count > selected_counts.get(key, 0)
         }
         table.add_row("Discovered parsed kinds", format_source_counts(parsed_counts))
         table.add_row("Deliberately ignored kinds", format_source_counts(ignored_counts))
