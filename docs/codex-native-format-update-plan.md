@@ -1,6 +1,6 @@
 # Current Codex Native Format Update Plan
 
-Status: approved; contract and synthetic fixtures implemented, parser changes pending.
+Status: approved; PR 1 complete, PR 2 response-command implementation in review.
 
 ## Purpose
 

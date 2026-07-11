@@ -270,3 +270,173 @@ def test_codex_facade_preserves_helper_imports() -> None:
     )
     assert "command_text" in codex.__all__
     assert "session_id_from_filename" in codex.__all__
+
+
+def test_codex_normalizes_current_response_item_commands() -> None:
+    fixture_path = FIXTURE_DIR / "current-response-items.jsonl"
+    bundle = CodexAdapter().parse_source(source_for_fixture(fixture_path))
+
+    assert len(bundle.command_runs) == 4
+    assert len(bundle.tool_calls) == 5
+    assert len(bundle.tool_results) == 5
+    assert [command.metadata["execution_kind"] for command in bundle.command_runs].count(
+        "exec_command"
+    ) == 3
+    failed = next(command for command in bundle.command_runs if command.exit_code == 1)
+    running = next(
+        command for command in bundle.command_runs if command.metadata["outcome"] == "running"
+    )
+    opaque = next(
+        command for command in bundle.command_runs if command.metadata["execution_kind"] == "exec"
+    )
+    successful = next(command for command in bundle.command_runs if command.exit_code == 0)
+    assert failed.command == "pytest synthetic_tests -q"
+    assert failed.cwd == "/tmp/codex-native-contract"
+    assert failed.output_length == len("Synthetic failing output")
+    assert failed.stdout_hash is not None
+    assert failed.ended_at is not None
+    failed_tool_result = next(
+        result for result in bundle.tool_results if result.tool_call_id == failed.tool_call_id
+    )
+    assert failed_tool_result.is_error is True
+    successful_tool_result = next(
+        result for result in bundle.tool_results if result.tool_call_id == successful.tool_call_id
+    )
+    assert successful.command == "python -m synthetic_check"
+    assert successful_tool_result.is_error is False
+    assert running.command == "sleep 1"
+    assert running.exit_code is None
+    assert running.ended_at is None
+    assert opaque.command == "git status --short"
+    assert opaque.exit_code is None
+    assert opaque.metadata["outcome"] == "opaque"
+    assert all(command.tool_call_id is not None for command in bundle.command_runs)
+    serialized = bundle.model_dump_json()
+    assert "Synthetic failing output" not in serialized
+    assert "Synthetic opaque exec output" not in serialized
+    assert "synthetic-chunk" not in serialized
+
+
+def test_codex_response_item_cardinality_is_explicit() -> None:
+    fixture_path = FIXTURE_DIR / "current-response-item-ambiguities.jsonl"
+    bundle = CodexAdapter().parse_source(source_for_fixture(fixture_path))
+
+    warning_codes = [warning.metadata["code"] for warning in bundle.parse_warnings]
+    assert len(bundle.tool_calls) == 2
+    assert len(bundle.tool_results) == 3
+    assert len(bundle.command_runs) == 2
+    assert warning_codes == [
+        "ambiguous_codex_tool_call",
+        "missing_codex_tool_result",
+        "ambiguous_codex_tool_results",
+        "orphan_codex_tool_result",
+    ]
+    assert {command.metadata["outcome"] for command in bundle.command_runs} == {
+        "ambiguous",
+        "missing",
+    }
+    assert sum(result.tool_call_id is None for result in bundle.tool_results) == 1
+    assert all(
+        set(warning.metadata).issubset(
+            {"code", "call_count", "result_count", "reason", "execution_kind"}
+        )
+        for warning in bundle.parse_warnings
+    )
+
+
+def test_codex_legacy_command_wins_over_response_item(tmp_path) -> None:
+    session_path = tmp_path / "legacy-precedence.jsonl"
+    records = [
+        {
+            "timestamp": "2026-07-10T10:00:00Z",
+            "type": "session_meta",
+            "payload": {"id": "legacy-precedence", "cwd": "/tmp"},
+        },
+        {
+            "timestamp": "2026-07-10T10:00:01Z",
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "exec_command",
+                "arguments": json.dumps({"cmd": "synthetic response command"}),
+                "call_id": "shared-call",
+            },
+        },
+        {
+            "timestamp": "2026-07-10T10:00:02Z",
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "shared-call",
+                "output": "Synthetic response output",
+            },
+        },
+        {
+            "timestamp": "2026-07-10T10:00:03Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "exec_command_end",
+                "call_id": "shared-call",
+                "command": "synthetic legacy command",
+                "exit_code": 0,
+            },
+        },
+    ]
+    session_path.write_text("\n".join(json.dumps(record) for record in records))
+
+    bundle = CodexAdapter().parse_source(source_for_fixture(session_path))
+
+    assert len(bundle.tool_calls) == 1
+    assert len(bundle.tool_results) == 1
+    assert len(bundle.command_runs) == 1
+    assert bundle.command_runs[0].command == "synthetic legacy command"
+    assert bundle.command_runs[0].exit_code == 0
+
+
+def test_codex_rejects_malformed_response_command_without_guessing(tmp_path) -> None:
+    session_path = tmp_path / "malformed-response-command.jsonl"
+    records = [
+        {
+            "timestamp": "2026-07-10T10:00:00Z",
+            "type": "session_meta",
+            "payload": {"id": "malformed-response-command", "cwd": "/tmp"},
+        },
+        {
+            "timestamp": "2026-07-10T10:00:01Z",
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "exec_command",
+                "arguments": "PRIVATE_NOT_JSON_COMMAND",
+                "call_id": "malformed-call",
+            },
+        },
+        {
+            "timestamp": "2026-07-10T10:00:02Z",
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "malformed-call",
+                "output": "PRIVATE_MALFORMED_OUTPUT",
+            },
+        },
+    ]
+    session_path.write_text("\n".join(json.dumps(record) for record in records))
+
+    bundle = CodexAdapter().parse_source(source_for_fixture(session_path))
+
+    assert len(bundle.tool_calls) == 1
+    assert len(bundle.tool_results) == 1
+    assert bundle.command_runs == []
+    assert [warning.metadata for warning in bundle.parse_warnings] == [
+        {
+            "code": "invalid_codex_response_command",
+            "reason": "arguments_not_json",
+            "execution_kind": "exec_command",
+        }
+    ]
+    serialized_warnings = json.dumps(
+        [warning.model_dump(mode="json") for warning in bundle.parse_warnings]
+    )
+    assert "PRIVATE_NOT_JSON_COMMAND" not in serialized_warnings
+    assert "PRIVATE_MALFORMED_OUTPUT" not in serialized_warnings
