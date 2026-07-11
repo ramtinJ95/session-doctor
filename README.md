@@ -364,5 +364,7 @@ Design references:
 - [Phase 9 Validation](docs/phase-9-validation.md)
 - [Phase 10 Plan](docs/phase-10-plan.md)
 - [Phase 10 Validation](docs/phase-10-validation.md)
+- [Current Codex Native Format Plan](docs/codex-native-format-update-plan.md)
+- [Current Codex Native Format Validation](docs/codex-native-format-validation.md)
 - [Changelog](CHANGELOG.md)
 - [Pre-Phase-8 Plan](docs/pre-phase-8-plan.md)

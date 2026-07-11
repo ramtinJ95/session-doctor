@@ -1,6 +1,6 @@
 # Current Codex Native Format Update Plan
 
-Status: approved; PRs 1-2 complete, PR 3 current-record handling in review.
+Status: complete.
 
 ## Purpose
 
@@ -195,6 +195,8 @@ No production parser behavior changes in PR 1.
 
 Each PR starts from updated `main`, receives blocker-only review/fix cycles until
 exactly `NO FINDINGS`, and is rebase-merged before the next branch.
+
+Validation: `docs/codex-native-format-validation.md`.
 
 ## Acceptance Gates
 
