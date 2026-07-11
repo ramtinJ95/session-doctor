@@ -1,344 +1,238 @@
 # session-doctor
 
-`session-doctor` is a local-first CLI for inspecting AI agent sessions.
+`session-doctor` is a local CLI for understanding how AI coding-agent sessions
+went: where work flowed, where it became difficult, and which problems keep
+coming back.
 
-`v0.1.0` is a source-tag dogfood baseline, not a stable compatibility promise.
-During 0.x, databases and artifacts may need rebuilding after upgrades. The
-project is not yet published to PyPI; install from a source checkout.
+It reads native session logs from **Codex**, **Claude Code**, and **Pi**, turns
+them into one common local history, and applies deterministic rules to surface
+signals such as:
 
-The project is being built around a normalized session model so Codex, Claude
-Code, Pi, and future agent logs can be inspected through the same shape. The
-longer-term goal is to classify signs of repeated requests, user frustration,
-stuckness, prompt ambiguity, agent loops, and project complexity.
+- repeated requests, corrections, frustration, and unclear scope;
+- failed commands, failed tools, and repeated failure loops;
+- repeated edits to the same files and unresolved endings;
+- sessions that look healthy, stuck, blocked, looping, misunderstood, too
+  large, or unusually complex;
+- recurring command, tool, and file patterns across sessions;
+- weekly or monthly changes within an observed project path.
 
-Phase 1 created the foundation:
+The tool does not call an LLM, upload session data, or claim to know intent or
+causality. Its findings are explainable signals for review, not judgments about
+a user or agent.
 
-- Python package and CLI entry point
-- Pydantic schema foundations
-- DuckDB storage scaffold
-- adapter discovery interfaces for Codex, Claude Code, and Pi
-- test, lint, and type-check tooling
+> **Status:** `v0.1.0` is a source-tag dogfood release. The project is not on
+> PyPI yet, and 0.x CLI, database, and artifact formats may change. Rebuilding
+> local data after an upgrade may be required.
 
-Phase 2 adds the first real vertical slice for Codex sessions:
+## How it works
 
-- Codex JSONL parsing
-- normalized DuckDB persistence
-- `session-doctor ingest --agent codex`
-- `session-doctor sessions list`
+```text
+native Codex / Claude Code / Pi logs
+  -> adapter-specific parsing
+  -> common session timeline in local DuckDB
+  -> deterministic features, scores, and classifications
+  -> summaries, trends, reports, and evidence graphs
+```
 
-Phase 3 adds the first deterministic Codex analysis slice:
+Ingestion preserves source provenance while normalizing messages, tool calls
+and results, commands, file activity, model usage, and parse warnings. Analysis
+then derives evidence-backed features and classifications. Reports and graphs
+read those stored results; they never silently ingest or analyze sessions.
 
-- derived feature and classification rows
-- `session-doctor analyze <session-id>`
-- terminal summaries
-- default JSON analysis artifacts
+### What it measures
 
-Phase 4 adds Pi as the second native adapter:
+Five scores summarize different kinds of evidence:
 
-- Pi JSONL parsing
-- `session-doctor ingest --agent pi`
-- existing `sessions list` and `analyze` behavior over Pi-derived records
+| Score | What it represents |
+| --- | --- |
+| Friction | Corrections, failures, repeated work, and unresolved progress |
+| Stuckness | Repetition, failure loops, frustration, and unresolved endings |
+| Prompt clarity risk | Ambiguity, scope changes, and corrective user messages |
+| Agent-fit risk | Evidence that the session or task is not progressing well with the current approach |
+| Project-complexity signal | Broad file activity, repeated edits, and session scale |
 
-Phase 5 hardens deterministic feature evidence:
+Scores can support multiple labels, including `healthy`, `user_stuck`,
+`tooling_blocked`, `agent_looping`, `agent_misunderstood`, `prompt_ambiguous`,
+`task_too_large`, `repo_complexity_high`, `resolved_after_corrections`, and
+`abandoned_or_stopped`.
 
-- preserved analysis ordering and normalized timestamps
-- richer repeated-failure, repeated-edit, and unresolved-ending evidence
-- narrower command-loop classification behavior
+Aggregate views also show analysis coverage, risky sessions, common labels,
+failed commands, problematic files, recurrence across independent session
+families, and guarded weekly/monthly trends. Sparse or incompatible evidence is
+reported as missing, stale, or `insufficient_data` rather than guessed.
 
-Phase 6 adds classification scoring:
+## Quick start
 
-- reusable risk score features for friction, stuckness, prompt clarity, agent
-  fit, and project complexity
-- metadata-rich deterministic classifications
-- conservative labels such as `healthy`, `agent_misunderstood`,
-  `prompt_ambiguous`, `task_too_large`, `repo_complexity_high`, and
-  `abandoned_or_stopped`
-
-Phase 7 adds aggregate summaries:
-
-- `session-doctor summary` over all ingested sessions
-- optional `--agent` and `--project` filters
-- terminal and JSON views over analysis coverage, labels, risky sessions,
-  failed commands, repeated files, and next-step recommendations
-
-Pre-Phase-8 PR 1 hardened that foundation:
-
-- conservative canonical command and file identities shared by Codex and Pi
-- explicit non-zero ingestion failures without hiding persistence errors
-- all five risk scores in aggregate output with stable JSON precision
-- deduplicated aggregate evidence IDs
-
-Pre-Phase-8 PR 2 added the Claude Code root-session vertical slice:
-
-- tolerant Claude root JSONL parsing into the existing normalized models
-- `session-doctor ingest --agent claude` for root transcripts
-- existing `sessions list`, `analyze`, and `summary` behavior over Claude roots
-- hashed tool/command output and edit/write bodies without persisted thinking text
-
-Pre-Phase-8 PR 3 completes the Claude adapter:
-
-- root and subagent transcripts become separate linked sessions
-- subagent metadata enriches sessions without becoming a session itself
-- explicitly referenced tool-result sidecars contribute only hashes, lengths,
-  and truncation facts
-- memory, orphan sidecars, and auxiliary files remain visible but deliberately
-  excluded from session ingestion
-- copied-local validation exercises discovery, ingestion, analysis, summary,
-  parent linkage, and privacy invariants
-
-Phase 8 adds deterministic project-level trends:
-
-- filtered `analyze --all` recovery for stale and never-analyzed sessions
-- aligned weekly/monthly `trends` over current analyzer-version rows
-- explicit coverage, score samples, classification/risk denominators, and empty
-  periods
-- separate top-level and sidechain cohorts with guarded project-scoped
-  directions
-- non-causal agent observations and exact observed project-path hints
-- root-family recurring failed commands, opaque failed-tool fingerprints, and
-  problematic files without exposing native output or content
-- `projects list` discovery without guessed repository roots
-
-Phase 9 adds exact-session diagnostics:
-
-- privacy-safe terminal, Markdown, and stable JSON `report` output
-- explicit current, stale, and missing analysis states without automatic analysis
-- evidence-only message disclosure through `--show-text`
-- trailing project recurrence context with fixed topology and timing boundaries
-- complete deterministic JSON evidence graphs with conservative provenance
-- read-only on-demand projection without report artifacts, graph persistence, or NetworkX
-
-Phase 10 completes the roadmap with one optional portable agent skill for
-Codex, Claude Code, and Pi plus a lightweight `v0.1.0` source-tag dogfood
-release. The skill remains a thin CLI orchestrator: it never reads transcripts
-or DuckDB directly, confirms before writes and evidence-message disclosure, and
-keeps interpretations evidence-citing and non-causal. MCP, CI, PyPI, and stable
-0.x compatibility remain deferred while the CLI is dogfooded.
-
-## Usage
-
-Install dependencies:
+Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
+git clone https://github.com/ramtinJ95/session-doctor.git
+cd session-doctor
 uv sync
+
+# Check the environment and see what local sources are available.
+uv run session-doctor doctor
+uv run session-doctor adapters list --scan
+
+# Create the local store, ingest one or more agents, and analyze new sessions.
+uv run session-doctor db init
+uv run session-doctor ingest --agent codex
+uv run session-doctor ingest --agent claude
+uv run session-doctor ingest --agent pi
+uv run session-doctor analyze --all
+
+# Review the result.
+uv run session-doctor summary
+uv run session-doctor sessions list
+uv run session-doctor report <session-id>
 ```
 
-Run the CLI:
+You only need to ingest the agents you use. Without `--source`, each adapter
+scans its standard local root:
+
+| Agent | Default source root |
+| --- | --- |
+| Codex | `~/.codex/sessions` |
+| Claude Code | `~/.claude/projects` |
+| Pi | `~/.pi/agent/sessions` |
+
+The default database is
+`~/.local/share/session-doctor/session-doctor.duckdb`. Override it with
+`--db PATH` or the `SESSION_DOCTOR_DB` environment variable.
+
+To ingest a copied file or a specific directory instead of the live default
+root:
 
 ```bash
-uv run session-doctor --help
-uv run session-doctor version
-uv run session-doctor doctor
-uv run session-doctor adapters list
-uv run session-doctor adapters list --scan
+uv run session-doctor ingest --agent codex --source /path/to/session.jsonl
+uv run session-doctor ingest --agent claude --source /path/to/copied-sessions
 ```
+
+Re-ingesting a source replaces that source's normalized rows and invalidates
+its old analysis. Native source files are never modified.
+
+## Common workflows
+
+### Analyze sessions
+
+```bash
+# One session; writes a JSON artifact by default.
+uv run session-doctor analyze <session-id>
+
+# One session without an artifact.
+uv run session-doctor analyze <session-id> --no-artifact
+
+# Restore missing or stale analysis without batch artifacts.
+uv run session-doctor analyze --all --agent codex
+
+# Reanalyze every matching session and write per-session artifacts.
+uv run session-doctor analyze --all --project /path/to/project \
+  --force --write-artifacts
+```
+
+Single-session artifacts default to:
+`<database-parent>/artifacts/<session-id>-analysis.json`.
+
+### Summaries and trends
+
+```bash
+uv run session-doctor summary --agent claude --limit 20
+uv run session-doctor summary --project /path/to/project --format json
+
+uv run session-doctor projects list
+uv run session-doctor trends --project /path/to/project
+uv run session-doctor trends --project /path/to/project \
+  --bucket month --periods 12 --format json
+```
+
+Project values are exact observed path hints, not inferred repository roots.
+Trends are read-only. Directional statements require an explicit project scope
+and enough compatible evidence.
+
+### Inspect one session
+
+```bash
+uv run session-doctor report <session-id>
+uv run session-doctor report <session-id> --format markdown > report.md
+uv run session-doctor report <session-id> --format json
+uv run session-doctor graph <session-id> > graph.json
+```
+
+`report` and `graph` are exact-session, read-only views. They do not ingest,
+analyze, write artifacts, or cache derived data. Stale or missing analysis is
+shown explicitly.
+
+## CLI reference
+
+Run `uv run session-doctor COMMAND --help` for the authoritative help for any
+command.
+
+| Command | Purpose | Useful parameters |
+| --- | --- | --- |
+| `version` | Print the installed version | — |
+| `doctor` | Check Python, DuckDB, paths, and adapter roots | `--db PATH` |
+| `adapters list` | Show built-in adapters and roots | `--scan` |
+| `db init` | Create the DuckDB store | `--db PATH` |
+| `db info` | Show database path and schema status | `--db PATH` |
+| `ingest` | Parse and store native sessions | `--agent codex\|claude\|pi`, `--source PATH`, `--db PATH` |
+| `sessions list` | List ingested sessions | `--db PATH` |
+| `analyze SESSION_ID` | Analyze one session | `--format terminal\|json`, `--artifact PATH`, `--no-artifact` |
+| `analyze --all` | Restore or rebuild analysis coverage | `--project PATH`, `--agent NAME`, `--force`, `--write-artifacts` |
+| `summary` | Show aggregate diagnostics | `--project PATH`, `--agent NAME`, `--limit N`, `--format terminal\|json` |
+| `trends` | Show aligned trends and recurrence | `--bucket week\|month`, `--periods 1..120`, plus summary filters |
+| `projects list` | List observed project/CWD hints | `--agent NAME`, `--limit N`, `--format terminal\|json` |
+| `report SESSION_ID` | Build an exact-session report | `--format terminal\|markdown\|json`, `--limit N`, `--show-text` |
+| `graph SESSION_ID` | Build an exact-session evidence graph | JSON only |
+| `integrations path` | Locate the bundled Agent Skill | — |
+
+Most query commands accept `--db PATH`. `summary`, `trends`, `projects list`,
+`report`, and `graph` are read-only. `db init`, `ingest`, and `analyze` write
+local state.
+
+## Privacy and local data
+
+Session Doctor is local-first, but its DuckDB file still contains sensitive
+local data needed for analysis:
+
+- user and assistant message text, command text, and paths are stored locally;
+- raw tool/command output, diffs, file bodies, and full argument payloads are
+  generally replaced by hashes, lengths, and structural metadata; selected
+  fields such as paths, URLs, and search queries may still be stored locally;
+- reports omit message text by default;
+- `report --show-text` reveals only the displayed persisted evidence messages;
+- graphs never include message text;
+- displayed command examples and home paths are redacted;
+- evidence text exposed by `--show-text` is otherwise verbatim and may itself
+  contain sensitive data.
+
+Treat the database and generated artifacts as private. The tool has no
+telemetry and makes no external API or model calls.
 
 ## Optional Agent Skill
 
-Phase 10 ships one portable `session-doctor` Agent Skill for Codex, Claude
-Code, and Pi. It covers the public CLI without reading native transcripts or
-DuckDB directly. It confirms before database/artifact writes, shell-completion
-installation, or evidence-message disclosure.
-
-Locate and inspect the exact skill bundled with the installed CLI:
+The package includes one portable skill for Codex, Claude Code, and Pi. It is a
+thin wrapper around the public CLI and does not read transcripts or DuckDB
+directly.
 
 ```bash
-skill_source="$(session-doctor integrations path)"
-printf '%s\n' "$skill_source"
-cat "$skill_source/SKILL.md"
+uv run session-doctor integrations path
 ```
 
-When running from this source checkout, replace `session-doctor` above with
-`uv run session-doctor`.
+Inspect the returned `SKILL.md` before manually copying that directory into the
+appropriate agent skill root. The CLI never installs or modifies agent
+configuration automatically. See the [Phase 10 plan](docs/phase-10-plan.md) for
+the supported destinations and confirmation rules.
 
-Install manually only after checking that the destination does not already
-exist. Codex and Pi can share one global copy:
+## Current limitations
 
-```bash
-destination="$HOME/.agents/skills/session-doctor"
-if test -e "$destination"; then
-  printf 'Already exists; inspect it and choose whether to replace it: %s\n' "$destination" >&2
-else
-  mkdir -p "$(dirname "$destination")"
-  cp -R "$skill_source" "$destination"
-fi
-```
+- Native agent log formats can drift and require adapter updates.
+- Project paths are observed hints rather than a project registry.
+- Graph output is structured JSON, not a graphical visualization.
+- OpenCode, exports, MCP/query access, CI, PyPI publishing, and a GitHub Release
+  are not included in the current dogfood baseline.
+- Before 1.0, incompatible databases and artifacts may need explicit rebuilds.
 
-Claude Code uses its global skill root:
-
-```bash
-destination="$HOME/.claude/skills/session-doctor"
-if test -e "$destination"; then
-  printf 'Already exists; inspect it and choose whether to replace it: %s\n' "$destination" >&2
-else
-  mkdir -p "$(dirname "$destination")"
-  cp -R "$skill_source" "$destination"
-fi
-```
-
-Pi may alternatively use its native global root by repeating the same guarded
-copy with `destination="$HOME/.pi/agent/skills/session-doctor"`. Invoke the
-skill as `$session-doctor` in Codex, `/session-doctor` in Claude Code, or
-`/skill:session-doctor` in Pi. The skill requires exactly the CLI version named
-in its frontmatter. Replace or remove an existing destination only through an
-explicit manual decision; `session-doctor` never modifies agent configuration.
-
-Initialize and inspect a DuckDB store:
-
-```bash
-uv run session-doctor db init
-uv run session-doctor db info
-```
-
-Before version 1.0, incompatible database schemas are not migrated. Use
-`db info` to inspect the stored schema version, then delete and rebuild an
-incompatible local database.
-
-Use a temporary or project-local database path during development:
-
-```bash
-uv run session-doctor db init --db /tmp/session-doctor-test.duckdb
-SESSION_DOCTOR_DB=/tmp/session-doctor-test.duckdb uv run session-doctor db info
-```
-
-Ingest a Codex session file or directory:
-
-```bash
-uv run session-doctor ingest --agent codex \
-  --source tests/fixtures/codex/basic-session.jsonl \
-  --db /tmp/session-doctor-test.duckdb
-uv run session-doctor sessions list --db /tmp/session-doctor-test.duckdb
-```
-
-If `--source` is omitted, Codex ingestion scans the default Codex session root:
-
-```bash
-uv run session-doctor ingest --agent codex --db /tmp/session-doctor-test.duckdb
-```
-
-Ingest a Pi session file or directory:
-
-```bash
-uv run session-doctor ingest --agent pi \
-  --source tests/fixtures/pi/basic-session.jsonl \
-  --db /tmp/session-doctor-test.duckdb
-uv run session-doctor sessions list --db /tmp/session-doctor-test.duckdb
-```
-
-If `--source` is omitted, Pi ingestion scans the default Pi session root:
-
-```bash
-uv run session-doctor ingest --agent pi --db /tmp/session-doctor-test.duckdb
-```
-
-Ingest one Claude Code root or subagent transcript:
-
-```bash
-uv run session-doctor ingest --agent claude \
-  --source tests/fixtures/claude/basic-session.jsonl \
-  --db /tmp/session-doctor-test.duckdb
-```
-
-If `--source` is omitted, Claude ingestion scans `~/.claude/projects` but
-selects root and subagent JSONL transcripts. Matched subagent metadata and
-explicitly referenced persisted tool results enrich those sessions without
-creating standalone sessions. Memory files, auxiliary files, and unreferenced
-sidecars remain excluded; ingest output reports parsed and ignored source-kind
-counts.
-
-Analyze an ingested session:
-
-```bash
-uv run session-doctor analyze <session-id> --db /tmp/session-doctor-test.duckdb
-uv run session-doctor analyze <session-id> \
-  --db /tmp/session-doctor-test.duckdb \
-  --format json
-```
-
-By default, `analyze` writes a JSON artifact beside the DuckDB file:
-
-```text
-<database-parent>/artifacts/<session-id>-analysis.json
-```
-
-Use `--no-artifact` to skip artifact writing or `--artifact <path>` to choose a
-specific output path.
-
-Restore current analysis coverage deliberately across matching sessions:
-
-```bash
-uv run session-doctor analyze --all --db /tmp/session-doctor-test.duckdb
-uv run session-doctor analyze --all \
-  --db /tmp/session-doctor-test.duckdb \
-  --project /tmp/session-doctor \
-  --agent codex
-```
-
-Batch analysis skips already-current sessions by default, continues after
-per-session failures, and writes no artifacts unless `--write-artifacts` is
-specified. Use `--force` to reanalyze already-current matching sessions.
-
-Summarize the local store after ingesting and optionally analyzing sessions:
-
-```bash
-uv run session-doctor summary --db /tmp/session-doctor-test.duckdb
-uv run session-doctor summary --db /tmp/session-doctor-test.duckdb --format json
-uv run session-doctor summary --db /tmp/session-doctor-test.duckdb --agent pi
-uv run session-doctor summary --db /tmp/session-doctor-test.duckdb --agent claude
-uv run session-doctor summary \
-  --db /tmp/session-doctor-test.duckdb \
-  --project /tmp/session-doctor
-```
-
-`summary --limit` controls the maximum rows shown in ranked/detail sections,
-such as risky sessions, failed commands, and repeated files.
-
-Inspect aligned project-level trends and exact observed path hints:
-
-```bash
-uv run session-doctor trends --db /tmp/session-doctor-test.duckdb
-uv run session-doctor trends \
-  --db /tmp/session-doctor-test.duckdb \
-  --project /tmp/session-doctor
-uv run session-doctor trends \
-  --db /tmp/session-doctor-test.duckdb \
-  --bucket month \
-  --periods 12 \
-  --format json
-uv run session-doctor projects list \
-  --db /tmp/session-doctor-test.duckdb \
-  --format json
-```
-
-Trend commands are read-only and never trigger ingestion or analysis. Global
-views expose raw series but reserve directional judgments for an explicit
-`--project` scope. Missing timestamps, stale analysis, sparse periods, and
-insufficient samples remain visible rather than being filled or guessed.
-
-Inspect one session as a report or typed evidence graph:
-
-```bash
-uv run session-doctor report <session-id> --db /tmp/session-doctor-test.duckdb
-uv run session-doctor report <session-id> \
-  --db /tmp/session-doctor-test.duckdb \
-  --format markdown > report.md
-uv run session-doctor report <session-id> \
-  --db /tmp/session-doctor-test.duckdb \
-  --format json
-uv run session-doctor report <session-id> \
-  --db /tmp/session-doctor-test.duckdb \
-  --show-text
-uv run session-doctor graph <session-id> \
-  --db /tmp/session-doctor-test.duckdb
-```
-
-Both commands are exact-session and read-only. They never ingest, analyze,
-write artifacts, cache projections, or persist graph rows. Stale or missing
-analysis returns explicit partial output. `--show-text` applies only to report
-evidence messages selected by persisted exact message IDs; graph output is
-always message-text-free.
-
-Run the quality gate:
+## Development and documentation
 
 ```bash
 uv run ruff format --check .
@@ -348,23 +242,12 @@ uv run pytest -q
 uv build
 ```
 
-Design references:
+Further reading:
 
-- [Design Plan](docs/session-doctor-design.md)
-- [Phase 1 Plan](docs/phase-1-plan.md)
-- [Phase 2 Plan](docs/phase-2-plan.md)
-- [Phase 3 Plan](docs/phase-3-plan.md)
-- [Phase 4 Plan](docs/phase-4-plan.md)
-- [Phase 5 Plan](docs/phase-5-plan.md)
-- [Phase 6 Plan](docs/phase-6-plan.md)
-- [Phase 7 Plan](docs/phase-7-plan.md)
-- [Phase 8 Plan](docs/phase-8-plan.md)
-- [Phase 8 Validation](docs/phase-8-validation.md)
-- [Phase 9 Plan](docs/phase-9-plan.md)
-- [Phase 9 Validation](docs/phase-9-validation.md)
-- [Phase 10 Plan](docs/phase-10-plan.md)
-- [Phase 10 Validation](docs/phase-10-validation.md)
-- [Current Codex Native Format Plan](docs/codex-native-format-update-plan.md)
-- [Current Codex Native Format Validation](docs/codex-native-format-validation.md)
+- [Design and implementation details](docs/session-doctor-design.md)
+- [Phase 8 trends validation](docs/phase-8-validation.md)
+- [Phase 9 report and graph validation](docs/phase-9-validation.md)
+- [Phase 10 release validation](docs/phase-10-validation.md)
+- [Current Codex format validation](docs/codex-native-format-validation.md)
 - [Changelog](CHANGELOG.md)
-- [Pre-Phase-8 Plan](docs/pre-phase-8-plan.md)
+- [License](LICENSE)
