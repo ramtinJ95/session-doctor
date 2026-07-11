@@ -64,6 +64,7 @@ def test_current_codex_fixture_covers_newer_record_contract() -> None:
 
     assert ("response_item", "agent_message") in pairs
     assert ("event_msg", "sub_agent_activity") in pairs
+    assert ("event_msg", "mcp_tool_call_end") in pairs
     assert ("inter_agent_communication_metadata", None) in pairs
     assert ("response_item", "tool_search_call") in pairs
     assert ("response_item", "tool_search_output") in pairs

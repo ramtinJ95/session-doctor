@@ -52,6 +52,8 @@ def test_current_codex_response_commands_survive_store_analysis_report_and_graph
 
     assert len(snapshot.normalized.command_runs) == 4
     assert graph.counts.nodes_by_type["command_run"] == 4
+    assert graph.counts.nodes_by_type["tool_call"] == 6
+    assert graph.counts.nodes_by_type["tool_result"] == 6
     assert len(command_edges) == 4
     assert all(edge.source_node_id in graph_node_ids for edge in graph.edges)
     assert all(edge.target_node_id in graph_node_ids for edge in graph.edges)
@@ -63,6 +65,11 @@ def test_current_codex_response_commands_survive_store_analysis_report_and_graph
     assert "Synthetic failing output" not in serialized
     assert "Synthetic opaque exec output" not in serialized
     assert "synthetic-chunk" not in serialized
+    assert "Synthetic inter-agent message" not in serialized
+    assert "synthetic-agent-a" not in serialized
+    assert "synthetic_tool" not in serialized
+    assert "synthetic-server" not in serialized
+    assert "synthetic-result" not in serialized
     assert "max_output_tokens" not in serialized
     assert "arguments_hash" not in serialized
     assert "output_hash" not in serialized

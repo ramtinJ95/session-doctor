@@ -41,9 +41,12 @@ CODEX_METADATA_EVENT_TYPES = {
     "context_compacted",
     "entered_review_mode",
     "exited_review_mode",
+    "mcp_tool_call_end",
     "thread_settings_applied",
+    "sub_agent_activity",
 }
-CODEX_METADATA_RECORD_TYPES = {"world_state"}
+CODEX_METADATA_RECORD_TYPES = {"inter_agent_communication_metadata", "world_state"}
+CODEX_EXPECTED_RESPONSE_ITEM_TYPES = {"agent_message"}
 
 
 class CodexAdapter(BaseAdapter):
@@ -109,9 +112,17 @@ class CodexAdapter(BaseAdapter):
                     bundle.messages.append(message)
                     response_messages.append((record_index, message_identity(message)))
                     response_item_message_count += 1
-                elif payload_type in {"function_call", "custom_tool_call"}:
+                elif payload_type in {
+                    "function_call",
+                    "custom_tool_call",
+                    "tool_search_call",
+                }:
                     response_calls.append((record_index, event, payload))
-                elif payload_type in {"function_call_output", "custom_tool_call_output"}:
+                elif payload_type in {
+                    "function_call_output",
+                    "custom_tool_call_output",
+                    "tool_search_output",
+                }:
                     response_outputs.append((record_index, event, payload))
                 elif payload_type == "web_search_call":
                     bundle.tool_calls.append(
@@ -119,6 +130,8 @@ class CodexAdapter(BaseAdapter):
                     )
                 elif payload_type == "reasoning":
                     increment_count(expected_ignored_counts, "response_item.reasoning")
+                elif payload_type in CODEX_EXPECTED_RESPONSE_ITEM_TYPES:
+                    increment_count(expected_ignored_counts, f"response_item.{payload_type}")
                 else:
                     bundle.parse_warnings.append(
                         warning_for_record(

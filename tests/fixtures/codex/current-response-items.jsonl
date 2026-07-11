@@ -15,3 +15,4 @@
 {"timestamp":"2026-07-01T10:00:12Z","type":"inter_agent_communication_metadata","payload":{"trigger_turn":{"turn_id":"synthetic-turn"}}}
 {"timestamp":"2026-07-01T10:00:13Z","type":"response_item","payload":{"type":"tool_search_call","call_id":"synthetic-tool-search","arguments":"{\"query\":\"synthetic tool\"}","execution":"client","status":"completed"}}
 {"timestamp":"2026-07-01T10:00:14Z","type":"response_item","payload":{"type":"tool_search_output","call_id":"synthetic-tool-search","execution":"client","status":"completed","tools":[{"name":"synthetic_tool"}]}}
+{"timestamp":"2026-07-01T10:00:15Z","type":"event_msg","payload":{"type":"mcp_tool_call_end","call_id":"synthetic-tool-search","duration":{"milliseconds":10},"invocation":{"server":"synthetic-server"},"result":{"status":"synthetic-result"}}}

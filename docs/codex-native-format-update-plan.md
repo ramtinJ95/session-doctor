@@ -1,6 +1,6 @@
 # Current Codex Native Format Update Plan
 
-Status: approved; PR 1 complete, PR 2 response-command implementation in review.
+Status: approved; PRs 1-2 complete, PR 3 current-record handling in review.
 
 ## Purpose
 
@@ -56,6 +56,8 @@ Observed newer records:
   and internal turn metadata;
 - 72 `event_msg.sub_agent_activity` records with agent/thread/event fields;
 - 63 `inter_agent_communication_metadata` records with trigger-turn data;
+- two `event_msg.mcp_tool_call_end` records whose call IDs each matched an
+  already-normalized response-item call and output;
 - one matched `tool_search_call`/`tool_search_output` pair.
 
 The scan found no malformed JSONL lines.
@@ -143,6 +145,11 @@ warning.
 raw provenance plus explicit expected-exclusion counts. They do not create
 sessions, parentage, messages, or causal delegation edges. No checked native
 evidence ties them to separately discovered source files.
+
+`mcp_tool_call_end` remains raw provenance plus an expected-exclusion count
+because the observed records duplicate matched response-item call/output pairs.
+Its invocation/result objects and duration are not copied into normalized
+metadata.
 
 The matched tool-search pair becomes a generic `tool_search` call/result with
 exact call-ID correlation. Tool definitions and search arguments are hashed or
