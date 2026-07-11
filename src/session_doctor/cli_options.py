@@ -146,17 +146,7 @@ def scope_filters_from_options(
     agent: str | None,
     project: Path | None,
 ) -> SessionScopeFilters:
-    agent_name = None
-    if agent is not None:
-        try:
-            parsed_agent_name = AgentName(agent)
-        except ValueError:
-            console.print(f"[red]Unsupported --agent:[/red] {agent}")
-            raise typer.Exit(2) from None
-        if parsed_agent_name is AgentName.UNKNOWN:
-            console.print(f"[red]Unsupported --agent:[/red] {agent}")
-            raise typer.Exit(2)
-        agent_name = parsed_agent_name.value
+    agent_name = agent_name_from_option(agent)
 
     project_path = None
     if project is not None:
@@ -167,6 +157,20 @@ def scope_filters_from_options(
             project_path = os.path.normpath(str(Path.cwd() / expanded_project))
 
     return SessionScopeFilters(agent_name=agent_name, project_path=project_path)
+
+
+def agent_name_from_option(agent: str | None) -> str | None:
+    if agent is None:
+        return None
+    try:
+        parsed_agent_name = AgentName(agent)
+    except ValueError:
+        console.print(f"[red]Unsupported --agent:[/red] {agent}")
+        raise typer.Exit(2) from None
+    if parsed_agent_name is AgentName.UNKNOWN:
+        console.print(f"[red]Unsupported --agent:[/red] {agent}")
+        raise typer.Exit(2)
+    return parsed_agent_name.value
 
 
 def trend_filters_from_options(

@@ -15,6 +15,7 @@ from .analysis_workflow import (
     AnalysisArtifactError,
     AnalysisPersistenceError,
     AnalysisWorkflowError,
+    SessionAgentMismatchError,
     SessionNotLoadableError,
     analyze_session,
 )
@@ -22,6 +23,7 @@ from .artifacts import analysis_payload, artifact_path_for_analysis, write_analy
 from .batch_analysis import analyze_all_sessions, batch_analysis_payload
 from .cli_options import (
     adapter_for_ingest,
+    agent_name_from_option,
     database_info_for_path,
     database_path_from_option,
     database_path_is_valid,
@@ -215,13 +217,21 @@ def list_sessions(
             help="DuckDB path to inspect. Defaults to SESSION_DOCTOR_DB or app data.",
         ),
     ] = None,
+    agent: Annotated[
+        str | None,
+        typer.Option(
+            "--agent",
+            help="Only include sessions from this agent: codex, claude, or pi.",
+        ),
+    ] = None,
 ) -> None:
     """List sessions stored in DuckDB."""
     database_path = database_path_from_option(db)
     require_valid_database_path(database_path)
     require_current_database_schema(database_path)
+    agent_name = agent_name_from_option(agent)
     store = DuckDBStore(database_path)
-    render_sessions_table(store.list_session_summaries(), console)
+    render_sessions_table(store.list_session_summaries(agent_name), console)
 
 
 @app.command()
@@ -323,7 +333,7 @@ def analyze(
         str | None,
         typer.Option(
             "--agent",
-            help="Only include sessions from this agent, for example codex, claude, or pi.",
+            help=("Require this agent for one session, or filter --all: codex, claude, or pi."),
         ),
     ] = None,
     force: Annotated[
@@ -346,7 +356,6 @@ def analyze(
         artifact=artifact,
         no_artifact=no_artifact,
         project=project,
-        agent=agent,
         force=force,
         write_artifacts=write_artifacts,
     )
@@ -374,8 +383,19 @@ def analyze(
         return
 
     assert session_id is not None
+    expected_agent_name = agent_name_from_option(agent)
     try:
-        result = analyze_session(store, session_id, database_path, artifact, no_artifact)
+        result = analyze_session(
+            store,
+            session_id,
+            database_path,
+            artifact,
+            no_artifact,
+            expected_agent_name=expected_agent_name,
+        )
+    except SessionAgentMismatchError as exc:
+        render_agent_mismatch(exc.actual_agent, exc.expected_agent)
+        raise typer.Exit(1) from exc
     except SessionNotLoadableError as exc:
         if exc.not_found:
             console.print(f"[red]Session not found:[/red] {session_id}")
@@ -411,7 +431,6 @@ def require_analysis_mode(
     artifact: Path | None,
     no_artifact: bool,
     project: Path | None,
-    agent: str | None,
     force: bool,
     write_artifacts: bool,
 ) -> None:
@@ -421,10 +440,9 @@ def require_analysis_mode(
     if all_sessions and (artifact is not None or no_artifact):
         console.print("[red]Batch mode rejects --artifact and --no-artifact.[/red]")
         raise typer.Exit(2)
-    if not all_sessions and (project is not None or agent is not None or force or write_artifacts):
+    if not all_sessions and (project is not None or force or write_artifacts):
         console.print(
-            "[red]Single-session mode rejects --project, --agent, --force, "
-            "and --write-artifacts.[/red]"
+            "[red]Single-session mode rejects --project, --force, and --write-artifacts.[/red]"
         )
         raise typer.Exit(2)
 
@@ -611,6 +629,13 @@ def report(
         bool,
         typer.Option("--show-text", help="Include text for displayed evidence messages only."),
     ] = False,
+    agent: Annotated[
+        str | None,
+        typer.Option(
+            "--agent",
+            help="Require the session to belong to this agent: codex, claude, or pi.",
+        ),
+    ] = None,
 ) -> None:
     """Generate a privacy-safe exact-session diagnostic report."""
     require_report_output_format(output_format)
@@ -619,10 +644,14 @@ def report(
     require_valid_database_path(database_path)
     require_existing_database_path(database_path)
     require_current_database_schema(database_path)
+    expected_agent_name = agent_name_from_option(agent)
     snapshot = DuckDBStore(database_path).load_diagnostic_snapshot(session_id)
     if snapshot is None:
         console.print(f"[red]Session not found:[/red] {session_id}")
         raise typer.Exit(1)
+    require_matching_session_agent(
+        snapshot.normalized.session.agent_name.value, expected_agent_name
+    )
     payload = build_session_report(snapshot, limit=limit, show_text=show_text)
     if output_format == "json":
         typer.echo(payload.model_dump_json(indent=2))
@@ -647,6 +676,13 @@ def graph(
         str,
         typer.Option("--format", help="Output format: json."),
     ] = "json",
+    agent: Annotated[
+        str | None,
+        typer.Option(
+            "--agent",
+            help="Require the session to belong to this agent: codex, claude, or pi.",
+        ),
+    ] = None,
 ) -> None:
     """Project a complete conservative exact-session evidence graph."""
     require_graph_output_format(output_format)
@@ -654,11 +690,28 @@ def graph(
     require_valid_database_path(database_path)
     require_existing_database_path(database_path)
     require_current_database_schema(database_path)
+    expected_agent_name = agent_name_from_option(agent)
     snapshot = DuckDBStore(database_path).load_diagnostic_snapshot(session_id)
     if snapshot is None:
         console.print(f"[red]Session not found:[/red] {session_id}")
         raise typer.Exit(1)
+    require_matching_session_agent(
+        snapshot.normalized.session.agent_name.value, expected_agent_name
+    )
     typer.echo(json.dumps(graph_payload(project_graph(snapshot)), indent=2, sort_keys=True))
+
+
+def require_matching_session_agent(actual_agent: str, expected_agent: str | None) -> None:
+    if expected_agent is None or actual_agent == expected_agent:
+        return
+    render_agent_mismatch(actual_agent, expected_agent)
+    raise typer.Exit(1)
+
+
+def render_agent_mismatch(actual_agent: str, expected_agent: str) -> None:
+    console.print(
+        f"[red]Agent mismatch:[/red] session belongs to {actual_agent}, not {expected_agent}."
+    )
 
 
 app.add_typer(adapters_app, name="adapters")

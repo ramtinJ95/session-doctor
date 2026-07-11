@@ -113,8 +113,8 @@ class DuckDBStore:
     def table_count(self, table_name: str) -> int:
         return table_count(self.database_path, table_name)
 
-    def list_session_summaries(self) -> tuple[SessionSummary, ...]:
-        return list_session_summaries(self.database_path)
+    def list_session_summaries(self, agent_name: str | None = None) -> tuple[SessionSummary, ...]:
+        return list_session_summaries(self.database_path, agent_name)
 
     def aggregate_summary(self, filters: SummaryFilters) -> AggregateSummary:
         return read_aggregate_summary(self.database_path, filters)

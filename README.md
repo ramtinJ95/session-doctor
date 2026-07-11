@@ -83,8 +83,8 @@ uv run session-doctor analyze --all
 
 # Review the result.
 uv run session-doctor summary
-uv run session-doctor sessions list
-uv run session-doctor report <session-id>
+uv run session-doctor sessions list --agent codex
+uv run session-doctor report <session-id> --agent codex
 ```
 
 You only need to ingest the agents you use. Without `--source`, each adapter
@@ -117,10 +117,10 @@ its old analysis. Native source files are never modified.
 
 ```bash
 # One session; writes a JSON artifact by default.
-uv run session-doctor analyze <session-id>
+uv run session-doctor analyze <session-id> --agent codex
 
 # One session without an artifact.
-uv run session-doctor analyze <session-id> --no-artifact
+uv run session-doctor analyze <session-id> --agent codex --no-artifact
 
 # Restore missing or stale analysis without batch artifacts.
 uv run session-doctor analyze --all --agent codex
@@ -152,10 +152,11 @@ and enough compatible evidence.
 ### Inspect one session
 
 ```bash
-uv run session-doctor report <session-id>
-uv run session-doctor report <session-id> --format markdown > report.md
-uv run session-doctor report <session-id> --format json
-uv run session-doctor graph <session-id> > graph.json
+uv run session-doctor report <session-id> --agent codex
+uv run session-doctor report <session-id> --agent codex \
+  --format markdown > report.md
+uv run session-doctor report <session-id> --agent codex --format json
+uv run session-doctor graph <session-id> --agent codex > graph.json
 ```
 
 `report` and `graph` are exact-session, read-only views. They do not ingest,
@@ -175,14 +176,14 @@ command.
 | `db init` | Create the DuckDB store | `--db PATH` |
 | `db info` | Show database path and schema status | `--db PATH` |
 | `ingest` | Parse and store native sessions | `--agent codex\|claude\|pi`, `--source PATH`, `--db PATH` |
-| `sessions list` | List ingested sessions | `--db PATH` |
-| `analyze SESSION_ID` | Analyze one session | `--format terminal\|json`, `--artifact PATH`, `--no-artifact` |
+| `sessions list` | List ingested sessions | `--agent NAME`, `--db PATH` |
+| `analyze SESSION_ID` | Analyze one session | `--agent NAME`, `--format terminal\|json`, `--artifact PATH`, `--no-artifact` |
 | `analyze --all` | Restore or rebuild analysis coverage | `--project PATH`, `--agent NAME`, `--force`, `--write-artifacts` |
 | `summary` | Show aggregate diagnostics | `--project PATH`, `--agent NAME`, `--limit N`, `--format terminal\|json` |
 | `trends` | Show aligned trends and recurrence | `--bucket week\|month`, `--periods 1..120`, plus summary filters |
 | `projects list` | List observed project/CWD hints | `--agent NAME`, `--limit N`, `--format terminal\|json` |
-| `report SESSION_ID` | Build an exact-session report | `--format terminal\|markdown\|json`, `--limit N`, `--show-text` |
-| `graph SESSION_ID` | Build an exact-session evidence graph | JSON only |
+| `report SESSION_ID` | Build an exact-session report | `--agent NAME`, `--format terminal\|markdown\|json`, `--limit N`, `--show-text` |
+| `graph SESSION_ID` | Build an exact-session evidence graph | `--agent NAME`; JSON only |
 | `integrations path` | Locate the bundled Agent Skill | — |
 
 Most query commands accept `--db PATH`. `summary`, `trends`, `projects list`,

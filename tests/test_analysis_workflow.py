@@ -9,6 +9,7 @@ from session_doctor.adapters import ParsedSessionBundle
 from session_doctor.analysis_workflow import (
     AnalysisArtifactError,
     AnalysisPersistenceError,
+    SessionAgentMismatchError,
     SessionNotLoadableError,
     analyze_session,
 )
@@ -33,6 +34,26 @@ def test_analysis_workflow_reports_missing_session_as_typed_failure(tmp_path) ->
     assert failure.value.code.value == "session_not_loadable"
     assert failure.value.safe_message == "Session could not be loaded"
     assert failure.value.not_found is True
+
+
+def test_analysis_workflow_rejects_agent_mismatch_before_writes(tmp_path) -> None:
+    database_path, store = store_with_empty_session(tmp_path)
+
+    with pytest.raises(SessionAgentMismatchError) as failure:
+        analyze_session(
+            store,
+            "session-a",
+            database_path,
+            artifact=None,
+            no_artifact=False,
+            expected_agent_name="pi",
+        )
+
+    assert failure.value.code.value == "session_agent_mismatch"
+    assert failure.value.expected_agent == "pi"
+    assert failure.value.actual_agent == "codex"
+    assert store.table_count("analysis_runs") == 0
+    assert not (tmp_path / "artifacts").exists()
 
 
 def test_analysis_workflow_maps_artifact_failure_without_persisting(tmp_path) -> None:

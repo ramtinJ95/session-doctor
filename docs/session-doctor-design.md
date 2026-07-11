@@ -39,14 +39,14 @@ session-doctor db info
 session-doctor ingest --agent codex [--source PATH] [--db PATH]
 session-doctor ingest --agent claude [--source PATH] [--db PATH]
 session-doctor ingest --agent pi [--source PATH] [--db PATH]
-session-doctor sessions list
-session-doctor analyze <session-id> [--format terminal|json] [--artifact PATH] [--no-artifact]
+session-doctor sessions list [--agent AGENT]
+session-doctor analyze <session-id> [--agent AGENT] [--format terminal|json] [--artifact PATH] [--no-artifact]
 session-doctor analyze --all [--project PATH] [--agent AGENT] [--force]
 session-doctor summary [--format terminal|json] [--project PATH] [--agent AGENT] [--limit N]
 session-doctor trends [--project PATH] [--agent AGENT] [--bucket week|month] [--periods N]
 session-doctor projects list [--agent AGENT] [--limit N] [--format terminal|json]
-session-doctor report <session-id> [--format terminal|markdown|json] [--limit N] [--show-text]
-session-doctor graph <session-id> [--format json]
+session-doctor report <session-id> [--agent AGENT] [--format terminal|markdown|json] [--limit N] [--show-text]
+session-doctor graph <session-id> [--agent AGENT] [--format json]
 session-doctor integrations path
 ```
 
@@ -156,8 +156,8 @@ session-doctor db info [--db PATH]
 session-doctor ingest --agent codex [--source PATH] [--db PATH]
 session-doctor ingest --agent pi [--source PATH] [--db PATH]
 session-doctor ingest --agent claude [--source PATH] [--db PATH]
-session-doctor sessions list [--db PATH]
-session-doctor analyze <session-id> [--db PATH] [--format terminal|json]
+session-doctor sessions list [--db PATH] [--agent codex|claude|pi]
+session-doctor analyze <session-id> [--db PATH] [--agent codex|claude|pi] [--format terminal|json]
 session-doctor analyze <session-id> [--artifact PATH | --no-artifact]
 session-doctor analyze --all [--project PATH] [--agent codex|claude|pi]
 session-doctor analyze --all [--force] [--write-artifacts] [--format terminal|json]
@@ -167,9 +167,9 @@ session-doctor trends [--db PATH] [--format terminal|json]
 session-doctor trends [--project PATH] [--agent codex|claude|pi]
 session-doctor trends [--bucket week|month] [--periods 1..120] [--limit N]
 session-doctor projects list [--db PATH] [--agent codex|claude|pi] [--limit N]
-session-doctor report <session-id> [--db PATH] [--format terminal|markdown|json]
+session-doctor report <session-id> [--db PATH] [--agent codex|claude|pi] [--format terminal|markdown|json]
 session-doctor report <session-id> [--limit N] [--show-text]
-session-doctor graph <session-id> [--db PATH] [--format json]
+session-doctor graph <session-id> [--db PATH] [--agent codex|claude|pi] [--format json]
 session-doctor integrations path
 ```
 

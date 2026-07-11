@@ -791,6 +791,50 @@ def test_sessions_list_shows_ingested_codex_session(tmp_path) -> None:
     assert "Commands" in result.stdout
 
 
+def test_sessions_list_filters_by_agent_and_rejects_unknown_agent(tmp_path) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    sources = (
+        ("codex", CODEX_FIXTURE_DIR / "basic-session.jsonl"),
+        ("pi", PI_FIXTURE_DIR / "basic-session.jsonl"),
+    )
+    for agent, fixture_path in sources:
+        result = runner.invoke(
+            app,
+            [
+                "ingest",
+                "--agent",
+                agent,
+                "--source",
+                str(fixture_path),
+                "--db",
+                str(database_path),
+            ],
+        )
+        assert result.exit_code == 0
+
+    codex_result = runner.invoke(
+        app,
+        ["sessions", "list", "--agent", "codex", "--db", str(database_path)],
+    )
+    pi_result = runner.invoke(
+        app,
+        ["sessions", "list", "--agent", "pi", "--db", str(database_path)],
+    )
+    invalid_result = runner.invoke(
+        app,
+        ["sessions", "list", "--agent", "unknown", "--db", str(database_path)],
+    )
+
+    assert codex_result.exit_code == 0
+    assert str(sources[0][1]) in codex_result.stdout
+    assert str(sources[1][1]) not in codex_result.stdout
+    assert pi_result.exit_code == 0
+    assert str(sources[1][1]) in pi_result.stdout
+    assert str(sources[0][1]) not in pi_result.stdout
+    assert invalid_result.exit_code == 2
+    assert "Unsupported --agent" in invalid_result.stdout
+
+
 def test_analyze_ingested_codex_session_writes_artifact_and_rows(tmp_path) -> None:
     database_path = tmp_path / "session-doctor.duckdb"
     fixture_path = CODEX_FIXTURE_DIR / "repeated-failure-session.jsonl"
@@ -848,6 +892,53 @@ def test_analyze_ingested_codex_session_writes_artifact_and_rows(tmp_path) -> No
     assert store.table_count("analysis_runs") == 1
     assert store.table_count("session_features") > 0
     assert store.table_count("session_classifications") > 0
+
+
+def test_analyze_single_session_agent_guard_accepts_match_and_rejects_mismatch(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    fixture_path = CODEX_FIXTURE_DIR / "basic-session.jsonl"
+    ingest_result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "codex",
+            "--source",
+            str(fixture_path),
+            "--db",
+            str(database_path),
+        ],
+    )
+    assert ingest_result.exit_code == 0
+    store = DuckDBStore(database_path)
+    session_id = store.list_session_summaries()[0].session_id
+
+    matching_result = runner.invoke(
+        app,
+        [
+            "analyze",
+            session_id,
+            "--agent",
+            "codex",
+            "--no-artifact",
+            "--db",
+            str(database_path),
+        ],
+    )
+    before_mismatch = store.table_count("analysis_runs")
+    mismatch_result = runner.invoke(
+        app,
+        ["analyze", session_id, "--agent", "pi", "--db", str(database_path)],
+    )
+
+    assert matching_result.exit_code == 0
+    assert mismatch_result.exit_code == 1
+    assert "Agent mismatch" in mismatch_result.stdout
+    assert "belongs to codex, not pi" in mismatch_result.stdout
+    assert store.table_count("analysis_runs") == before_mismatch
+    assert not (tmp_path / "artifacts" / f"{session_id}-analysis.json").exists()
 
 
 def test_analyze_ingested_pi_session_writes_artifact_and_rows(tmp_path) -> None:
@@ -1247,7 +1338,6 @@ def test_analyze_all_continues_after_safe_per_session_failure(tmp_path, monkeypa
         (["session-a", "--write-artifacts"], "Single-session mode rejects"),
         (["session-a", "--force"], "Single-session mode rejects"),
         (["session-a", "--project", "/work"], "Single-session mode rejects"),
-        (["session-a", "--agent", "codex"], "Single-session mode rejects"),
     ],
 )
 def test_analyze_rejects_conflicting_modes(tmp_path, arguments, expected_message) -> None:
