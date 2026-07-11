@@ -48,6 +48,8 @@
   "newer_records": {
     "response_item_agent_message": 63,
     "event_msg_sub_agent_activity": 72,
+    "event_msg_mcp_tool_call_end": 2,
+    "event_msg_mcp_tool_call_end_matched_response_pairs": 2,
     "inter_agent_communication_metadata": 63,
     "tool_search_call": 1,
     "tool_search_output": 1

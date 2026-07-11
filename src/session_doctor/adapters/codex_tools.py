@@ -15,20 +15,23 @@ def tool_call_from_response_item(
     event: RawEvent,
     payload: dict[str, Any],
 ) -> ToolCall:
+    payload_type = string_value(payload.get("type"))
     call_id = string_value(payload.get("call_id"))
     arguments = string_value(payload.get("arguments")) or string_value(payload.get("input"))
+    is_tool_search = payload_type == "tool_search_call"
     return ToolCall(
         tool_call_id=stable_id("tool_call", session_id, call_id or event.event_id),
         session_id=session_id,
         source_event_id=event.event_id,
         native_tool_call_id=call_id,
-        name=string_value(payload.get("name")) or "unknown",
+        name="tool_search" if is_tool_search else string_value(payload.get("name")) or "unknown",
         timestamp=event.timestamp,
         arguments_hash=hash_text(arguments) if arguments is not None else None,
         metadata={
-            "payload_type": string_value(payload.get("type")),
+            "payload_type": payload_type,
             "status": string_value(payload.get("status")),
             "argument_keys": argument_keys(arguments),
+            **({"execution": string_value(payload.get("execution"))} if is_tool_search else {}),
         },
     )
 
@@ -64,8 +67,16 @@ def tool_result_from_response_item(
     link_tool_call: bool = True,
 ) -> ToolResult:
     call_id = string_value(payload.get("call_id"))
-    output = string_value(payload.get("output"))
+    payload_type = string_value(payload.get("type"))
+    is_tool_search = payload_type == "tool_search_output"
+    output = (
+        json.dumps(payload.get("tools"), sort_keys=True, default=str, separators=(",", ":"))
+        if is_tool_search
+        else string_value(payload.get("output"))
+    )
     status = string_value(payload.get("status"))
+    tools = payload.get("tools")
+    tool_count = len(tools) if isinstance(tools, list) else 0
     return ToolResult(
         tool_result_id=stable_id(
             "tool_result",
@@ -84,8 +95,16 @@ def tool_result_from_response_item(
         output_hash=hash_text(output) if output is not None else None,
         output_length=text_length(output),
         metadata={
-            "payload_type": string_value(payload.get("type")),
+            "payload_type": payload_type,
             "status": status,
+            **(
+                {
+                    "execution": string_value(payload.get("execution")),
+                    "tool_count": tool_count,
+                }
+                if is_tool_search
+                else {}
+            ),
         },
     )
 

@@ -277,8 +277,8 @@ def test_codex_normalizes_current_response_item_commands() -> None:
     bundle = CodexAdapter().parse_source(source_for_fixture(fixture_path))
 
     assert len(bundle.command_runs) == 4
-    assert len(bundle.tool_calls) == 5
-    assert len(bundle.tool_results) == 5
+    assert len(bundle.tool_calls) == 6
+    assert len(bundle.tool_results) == 6
     assert [command.metadata["execution_kind"] for command in bundle.command_runs].count(
         "exec_command"
     ) == 3
@@ -311,10 +311,42 @@ def test_codex_normalizes_current_response_item_commands() -> None:
     assert opaque.exit_code is None
     assert opaque.metadata["outcome"] == "opaque"
     assert all(command.tool_call_id is not None for command in bundle.command_runs)
+    tool_search = next(call for call in bundle.tool_calls if call.name == "tool_search")
+    tool_search_result = next(
+        result for result in bundle.tool_results if result.tool_call_id == tool_search.tool_call_id
+    )
+    assert tool_search.metadata == {
+        "payload_type": "tool_search_call",
+        "status": "completed",
+        "argument_keys": ["query"],
+        "execution": "client",
+    }
+    assert tool_search_result.output_hash is not None
+    assert tool_search_result.output_length is not None
+    assert tool_search_result.output_length > 0
+    assert tool_search_result.metadata == {
+        "payload_type": "tool_search_output",
+        "status": "completed",
+        "execution": "client",
+        "tool_count": 1,
+    }
+    assert bundle.session is not None
+    assert bundle.session.metadata["codex_expected_ignored_counts"] == {
+        "event_msg.mcp_tool_call_end": 1,
+        "event_msg.sub_agent_activity": 1,
+        "record.inter_agent_communication_metadata": 1,
+        "response_item.agent_message": 1,
+    }
+    assert bundle.parse_warnings == []
     serialized = bundle.model_dump_json()
     assert "Synthetic failing output" not in serialized
     assert "Synthetic opaque exec output" not in serialized
     assert "synthetic-chunk" not in serialized
+    assert "Synthetic inter-agent message" not in serialized
+    assert "synthetic-agent-a" not in serialized
+    assert "synthetic_tool" not in serialized
+    assert "synthetic-server" not in serialized
+    assert "synthetic-result" not in serialized
 
 
 def test_codex_response_item_cardinality_is_explicit() -> None:
