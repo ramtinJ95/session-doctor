@@ -60,9 +60,12 @@ def tool_result_from_response_item(
     session_id: str,
     event: RawEvent,
     payload: dict[str, Any],
+    *,
+    link_tool_call: bool = True,
 ) -> ToolResult:
     call_id = string_value(payload.get("call_id"))
     output = string_value(payload.get("output"))
+    status = string_value(payload.get("status"))
     return ToolResult(
         tool_result_id=stable_id(
             "tool_result",
@@ -71,16 +74,18 @@ def tool_result_from_response_item(
             event.event_id,
         ),
         session_id=session_id,
-        tool_call_id=stable_id("tool_call", session_id, call_id) if call_id else None,
+        tool_call_id=(
+            stable_id("tool_call", session_id, call_id) if call_id and link_tool_call else None
+        ),
         source_event_id=event.event_id,
         native_tool_call_id=call_id,
         timestamp=event.timestamp,
-        is_error=string_value(payload.get("status")) == "failed",
+        is_error=None if status is None else status == "failed",
         output_hash=hash_text(output) if output is not None else None,
         output_length=text_length(output),
         metadata={
             "payload_type": string_value(payload.get("type")),
-            "status": string_value(payload.get("status")),
+            "status": status,
         },
     )
 
