@@ -1,0 +1,9 @@
+{"timestamp":"2026-07-02T10:00:00Z","type":"session_meta","payload":{"id":"synthetic-ambiguities","timestamp":"2026-07-02T10:00:00Z","cwd":"/tmp/codex-native-contract","originator":"codex_cli_rs","cli_version":"0.144.0","source":"cli","model_provider":"openai"}}
+{"timestamp":"2026-07-02T10:00:01Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"synthetic duplicate one\"}","call_id":"synthetic-duplicate-call"}}
+{"timestamp":"2026-07-02T10:00:02Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"synthetic duplicate two\"}","call_id":"synthetic-duplicate-call"}}
+{"timestamp":"2026-07-02T10:00:03Z","type":"response_item","payload":{"type":"function_call_output","call_id":"synthetic-duplicate-call","output":"Synthetic ambiguous call output"}}
+{"timestamp":"2026-07-02T10:00:04Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"synthetic multiple outputs\"}","call_id":"synthetic-multiple-outputs"}}
+{"timestamp":"2026-07-02T10:00:05Z","type":"response_item","payload":{"type":"function_call_output","call_id":"synthetic-multiple-outputs","output":"Synthetic output one"}}
+{"timestamp":"2026-07-02T10:00:06Z","type":"response_item","payload":{"type":"function_call_output","call_id":"synthetic-multiple-outputs","output":"Synthetic output two"}}
+{"timestamp":"2026-07-02T10:00:07Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"synthetic missing output\"}","call_id":"synthetic-missing-output"}}
+{"timestamp":"2026-07-02T10:00:08Z","type":"response_item","payload":{"type":"function_call_output","call_id":"synthetic-orphan-output","output":"Synthetic orphan output"}}
