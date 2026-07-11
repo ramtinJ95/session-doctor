@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "captured_on": "2026-07-10",
+  "codex_cli_version": "0.144.0",
+  "source_files": 70,
+  "malformed_lines": 0,
+  "response_item_execution": {
+    "exec_command": {
+      "calls": 1775,
+      "matched_outputs": 1775,
+      "argument_contract": {
+        "cmd_string": 1775,
+        "workdir_string": 1757,
+        "yield_time_ms_integer": 1746,
+        "max_output_tokens_integer": 1772,
+        "tty_boolean": 1
+      },
+      "output_contract": {
+        "chunk_id_header": 1775,
+        "wall_time_header": 1775,
+        "process_exited": 1610,
+        "process_running": 165
+      }
+    },
+    "exec": {
+      "calls": 1234,
+      "matched_outputs": 1234,
+      "free_form_string_input": 1234,
+      "recognized_process_envelopes": 0
+    },
+    "write_stdin": {
+      "calls": 226,
+      "matched_outputs": 226,
+      "argument_contract": {
+        "session_id_integer": 226,
+        "chars_string": 226,
+        "yield_time_ms_integer": 226,
+        "max_output_tokens_integer": 226
+      },
+      "output_contract": {
+        "recognized_process_exited": 161,
+        "recognized_process_running": 62,
+        "unrecognized_process_envelope": 3
+      }
+    },
+    "unmatched_outputs": 0
+  },
+  "newer_records": {
+    "response_item_agent_message": 63,
+    "event_msg_sub_agent_activity": 72,
+    "inter_agent_communication_metadata": 63,
+    "tool_search_call": 1,
+    "tool_search_output": 1
+  },
+  "retained_fields": [
+    "record_type",
+    "payload_type",
+    "field_name",
+    "value_type",
+    "cardinality",
+    "recognized_envelope_marker"
+  ],
+  "excluded_fields": [
+    "source_path",
+    "command",
+    "argument_value",
+    "output_text",
+    "native_id",
+    "hash",
+    "prompt",
+    "message_text"
+  ]
+}
