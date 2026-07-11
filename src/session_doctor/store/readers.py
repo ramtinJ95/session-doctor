@@ -32,6 +32,17 @@ def table_count(database_path: Path, table_name: str) -> int:
     return int(row[0]) if row else 0
 
 
+def session_agent_name(database_path: Path, session_id: str) -> str | None:
+    if not database_path.exists():
+        return None
+    with read_connection(database_path) as connection:
+        row = connection.execute(
+            "SELECT agent_name FROM sessions WHERE session_id = ?",
+            [session_id],
+        ).fetchone()
+    return str(row[0]) if row else None
+
+
 def list_session_summaries(
     database_path: Path,
     agent_name: str | None = None,

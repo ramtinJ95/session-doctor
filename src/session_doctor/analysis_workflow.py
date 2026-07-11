@@ -85,6 +85,19 @@ def analyze_session(
     *,
     expected_agent_name: str | None = None,
 ) -> AnalysisResult:
+    if expected_agent_name is not None:
+        try:
+            stored_agent_name = store.session_agent_name(session_id)
+        except Exception as exc:
+            raise SessionNotLoadableError from exc
+        if stored_agent_name is None:
+            raise SessionNotLoadableError(not_found=True)
+        if stored_agent_name != expected_agent_name:
+            raise SessionAgentMismatchError(
+                expected_agent=expected_agent_name,
+                actual_agent=stored_agent_name,
+            )
+
     try:
         bundle = store.load_session_bundle(session_id)
     except Exception as exc:
