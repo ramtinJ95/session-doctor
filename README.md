@@ -221,8 +221,8 @@ uv run session-doctor integrations path
 
 Inspect the returned `SKILL.md` before manually copying that directory into the
 appropriate agent skill root. The CLI never installs or modifies agent
-configuration automatically. See the [Phase 10 plan](docs/phase-10-plan.md) for
-the supported destinations and confirmation rules.
+configuration automatically. The skill itself documents supported destinations
+and confirmation rules.
 
 ## Current limitations
 
@@ -246,9 +246,6 @@ uv build
 Further reading:
 
 - [Design and implementation details](docs/session-doctor-design.md)
-- [Phase 8 trends validation](docs/phase-8-validation.md)
-- [Phase 9 report and graph validation](docs/phase-9-validation.md)
-- [Phase 10 release validation](docs/phase-10-validation.md)
 - [Current Codex format validation](docs/codex-native-format-validation.md)
 - [Changelog](CHANGELOG.md)
 - [License](LICENSE)
