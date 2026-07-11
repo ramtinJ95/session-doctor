@@ -322,6 +322,8 @@ def test_store_list_session_summaries_includes_message_source_counts(tmp_path) -
     assert summaries[0].response_item_message_count == 2
     assert summaries[0].event_msg_fallback_count == 0
     assert summaries[0].source_path == str(fixture_path)
+    assert store.list_session_summaries("codex") == summaries
+    assert store.list_session_summaries("pi") == ()
 
 
 def test_store_load_session_bundle_round_trips_ingested_records(tmp_path) -> None:

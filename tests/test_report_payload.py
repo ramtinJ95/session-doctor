@@ -270,6 +270,14 @@ def test_report_cli_rejects_invalid_options_and_missing_session(tmp_path) -> Non
         ["report", "session-1", "--db", str(store.database_path), "--limit", "0"],
     )
     missing = runner.invoke(app, ["report", "missing", "--db", str(store.database_path)])
+    matching_agent = runner.invoke(
+        app,
+        ["report", "session-1", "--agent", "codex", "--db", str(store.database_path)],
+    )
+    mismatched_agent = runner.invoke(
+        app,
+        ["report", "session-1", "--agent", "pi", "--db", str(store.database_path)],
+    )
 
     assert invalid_format.exit_code == 2
     assert "Invalid --format" in invalid_format.stdout
@@ -277,6 +285,9 @@ def test_report_cli_rejects_invalid_options_and_missing_session(tmp_path) -> Non
     assert "Invalid --limit" in invalid_limit.stdout
     assert missing.exit_code == 1
     assert "Session not found: missing" in missing.stdout
+    assert matching_agent.exit_code == 0
+    assert mismatched_agent.exit_code == 1
+    assert "belongs to codex, not pi" in mismatched_agent.stdout
 
 
 def analyzed_store(tmp_path) -> tuple[DuckDBStore, str]:

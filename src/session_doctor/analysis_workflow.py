@@ -27,6 +27,7 @@ class AnalysisResult:
 
 class AnalysisFailureCode(StrEnum):
     SESSION_NOT_LOADABLE = "session_not_loadable"
+    SESSION_AGENT_MISMATCH = "session_agent_mismatch"
     ANALYSIS_FAILED = "analysis_failed"
     ARTIFACT_WRITE_FAILED = "artifact_write_failed"
     PERSISTENCE_FAILED = "persistence_failed"
@@ -43,6 +44,16 @@ class SessionNotLoadableError(AnalysisWorkflowError):
 
     def __init__(self, *, not_found: bool = False) -> None:
         self.not_found = not_found
+        super().__init__(self.safe_message)
+
+
+class SessionAgentMismatchError(AnalysisWorkflowError):
+    code = AnalysisFailureCode.SESSION_AGENT_MISMATCH
+    safe_message = "Session agent does not match --agent"
+
+    def __init__(self, *, expected_agent: str, actual_agent: str) -> None:
+        self.expected_agent = expected_agent
+        self.actual_agent = actual_agent
         super().__init__(self.safe_message)
 
 
@@ -71,6 +82,8 @@ def analyze_session(
     database_path: Path,
     artifact: Path | None,
     no_artifact: bool,
+    *,
+    expected_agent_name: str | None = None,
 ) -> AnalysisResult:
     try:
         bundle = store.load_session_bundle(session_id)
@@ -78,6 +91,12 @@ def analyze_session(
         raise SessionNotLoadableError from exc
     if bundle is None or bundle.session is None:
         raise SessionNotLoadableError(not_found=True)
+    actual_agent_name = bundle.session.agent_name.value
+    if expected_agent_name is not None and actual_agent_name != expected_agent_name:
+        raise SessionAgentMismatchError(
+            expected_agent=expected_agent_name,
+            actual_agent=actual_agent_name,
+        )
 
     started_at = datetime.now(UTC)
     analysis_run_id = stable_id("analysis_run", session_id, started_at.isoformat())

@@ -347,6 +347,14 @@ def test_graph_cli_is_json_only_read_only_and_handles_missing_session(tmp_path) 
         ["graph", session_id, "--db", str(store.database_path), "--format", "dot"],
     )
     missing = runner.invoke(app, ["graph", "missing", "--db", str(store.database_path)])
+    matching_agent = runner.invoke(
+        app,
+        ["graph", session_id, "--agent", "codex", "--db", str(store.database_path)],
+    )
+    mismatched_agent = runner.invoke(
+        app,
+        ["graph", session_id, "--agent", "claude", "--db", str(store.database_path)],
+    )
 
     assert result.exit_code == 0
     assert json.loads(result.stdout)["schema_version"] == 1
@@ -354,6 +362,9 @@ def test_graph_cli_is_json_only_read_only_and_handles_missing_session(tmp_path) 
     assert "Invalid --format" in invalid.stdout
     assert missing.exit_code == 1
     assert "Session not found: missing" in missing.stdout
+    assert matching_agent.exit_code == 0
+    assert mismatched_agent.exit_code == 1
+    assert "belongs to codex, not claude" in mismatched_agent.stdout
     assert {table: store.table_count(table) for table in TABLE_NAMES} == before
     assert not (tmp_path / "artifacts").exists()
 

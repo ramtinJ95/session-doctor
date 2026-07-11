@@ -32,12 +32,17 @@ def table_count(database_path: Path, table_name: str) -> int:
     return int(row[0]) if row else 0
 
 
-def list_session_summaries(database_path: Path) -> tuple[SessionSummary, ...]:
+def list_session_summaries(
+    database_path: Path,
+    agent_name: str | None = None,
+) -> tuple[SessionSummary, ...]:
     if not database_path.exists():
         return ()
     with read_connection(database_path) as connection:
+        agent_filter = "WHERE s.agent_name = ?" if agent_name is not None else ""
+        parameters = [agent_name] if agent_name is not None else []
         rows = connection.execute(
-            """
+            f"""
             SELECT
                 s.session_id,
                 s.agent_name,
@@ -54,6 +59,7 @@ def list_session_summaries(database_path: Path) -> tuple[SessionSummary, ...]:
             LEFT JOIN messages m ON m.session_id = s.session_id
             LEFT JOIN command_runs c ON c.session_id = s.session_id
             LEFT JOIN parse_warnings w ON w.source_id = s.source_id
+            {agent_filter}
             GROUP BY
                 s.session_id,
                 s.agent_name,
@@ -63,7 +69,8 @@ def list_session_summaries(database_path: Path) -> tuple[SessionSummary, ...]:
                 s.project_path,
                 ss.source_path
             ORDER BY s.started_at NULLS LAST, s.session_id
-            """
+            """,
+            parameters,
         ).fetchall()
         message_source_counts = message_source_counts_by_session(connection)
 

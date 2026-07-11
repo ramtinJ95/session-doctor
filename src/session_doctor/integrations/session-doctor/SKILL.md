@@ -55,7 +55,7 @@ session-doctor version
 session-doctor doctor
 session-doctor adapters list [--scan]
 session-doctor db info
-session-doctor sessions list
+session-doctor sessions list [--agent AGENT]
 session-doctor summary
 session-doctor trends
 session-doctor projects list
@@ -123,7 +123,7 @@ Use public discovery surfaces only:
 
 ```text
 session-doctor adapters list --scan
-session-doctor sessions list
+session-doctor sessions list [--agent AGENT]
 session-doctor projects list --format json
 ```
 
@@ -162,9 +162,10 @@ exit remains a failure even when some sources succeeded.
 
 ### Session Listing
 
-Use `sessions list` to present ingested session IDs and structural summaries.
-Do not expose or reinterpret source paths beyond the CLI's display. Ask the user
-to select an exact session when needed.
+Use `sessions list --agent AGENT` when the agent is known; otherwise present the
+agent column with ingested session IDs and structural summaries. Do not expose
+or reinterpret source paths beyond the CLI's display. Ask the user to select an
+exact session when needed.
 
 ### Analysis
 
@@ -172,7 +173,7 @@ Use one exact session ID or explicit `--all` filters, never both. Confirm first.
 For one-session diagnosis, normally run:
 
 ```text
-session-doctor analyze SESSION_ID --no-artifact [--db PATH]
+session-doctor analyze SESSION_ID --agent AGENT --no-artifact [--db PATH]
 ```
 
 Use JSON only when structured interpretation is needed. `--all` is deliberate
@@ -196,23 +197,25 @@ untimed/stale exclusions, and non-causal agent observations.
 
 ### Exact-Session Reports
 
-Use `report SESSION_ID --format json` for structured interpretation, terminal
-for concise review, or Markdown when the user asks for Markdown. Reports are
-read-only and do not ingest or analyze. Preserve `current`, `stale`, or `missing`
-analysis status, bounded `total/displayed/omitted` counts, unresolved evidence,
-limitations, and the exact suggested analysis action. Do not silently recover
-stale/missing analysis.
+Use `report SESSION_ID --agent AGENT --format json` for structured
+interpretation, terminal for concise review, or Markdown when the user asks for
+Markdown. Reports are read-only and do not ingest or analyze. Preserve
+`current`, `stale`, or `missing` analysis status, bounded
+`total/displayed/omitted` counts, unresolved evidence, limitations, and the
+exact suggested analysis action. Do not silently recover stale/missing
+analysis.
 
 Use `--show-text` only through the separate disclosure protocol.
 
 ### Evidence Graphs
 
-Use `graph SESSION_ID --format json`. Graphs are exact-session, complete,
-directed multigraph projections with topology-only parent/child references.
-They never include message text. Treat edges as persisted structural or
-deterministic evidence relations, not causal relations. Preserve excluded rows,
-unresolved references, edge direction, and stale/missing analysis state. Do not
-run graph algorithms or combine family graphs in the agent context.
+Use `graph SESSION_ID --agent AGENT --format json`. Graphs are exact-session,
+complete, directed multigraph projections with topology-only parent/child
+references. They never include message text. Treat edges as persisted
+structural or deterministic evidence relations, not causal relations. Preserve
+excluded rows, unresolved references, edge direction, and stale/missing
+analysis state. Do not run graph algorithms or combine family graphs in the
+agent context.
 
 ### Integration Asset
 
