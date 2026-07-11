@@ -324,6 +324,8 @@ def test_store_list_session_summaries_includes_message_source_counts(tmp_path) -
     assert summaries[0].source_path == str(fixture_path)
     assert store.list_session_summaries("codex") == summaries
     assert store.list_session_summaries("pi") == ()
+    assert store.session_agent_name(summaries[0].session_id) == "codex"
+    assert store.session_agent_name("missing") is None
 
 
 def test_store_load_session_bundle_round_trips_ingested_records(tmp_path) -> None:

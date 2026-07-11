@@ -36,8 +36,16 @@ def test_analysis_workflow_reports_missing_session_as_typed_failure(tmp_path) ->
     assert failure.value.not_found is True
 
 
-def test_analysis_workflow_rejects_agent_mismatch_before_writes(tmp_path) -> None:
+def test_analysis_workflow_rejects_agent_mismatch_before_loading_or_writes(
+    tmp_path,
+    monkeypatch,
+) -> None:
     database_path, store = store_with_empty_session(tmp_path)
+
+    def fail_bundle_load(*args, **kwargs):
+        raise AssertionError("mismatched session bundle must not be loaded")
+
+    monkeypatch.setattr(store, "load_session_bundle", fail_bundle_load)
 
     with pytest.raises(SessionAgentMismatchError) as failure:
         analyze_session(

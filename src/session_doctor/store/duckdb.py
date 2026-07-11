@@ -22,6 +22,7 @@ from .project_readers import read_projects
 from .readers import (
     list_session_summaries,
     load_session_bundle,
+    session_agent_name,
     store_info,
     table_count,
 )
@@ -115,6 +116,9 @@ class DuckDBStore:
 
     def list_session_summaries(self, agent_name: str | None = None) -> tuple[SessionSummary, ...]:
         return list_session_summaries(self.database_path, agent_name)
+
+    def session_agent_name(self, session_id: str) -> str | None:
+        return session_agent_name(self.database_path, session_id)
 
     def aggregate_summary(self, filters: SummaryFilters) -> AggregateSummary:
         return read_aggregate_summary(self.database_path, filters)

@@ -337,7 +337,9 @@ def test_graph_projects_direct_relation_directions_and_exact_topology_scope(tmp_
         type(graph).model_validate(invalid_topology)
 
 
-def test_graph_cli_is_json_only_read_only_and_handles_missing_session(tmp_path) -> None:
+def test_graph_cli_is_json_only_read_only_and_handles_missing_session(
+    tmp_path, monkeypatch
+) -> None:
     store, session_id = analyzed_store(tmp_path)
     before = {table: store.table_count(table) for table in TABLE_NAMES}
 
@@ -351,6 +353,11 @@ def test_graph_cli_is_json_only_read_only_and_handles_missing_session(tmp_path) 
         app,
         ["graph", session_id, "--agent", "codex", "--db", str(store.database_path)],
     )
+
+    def fail_snapshot_load(*args, **kwargs):
+        raise AssertionError("mismatched diagnostic snapshot must not be loaded")
+
+    monkeypatch.setattr(DuckDBStore, "load_diagnostic_snapshot", fail_snapshot_load)
     mismatched_agent = runner.invoke(
         app,
         ["graph", session_id, "--agent", "claude", "--db", str(store.database_path)],

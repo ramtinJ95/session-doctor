@@ -645,7 +645,9 @@ def report(
     require_existing_database_path(database_path)
     require_current_database_schema(database_path)
     expected_agent_name = agent_name_from_option(agent)
-    snapshot = DuckDBStore(database_path).load_diagnostic_snapshot(session_id)
+    store = DuckDBStore(database_path)
+    require_stored_session_agent(store, session_id, expected_agent_name)
+    snapshot = store.load_diagnostic_snapshot(session_id)
     if snapshot is None:
         console.print(f"[red]Session not found:[/red] {session_id}")
         raise typer.Exit(1)
@@ -691,7 +693,9 @@ def graph(
     require_existing_database_path(database_path)
     require_current_database_schema(database_path)
     expected_agent_name = agent_name_from_option(agent)
-    snapshot = DuckDBStore(database_path).load_diagnostic_snapshot(session_id)
+    store = DuckDBStore(database_path)
+    require_stored_session_agent(store, session_id, expected_agent_name)
+    snapshot = store.load_diagnostic_snapshot(session_id)
     if snapshot is None:
         console.print(f"[red]Session not found:[/red] {session_id}")
         raise typer.Exit(1)
@@ -706,6 +710,20 @@ def require_matching_session_agent(actual_agent: str, expected_agent: str | None
         return
     render_agent_mismatch(actual_agent, expected_agent)
     raise typer.Exit(1)
+
+
+def require_stored_session_agent(
+    store: DuckDBStore,
+    session_id: str,
+    expected_agent: str | None,
+) -> None:
+    if expected_agent is None:
+        return
+    actual_agent = store.session_agent_name(session_id)
+    if actual_agent is None:
+        console.print(f"[red]Session not found:[/red] {session_id}")
+        raise typer.Exit(1)
+    require_matching_session_agent(actual_agent, expected_agent)
 
 
 def render_agent_mismatch(actual_agent: str, expected_agent: str) -> None:

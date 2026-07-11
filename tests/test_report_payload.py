@@ -258,7 +258,7 @@ def test_report_cli_supports_all_formats_without_mutating_store(tmp_path) -> Non
     assert not (tmp_path / "artifacts").exists()
 
 
-def test_report_cli_rejects_invalid_options_and_missing_session(tmp_path) -> None:
+def test_report_cli_rejects_invalid_options_and_missing_session(tmp_path, monkeypatch) -> None:
     store, _ = analyzed_store(tmp_path)
 
     invalid_format = runner.invoke(
@@ -274,6 +274,11 @@ def test_report_cli_rejects_invalid_options_and_missing_session(tmp_path) -> Non
         app,
         ["report", "session-1", "--agent", "codex", "--db", str(store.database_path)],
     )
+
+    def fail_snapshot_load(*args, **kwargs):
+        raise AssertionError("mismatched diagnostic snapshot must not be loaded")
+
+    monkeypatch.setattr(DuckDBStore, "load_diagnostic_snapshot", fail_snapshot_load)
     mismatched_agent = runner.invoke(
         app,
         ["report", "session-1", "--agent", "pi", "--db", str(store.database_path)],
