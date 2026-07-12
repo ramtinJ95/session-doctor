@@ -111,9 +111,14 @@ def test_native_three_adapter_reports_and_graphs_include_linked_sidechain(tmp_pa
         assert markdown.stdout.startswith("# Session report")
         assert report_json.exit_code == 0
         report_payload = cast("dict[str, Any]", json.loads(report_json.stdout))
-        assert report_payload["schema_version"] == 1
+        assert report_payload["schema_version"] == 2
         assert report_payload["analysis"]["status"] == "current"
         assert report_payload["privacy"]["message_text_included"] is False
+        sequence = report_payload["sequence"]
+        assert sequence["ordering_basis"] == "source_record_order"
+        assert len(sequence["bins"]) <= 80
+        assert sequence["total_resolved_activities"] > 0
+        assert "metadata" not in json.dumps(sequence)
         snapshot = store.load_diagnostic_snapshot(session_id)
         assert snapshot is not None
         disclosed_evidence_texts += assert_report_privacy(

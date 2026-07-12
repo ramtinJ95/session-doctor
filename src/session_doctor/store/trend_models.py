@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 
 from .models import SessionScopeFilters
@@ -113,6 +113,26 @@ class TrendBucket:
 
 
 @dataclass(frozen=True)
+class DailyCalendarCell:
+    observed_date: date
+    start: datetime
+    end: datetime
+    sessions: int
+    current_analyzed: int
+    stale_analysis: int
+    never_analyzed: int
+    risky_sessions: int
+
+    @property
+    def current_analysis_coverage(self) -> float | None:
+        return self.current_analyzed / self.sessions if self.sessions else None
+
+    @property
+    def risky_session_rate(self) -> float | None:
+        return self.risky_sessions / self.current_analyzed if self.current_analyzed else None
+
+
+@dataclass(frozen=True)
 class TrendJudgment:
     metric_name: str
     status: TrendStatus
@@ -136,6 +156,7 @@ class TrendJudgment:
 class TrendCohort:
     totals: TrendMetrics
     buckets: tuple[TrendBucket, ...]
+    calendar: tuple[DailyCalendarCell, ...]
     judgments: tuple[TrendJudgment, ...]
     agents: tuple[AgentObservation, ...]
 

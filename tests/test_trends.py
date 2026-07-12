@@ -106,16 +106,37 @@ def test_trends_aligns_weekly_scope_coverage_and_cohorts(tmp_path) -> None:
     ] == [("tooling_blocked", 1, 1.0)]
     assert len(top_level.buckets) == 4
     assert [bucket.metrics.sessions for bucket in top_level.buckets] == [1, 1, 0, 0]
+    assert len(top_level.calendar) == 28
+    assert top_level.calendar[0].observed_date.isoformat() == "2026-01-05"
+    assert top_level.calendar[-1].observed_date.isoformat() == "2026-02-01"
+    assert sum(cell.sessions for cell in top_level.calendar) == top_level.totals.sessions
+    assert top_level.calendar[0].sessions == 1
+    assert top_level.calendar[0].risky_session_rate == 1.0
+    assert top_level.calendar[1].sessions == 0
+    assert top_level.calendar[1].current_analysis_coverage is None
+    assert top_level.calendar[1].risky_session_rate is None
 
     sidechain = report.cohorts.sidechain
     assert sidechain.totals.sessions == 1
     assert sidechain.totals.current_analysis_coverage == 1.0
     assert len(sidechain.buckets) == 4
     assert [bucket.metrics.sessions for bucket in sidechain.buckets] == [0, 0, 0, 1]
+    assert len(sidechain.calendar) == 28
+    assert sum(cell.sessions for cell in sidechain.calendar) == 1
     assert [(row.agent_name, row.metrics.sessions) for row in top_level.agents] == [("codex", 2)]
     assert [(row.project_path, row.sessions) for row in report.projects.rows] == [
         ("/work/project", 3)
     ]
+    payload = trend_payload(report)
+    top_calendar = cast("dict[str, Any]", payload["cohorts"])["top_level"]["calendar"]
+    assert top_calendar[0] == {
+        "observed_date": "2026-01-05",
+        "start": "2026-01-05T00:00:00",
+        "end": "2026-01-06T00:00:00",
+        "sessions": 1,
+        "analysis": {"current": 1, "stale": 0, "never": 0, "coverage": 1.0},
+        "risk": {"risky_sessions": 1, "current_analyzed_sessions": 1, "rate": 1.0},
+    }
 
 
 def test_trend_window_handles_month_year_and_empty_ranges() -> None:
@@ -270,6 +291,7 @@ def test_trends_all_untimed_preserves_scope_and_null_window(tmp_path) -> None:
     cohorts = cast("dict[str, Any]", payload["cohorts"])
     top_level = cast("dict[str, Any]", cohorts["top_level"])
     assert top_level["buckets"] == []
+    assert top_level["calendar"] == []
 
 
 def test_trends_cli_json_and_terminal_are_read_only(tmp_path) -> None:

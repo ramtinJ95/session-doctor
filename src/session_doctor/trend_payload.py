@@ -7,6 +7,7 @@ from .privacy import redact_home
 from .store.trend_models import (
     AgentObservation,
     AnalysisCompatibilityCounts,
+    DailyCalendarCell,
     ProjectObservation,
     ProjectReport,
     RecurrenceEvidence,
@@ -72,6 +73,7 @@ def cohort_payload(cohort: TrendCohort) -> dict[str, object]:
     return {
         "totals": metrics_payload(cohort.totals),
         "buckets": [bucket_payload(bucket) for bucket in cohort.buckets],
+        "calendar": [calendar_cell_payload(cell) for cell in cohort.calendar],
         "judgments": [judgment_payload(judgment) for judgment in cohort.judgments],
         "agents": [agent_observation_payload(agent) for agent in cohort.agents],
     }
@@ -82,6 +84,26 @@ def bucket_payload(bucket: TrendBucket) -> dict[str, object]:
         "start": timestamp_value(bucket.start),
         "end": timestamp_value(bucket.end),
         **metrics_payload(bucket.metrics),
+    }
+
+
+def calendar_cell_payload(cell: DailyCalendarCell) -> dict[str, object]:
+    return {
+        "observed_date": cell.observed_date.isoformat(),
+        "start": timestamp_value(cell.start),
+        "end": timestamp_value(cell.end),
+        "sessions": cell.sessions,
+        "analysis": {
+            "current": cell.current_analyzed,
+            "stale": cell.stale_analysis,
+            "never": cell.never_analyzed,
+            "coverage": rounded_score(cell.current_analysis_coverage),
+        },
+        "risk": {
+            "risky_sessions": cell.risky_sessions,
+            "current_analyzed_sessions": cell.current_analyzed,
+            "rate": rounded_score(cell.risky_session_rate),
+        },
     }
 
 

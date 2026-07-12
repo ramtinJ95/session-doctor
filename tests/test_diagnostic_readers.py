@@ -7,6 +7,7 @@ import duckdb
 
 from session_doctor.adapters import ParsedSessionBundle
 from session_doctor.analysis.version import ANALYZER_VERSION
+from session_doctor.report_payload import build_session_report
 from session_doctor.schemas import (
     AgentName,
     AnalysisRun,
@@ -116,6 +117,13 @@ def test_diagnostic_snapshot_loads_exact_session_topology_and_indexes(tmp_path) 
     assert snapshot.unresolved.warning_ids == ("warning-1",)
     assert snapshot.analysis.compatibility is AnalysisCompatibility.MISSING
     assert snapshot.analysis.action == "session-doctor analyze selected"
+    sequence = build_session_report(snapshot).sequence
+    assert sequence.total_resolved_activities == 2
+    assert sequence.total_unresolved_activities == 2
+    assert sequence.resolved_activity_counts.tool_call == 1
+    assert sequence.resolved_activity_counts.tool_result == 1
+    assert sequence.unresolved_activity_counts.user_message == 1
+    assert sequence.unresolved_activity_counts.parse_warning == 1
 
 
 def test_diagnostic_snapshot_loads_only_latest_current_analysis_run(tmp_path) -> None:

@@ -235,14 +235,61 @@ class ReportStatement(ReportModel):
     evidence_ids: list[str]
 
 
+class SequenceActivityCounts(ReportModel):
+    user_message: int = Field(default=0, ge=0)
+    assistant_message: int = Field(default=0, ge=0)
+    tool_call: int = Field(default=0, ge=0)
+    tool_result: int = Field(default=0, ge=0)
+    tool_failure: int = Field(default=0, ge=0)
+    command_success: int = Field(default=0, ge=0)
+    command_failure: int = Field(default=0, ge=0)
+    command_unknown: int = Field(default=0, ge=0)
+    file_activity: int = Field(default=0, ge=0)
+    parse_warning: int = Field(default=0, ge=0)
+
+
+class SequenceBin(ReportModel):
+    index: int = Field(ge=0)
+    first_record_index: int
+    last_record_index: int
+    counts: SequenceActivityCounts
+
+
+class SequenceEvidenceMarker(ReportModel):
+    category: str
+    evidence_id: str
+    source_event_id: str
+    record_index: int
+    observed_at: datetime | None
+
+
+class UnresolvedSequenceMarkerCount(ReportModel):
+    category: str
+    count: int = Field(ge=1)
+
+
+class SessionSequence(ReportModel):
+    ordering_basis: Literal["source_record_order"] = "source_record_order"
+    first_record_index: int | None
+    last_record_index: int | None
+    total_resolved_activities: int = Field(ge=0)
+    total_unresolved_activities: int = Field(ge=0)
+    resolved_activity_counts: SequenceActivityCounts
+    unresolved_activity_counts: SequenceActivityCounts
+    bins: list[SequenceBin]
+    evidence_markers: list[SequenceEvidenceMarker]
+    unresolved_evidence_markers: list[UnresolvedSequenceMarkerCount]
+
+
 class SessionReport(ReportModel):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     session: ReportSession
     privacy: ReportPrivacy
     analysis: ReportAnalysis
     summary: ReportSummary
     scores: list[ReportScore]
     classifications: list[ReportClassification]
+    sequence: SessionSequence
     evidence: dict[str, BoundedEvidence]
     ending: ReportEnding
     project_context: ProjectContextReport

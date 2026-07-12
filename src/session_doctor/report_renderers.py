@@ -30,6 +30,11 @@ def render_session_report(report: SessionReport, console: Console) -> None:
         ("Project", value_text(report.session.project_hint)),
         ("Analysis", report.analysis.status),
         ("Recovery", value_text(report.analysis.action)),
+        (
+            "Sequence activities",
+            f"{report.sequence.total_resolved_activities} resolved, "
+            f"{report.sequence.total_unresolved_activities} unresolved",
+        ),
     ):
         overview.add_row(name, value)
     console.print(overview)
@@ -159,6 +164,10 @@ def render_session_report_markdown(report: SessionReport) -> str:
         f"- Project hint: {markdown_value(report.session.project_hint)}",
         f"- Analysis: `{report.analysis.status}`",
         f"- Recovery action: {markdown_value(report.analysis.action)}",
+        "- Sequence activities: "
+        f"{report.sequence.total_resolved_activities} resolved, "
+        f"{report.sequence.total_unresolved_activities} unresolved "
+        "(`source_record_order`)",
         "",
         "## Scores",
         "",
