@@ -25,11 +25,12 @@ The suite covers:
 - wheel/sdist inclusion and execution from a clean installed-wheel environment.
 
 The installed-wheel integration test builds the wheel, creates a clean virtual
-environment, installs normal wheel dependencies, ingests and analyzes a
-synthetic fixture, and generates both HTML surfaces through the installed
-`session-doctor` executable. It verifies concise path confirmations, no HTML on
-stdout, replacement of a pre-existing destination, and no implicit artifact
-directory.
+environment, installs dependencies at the exact frozen `uv.lock` versions and
+then installs the project wheel with `--no-deps`. Its subprocess environment
+removes `PYTHONPATH` before it ingests and analyzes a synthetic fixture and
+generates both HTML surfaces through the installed `session-doctor` executable.
+It verifies concise path confirmations, no HTML on stdout, replacement of a
+pre-existing destination, and no implicit artifact directory.
 
 ## Browser matrix
 

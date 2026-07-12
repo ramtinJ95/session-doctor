@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import tarfile
@@ -144,11 +145,46 @@ def test_built_distributions_and_clean_wheel_install_include_skill(tmp_path) -> 
     environment = tmp_path / "clean-environment"
     venv.EnvBuilder(with_pip=False).create(environment)
     python = environment / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    subprocess_environment = os.environ.copy()
+    subprocess_environment.pop("PYTHONPATH", None)
+    requirements_path = tmp_path / "locked-requirements.txt"
     subprocess.run(
-        ["uv", "pip", "install", "--python", str(python), str(wheel_path)],
+        [
+            "uv",
+            "export",
+            "--frozen",
+            "--no-dev",
+            "--no-emit-project",
+            "--output-file",
+            str(requirements_path),
+        ],
         check=True,
         capture_output=True,
         text=True,
+        cwd=Path(__file__).parents[1],
+        env=subprocess_environment,
+    )
+    subprocess.run(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            str(python),
+            "--requirement",
+            str(requirements_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=subprocess_environment,
+    )
+    subprocess.run(
+        ["uv", "pip", "install", "--python", str(python), "--no-deps", str(wheel_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=subprocess_environment,
     )
     result = subprocess.run(
         [
@@ -162,6 +198,8 @@ def test_built_distributions_and_clean_wheel_install_include_skill(tmp_path) -> 
         check=True,
         capture_output=True,
         text=True,
+        cwd=tmp_path,
+        env=subprocess_environment,
     )
     installed_skill = Path(result.stdout.strip())
     assert installed_skill.is_dir()
@@ -180,6 +218,7 @@ def test_built_distributions_and_clean_wheel_install_include_skill(tmp_path) -> 
             capture_output=True,
             text=True,
             cwd=tmp_path,
+            env=subprocess_environment,
         )
 
     run_cli(
@@ -205,6 +244,7 @@ def test_built_distributions_and_clean_wheel_install_include_skill(tmp_path) -> 
         capture_output=True,
         text=True,
         cwd=tmp_path,
+        env=subprocess_environment,
     )
     session_id = session_id_result.stdout.strip()
     report_path = tmp_path / "installed-report.html"
