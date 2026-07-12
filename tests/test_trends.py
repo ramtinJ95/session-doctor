@@ -115,6 +115,15 @@ def test_trends_aligns_weekly_scope_coverage_and_cohorts(tmp_path) -> None:
     assert top_level.calendar[1].sessions == 0
     assert top_level.calendar[1].current_analysis_coverage is None
     assert top_level.calendar[1].risky_session_rate is None
+    stale_day = top_level.calendar[8]
+    assert stale_day.observed_date.isoformat() == "2026-01-13"
+    assert (stale_day.current_analyzed, stale_day.stale_analysis, stale_day.never_analyzed) == (
+        0,
+        1,
+        0,
+    )
+    assert stale_day.current_analysis_coverage == 0.0
+    assert stale_day.risky_session_rate is None
 
     sidechain = report.cohorts.sidechain
     assert sidechain.totals.sessions == 1
@@ -156,6 +165,29 @@ def test_trend_window_handles_month_year_and_empty_ranges() -> None:
     assert empty.start is None
     assert empty.end is None
     assert bucket_intervals(empty, TrendBucketSize.WEEK, 12) == ()
+
+
+def test_monthly_trend_calendar_spans_year_boundary_for_both_cohorts(tmp_path) -> None:
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    add_session(store, "november", datetime(2025, 11, 15, 9), project="/work/project")
+    add_session(store, "january", datetime(2026, 1, 31, 23), project="/work/project")
+
+    report = store.trends(
+        TrendFilters(
+            project_path="/work/project",
+            bucket=TrendBucketSize.MONTH,
+            periods=3,
+        )
+    )
+
+    assert report.window.start == datetime(2025, 11, 1)
+    assert report.window.end == datetime(2026, 2, 1)
+    assert len(report.cohorts.top_level.calendar) == 92
+    assert len(report.cohorts.sidechain.calendar) == 92
+    assert report.cohorts.top_level.calendar[0].observed_date.isoformat() == "2025-11-01"
+    assert report.cohorts.top_level.calendar[-1].observed_date.isoformat() == "2026-01-31"
+    assert sum(cell.sessions for cell in report.cohorts.top_level.calendar) == 2
+    assert sum(cell.sessions for cell in report.cohorts.sidechain.calendar) == 0
 
 
 def test_trends_guarded_judgments_exclude_odd_earliest_bucket(tmp_path) -> None:
