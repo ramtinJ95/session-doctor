@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 from session_doctor.analysis_workflow import analyze_session
 from session_doctor.cli import app
 from session_doctor.html import HtmlRenderError, render_report_html
+from session_doctor.html.charts import RISK_MARKER_CATEGORIES
 from session_doctor.report_payload import build_session_report
 from session_doctor.schemas import AgentName, AnalysisRun, SessionFeature, SessionSource
 from session_doctor.store import TABLE_NAMES, DuckDBStore
@@ -89,6 +90,24 @@ def test_report_html_is_deterministic_semantic_offline_and_private(tmp_path) -> 
     without_script = first[: first.index("<script>")] + first[first.index("</script>") + 9 :]
     assert all(section in without_script for section in EXPECTED_H2)
     assert "<details" in without_script
+
+
+def test_sequence_marker_semantics_distinguish_negative_and_neutral_evidence() -> None:
+    assert RISK_MARKER_CATEGORIES >= {
+        "repeated_requests",
+        "corrections",
+        "frustration_markers",
+        "ambiguity_markers",
+        "scope_boundaries",
+        "stop_or_pause_markers",
+        "command_failures",
+        "tool_failures",
+        "repeated_failures",
+        "repeated_file_edits",
+    }
+    assert RISK_MARKER_CATEGORIES.isdisjoint(
+        {"score", "classification", "classification_evidence", "ending"}
+    )
 
 
 def test_report_html_show_text_is_bounded_to_displayed_evidence(tmp_path) -> None:
@@ -391,6 +410,7 @@ def test_native_three_adapter_and_sidechain_html_smoke(tmp_path) -> None:
     for session in sessions:
         snapshot = store.load_diagnostic_snapshot(session.session_id)
         assert snapshot is not None
+        typed_report = build_session_report(snapshot)
         sidechain_found |= snapshot.normalized.session.is_sidechain
         output = tmp_path / f"{session.session_id}.html"
         result = invoke_html(store, session.session_id, output)
@@ -399,6 +419,19 @@ def test_native_three_adapter_and_sidechain_html_smoke(tmp_path) -> None:
         assert html.startswith("<!doctype html>")
         assert session.session_id in html
         assert "Source record position does not imply" in html
+        assert humanize_status(typed_report.analysis.status) + " analysis" in html
+        if typed_report.sequence.evidence_markers:
+            assert typed_report.sequence.evidence_markers[0].evidence_id in html
+        displayed_evidence = [
+            item for section in typed_report.evidence.values() for item in section.items
+        ]
+        if displayed_evidence:
+            assert displayed_evidence[0].evidence_id in html
+        for message in snapshot.normalized.messages:
+            if message.text is not None and len(message.text) > 20:
+                assert message.text not in html
+        if snapshot.normalized.session.is_sidechain:
+            assert "Sidechain" in html
 
     assert {session.agent_name for session in sessions} == {"codex", "claude", "pi"}
     assert sidechain_found
@@ -418,6 +451,10 @@ def invoke_html(store: DuckDBStore, session_id: str, output: Path):
             str(output),
         ],
     )
+
+
+def humanize_status(status: str) -> str:
+    return status.replace("_", " ").title()
 
 
 def analyzed_store(tmp_path) -> tuple[DuckDBStore, str]:
