@@ -98,6 +98,35 @@ progress::-moz-progress-bar { background: var(--accent); }
 .legend-key { display: inline-block; width: .8rem; height: .8rem; margin-right: var(--space-1); background: var(--accent); border-radius: 2px; }
 .legend-key.risk { background: var(--risk); }
 .legend-key.evidence { background: transparent; border-left: 2px solid var(--accent); }
+.calendar-wrap { overflow-x: auto; padding-bottom: var(--space-2); }
+.calendar-grid { display: grid; grid-template-rows: repeat(7, .9rem); grid-auto-flow: column; grid-auto-columns: .9rem; gap: .2rem; width: max-content; padding: var(--space-2); margin: 0; list-style: none; }
+.calendar-cell { width: .9rem; height: .9rem; border: 1px solid var(--border); border-radius: 2px; background: var(--surface-alt); }
+.calendar-placeholder { border-color: transparent; background: transparent; }
+.calendar-cell.level-1 { background: color-mix(in srgb, var(--accent) 25%, var(--surface)); }
+.calendar-cell.level-2 { background: color-mix(in srgb, var(--accent) 45%, var(--surface)); }
+.calendar-cell.level-3 { background: color-mix(in srgb, var(--accent) 65%, var(--surface)); }
+.calendar-cell.level-4 { background: color-mix(in srgb, var(--accent) 88%, var(--surface)); }
+.calendar-cell.risk-1 { background: color-mix(in srgb, var(--risk) 25%, var(--surface)); }
+.calendar-cell.risk-2 { background: color-mix(in srgb, var(--risk) 45%, var(--surface)); }
+.calendar-cell.risk-3 { background: color-mix(in srgb, var(--risk) 65%, var(--surface)); }
+.calendar-cell.risk-4 { background: color-mix(in srgb, var(--risk) 88%, var(--surface)); }
+.calendar-cell.unavailable { background: var(--unavailable-soft); border-style: dashed; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.trend-chart { display: block; min-width: 48rem; width: 100%; height: auto; }
+.trend-chart .axis { stroke: var(--border); stroke-width: 1; }
+.trend-chart .volume { fill: var(--accent); }
+.trend-chart .risk-bar { fill: var(--risk); }
+.trend-chart .coverage { fill: none; stroke: var(--positive); stroke-width: 2; }
+.trend-chart .series-0 { fill: none; stroke: var(--accent); stroke-width: 2; }
+.trend-chart .series-1 { fill: none; stroke: var(--risk); stroke-width: 2; }
+.trend-chart .series-2 { fill: none; stroke: var(--positive); stroke-width: 2; }
+.trend-chart .series-3 { fill: none; stroke: var(--unavailable); stroke-width: 2; }
+.trend-chart .series-4 { fill: none; stroke: #8a5a18; stroke-width: 2; }
+.legend-key.series-0 { background: var(--accent); }
+.legend-key.series-1 { background: var(--risk); }
+.legend-key.series-2 { background: var(--positive); }
+.legend-key.series-3 { background: var(--unavailable); }
+.legend-key.series-4 { background: #8a5a18; }
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: .92rem; }
 th, td { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
@@ -133,7 +162,10 @@ ul.clean { padding-left: 1.2rem; }
   .section, .card, details { break-inside: avoid; }
   details:not([open]) > .details-body { display: block !important; }
   .chart-scroll { overflow: visible; }
+  .calendar-wrap { overflow: visible; }
+  [data-calendar-view][hidden] { display: block !important; }
   .sequence-chart { min-width: 0; }
+  .trend-chart { min-width: 0; }
   a { color: inherit; text-decoration: none; }
 }
 """
@@ -142,13 +174,28 @@ SCRIPT = r"""
 (() => {
   document.documentElement.classList.add('js');
   const controls = document.querySelector('[data-disclosure-controls]');
-  if (!controls) return;
-  controls.hidden = false;
-  controls.addEventListener('click', (event) => {
-    const button = event.target.closest('button[data-disclosure-action]');
-    if (!button) return;
-    const open = button.dataset.disclosureAction === 'open';
-    document.querySelectorAll('main details').forEach((detail) => { detail.open = open; });
+  if (controls) {
+    controls.hidden = false;
+    controls.addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-disclosure-action]');
+      if (!button) return;
+      const open = button.dataset.disclosureAction === 'open';
+      document.querySelectorAll('main details').forEach((detail) => { detail.open = open; });
+    });
+  }
+  document.querySelectorAll('[data-calendar-controls]').forEach((calendarControls) => {
+    calendarControls.hidden = false;
+    calendarControls.addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-calendar-metric]');
+      if (!button) return;
+      const metric = button.dataset.calendarMetric;
+      document.querySelectorAll('[data-calendar-view]').forEach((view) => {
+        view.hidden = view.dataset.calendarView !== metric;
+      });
+      calendarControls.querySelectorAll('button[data-calendar-metric]').forEach((candidate) => {
+        candidate.setAttribute('aria-pressed', String(candidate === button));
+      });
+    });
   });
 })();
 """

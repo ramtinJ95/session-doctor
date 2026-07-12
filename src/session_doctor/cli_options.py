@@ -104,6 +104,13 @@ def require_summary_output_format(output_format: str) -> None:
     raise typer.Exit(2)
 
 
+def require_trend_output_format(output_format: str) -> None:
+    if output_format in {"terminal", "json", "html"}:
+        return
+    console.print("[red]Invalid --format:[/red] expected terminal, json, or html")
+    raise typer.Exit(2)
+
+
 def require_report_output_format(output_format: str) -> None:
     if output_format in {"terminal", "markdown", "json", "html"}:
         return
@@ -111,7 +118,7 @@ def require_report_output_format(output_format: str) -> None:
     raise typer.Exit(2)
 
 
-def report_output_path_from_options(
+def html_output_path_from_options(
     output_format: str,
     output: Path | None,
 ) -> Path | None:
