@@ -166,6 +166,7 @@ def diagnostic_overview(report: SessionReport) -> str:
         card(f'<div class="stat">{value}</div><div class="stat-label">{text(label)}</div>')
         for label, value in stats
     )
+    stat_grid = f'<div class="grid kpi">{stat_cards}</div>'
     classifications = (
         '<div class="grid">'
         + "".join(classification_card(row) for row in report.classifications)
@@ -187,7 +188,7 @@ def diagnostic_overview(report: SessionReport) -> str:
     return (
         '<section class="section" aria-labelledby="diagnostic-overview">'
         '<h2 id="diagnostic-overview">Diagnostic overview</h2>'
-        f'<div class="grid">{stat_cards}</div>{warning_codes}'
+        f"{stat_grid}{warning_codes}"
         "<h3>Primary classifications</h3>"
         f"{classifications}"
         "<h3>Ending-state availability</h3>"
@@ -253,7 +254,7 @@ def scores_section(report: SessionReport) -> str:
 def score_row(score: ReportScore) -> str:
     progress = (
         '<div class="score-row">'
-        f"<strong>{text(humanize(score.name))}</strong>"
+        f'<span class="score-name">{text(humanize(score.name))}</span>'
         f'<progress max="1" value="{score.value:.3f}" '
         f'aria-label="{attr(humanize(score.name))}: {score.value:.3f}"></progress>'
         f'<span class="score-value">{score.value:.3f}</span></div>'
@@ -334,11 +335,15 @@ def evidence_disclosure(name: str, section: BoundedEvidence) -> str:
         f", {section.omitted} omitted" if section.omitted else ""
     )
     if section.status == "unavailable":
-        body = f'<p class="notice">Unavailable: {code(section.reason)}</p>'
-        return card(body, heading=title)
+        return (
+            f'<p class="evidence-empty"><strong>{text(title)}</strong>'
+            f"<span>Unavailable: {code(section.reason)}</span></p>"
+        )
     elif not section.items:
-        body = empty_state("No persisted evidence in this section.")
-        return card(body, heading=title)
+        return (
+            f'<p class="evidence-empty"><strong>{text(title)}</strong>'
+            "<span>No persisted evidence in this section.</span></p>"
+        )
     return disclosure(title, "".join(evidence_item(item) for item in section.items))
 
 
