@@ -17,6 +17,10 @@ LANES = (
     ("parse_warning", "Parse warnings", True),
 )
 RISK_MARKER_CATEGORIES = {
+    "repeated_requests",
+    "corrections",
+    "ambiguity_markers",
+    "scope_boundaries",
     "command_failures",
     "tool_failures",
     "repeated_failures",
