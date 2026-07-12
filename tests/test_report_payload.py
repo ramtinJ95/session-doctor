@@ -159,6 +159,19 @@ def test_report_sequence_preserves_unresolved_group_and_file_markers(tmp_path) -
     assert unresolved["repeated_file_edits"] >= 1
 
 
+def test_report_sequence_does_not_invent_unresolved_matched_message_markers(tmp_path) -> None:
+    store, session_id = analyzed_store(tmp_path)
+    snapshot = store.load_diagnostic_snapshot(session_id)
+    assert snapshot is not None
+
+    report = build_session_report(snapshot)
+
+    unresolved = {row.category: row.count for row in report.sequence.unresolved_evidence_markers}
+    assert "corrections" not in unresolved
+    assert "frustration_markers" not in unresolved
+    assert "scope_boundaries" not in unresolved
+
+
 def test_report_stale_analysis_is_successful_explicit_partial_output(tmp_path) -> None:
     bundle = analysis_fixture_bundle()
     assert bundle.session is not None
@@ -284,7 +297,9 @@ def test_report_does_not_disclose_or_claim_unresolved_file_loop_paths(tmp_path) 
             update={
                 "evidence": {
                     "paths": [private_path],
-                    "source_event_ids_by_path": {private_path: ["event-1", "event-2"]},
+                    "source_event_ids_by_path": {
+                        private_path: ["event-1", "event-2", "missing-private-file-event"]
+                    },
                 }
             }
         )
@@ -302,6 +317,10 @@ def test_report_does_not_disclose_or_claim_unresolved_file_loop_paths(tmp_path) 
 
     assert report.evidence["repeated_file_edits"].items == []
     assert "PRIVATE_UNRESOLVED_FILE" not in serialized
+    unresolved_markers = {
+        row.category: row.count for row in report.sequence.unresolved_evidence_markers
+    }
+    assert unresolved_markers["repeated_file_edits"] == 1
     limitation = next(
         row for row in report.limitations if row.code == "unresolved_analysis_references"
     )

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from session_doctor.diagnostic_models import DiagnosticSnapshot
+from session_doctor.ids import stable_id
 from session_doctor.report_models import (
     ClassificationReferenceEvidence,
     CommandFailureEvidence,
@@ -206,6 +207,7 @@ def evidence_marker_rows(
     ending: ReportEnding,
 ) -> tuple[list[SequenceEvidenceMarker], Counter[str]]:
     references = list(marker_references(scores, classifications, evidence, ending))
+    references.extend(file_loop_marker_references(snapshot))
     markers: list[SequenceEvidenceMarker] = []
     unresolved: Counter[str] = Counter()
     seen: set[tuple[str, str, str | None]] = set()
@@ -263,7 +265,8 @@ def marker_references(
 
 def item_source_event_ids(item: EvidenceItem) -> tuple[str | None, ...]:
     if isinstance(item, MessageSignalEvidence):
-        return (item.source_event_id, item.matched_source_event_id)
+        matched = (item.matched_source_event_id,) if item.matched_message_id is not None else ()
+        return (item.source_event_id, *matched)
     if isinstance(item, (CommandFailureEvidence, ToolFailureEvidence)):
         return (item.source_event_id,)
     if isinstance(item, (FailureGroupEvidence, FileLoopEvidence)):
@@ -271,3 +274,34 @@ def item_source_event_ids(item: EvidenceItem) -> tuple[str | None, ...]:
     if isinstance(item, ClassificationReferenceEvidence):
         return (item.source_event_id,)
     return ()
+
+
+def file_loop_marker_references(snapshot: DiagnosticSnapshot) -> list[MarkerReference]:
+    feature = next(
+        (
+            row
+            for row in snapshot.analysis.session_features
+            if row.feature_name == "same_file_edited_repeatedly_count"
+        ),
+        None,
+    )
+    if feature is None:
+        return []
+    paths = feature.evidence.get("paths")
+    event_map = feature.evidence.get("source_event_ids_by_path")
+    if not isinstance(paths, list) or not isinstance(event_map, dict):
+        return []
+    references: list[MarkerReference] = []
+    for path in paths:
+        if not isinstance(path, str):
+            continue
+        event_ids = event_map.get(path)
+        if not isinstance(event_ids, list):
+            continue
+        evidence_id = stable_id("report-file-loop", path)
+        references.extend(
+            MarkerReference("repeated_file_edits", evidence_id, event_id)
+            for event_id in event_ids
+            if isinstance(event_id, str)
+        )
+    return references
