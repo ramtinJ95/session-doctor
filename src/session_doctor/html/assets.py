@@ -185,6 +185,9 @@ SCRIPT = r"""
   }
   document.querySelectorAll('[data-calendar-controls]').forEach((calendarControls) => {
     calendarControls.hidden = false;
+    document.querySelectorAll('[data-calendar-view]').forEach((view) => {
+      view.hidden = view.dataset.calendarView !== 'volume';
+    });
     calendarControls.addEventListener('click', (event) => {
       const button = event.target.closest('button[data-calendar-metric]');
       if (!button) return;

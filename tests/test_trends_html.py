@@ -48,7 +48,8 @@ def test_trends_html_is_deterministic_complete_offline_and_cohort_separated(tmp_
     assert "Sidechain calendar" in first
     assert first.count('class="calendar-cell ') >= 56
     assert 'data-calendar-view="volume"' in first
-    assert 'data-calendar-view="risk" hidden' in first
+    assert 'data-calendar-view="risk"' in first
+    assert 'data-calendar-view="risk" hidden' not in first
     assert "if (controls)" in first
     assert "Observed date 2026-01-05" in first
     assert "risky sessions 1 of 1 current analyzed" in first
@@ -66,6 +67,8 @@ def test_trends_html_is_deterministic_complete_offline_and_cohort_separated(tmp_
     assert "fetch(" not in first
     assert "localStorage" not in first
     without_script = first[: first.index("<script>")] + first[first.index("</script>") + 9 :]
+    assert 'aria-label="Top-level risk calendar"' in without_script
+    assert 'aria-label="Sidechain risk calendar"' in without_script
     assert "risky sessions" in without_script
     assert "Current analyzed denominator" in without_script
 

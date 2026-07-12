@@ -13,7 +13,7 @@ hashes.
 | risky-rate calendars, desktop light | `risk-calendars-desktop-light.png` | toggle switches both separated cohorts; unavailable cells remain distinct; denominators remain in labels and summaries |
 | populated weekly, mobile dark | `weekly-mobile-dark.png` | no page-level horizontal overflow; calendars and charts scroll only inside their regions |
 | empty dashboard, desktop light | `empty-desktop-light.png` | zero scope and unavailable date/chart states remain explicit rather than healthy |
-| JavaScript disabled | structural browser check | volume calendars and complete cell risk/coverage labels remain; controls stay hidden |
+| JavaScript disabled | structural browser check | both volume and risk calendars remain visible with complete cell labels; controls stay hidden |
 | print emulation | structural browser check | controls hidden, both calendar metrics and closed disclosures shown, chart minimum width removed |
 | network activity | browser resource timing | no network resources requested |
 
