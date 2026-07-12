@@ -71,7 +71,7 @@ a:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px soli
 .skip-link:focus { top: var(--space-4); }
 .page { width: min(76rem, calc(100% - 2.5rem)); margin: 0 auto; padding: var(--space-6) 0 4rem; }
 header[role="banner"] { margin-bottom: var(--space-5); }
-h1, h2, h3, h4 { line-height: 1.25; letter-spacing: -.01em; }
+h1, h2, h3 { line-height: 1.25; letter-spacing: -.01em; }
 h1 { margin: 0 0 var(--space-2); font-size: clamp(1.5rem, 3vw, 2.1rem); font-weight: 750; overflow-wrap: anywhere; }
 .lede { margin: 0 0 var(--space-1); color: var(--ink-3); font-size: .78rem; font-weight: 650; letter-spacing: .09em; text-transform: uppercase; }
 .session-key { margin: 0 0 var(--space-3); color: var(--ink-2); overflow-wrap: anywhere; }
@@ -110,7 +110,6 @@ progress::-moz-progress-bar { background: var(--series-1); border-radius: 999px;
 svg text { font-family: inherit; }
 .sequence-chart { display: block; min-width: 48rem; width: 100%; height: auto; color: var(--text); }
 .sequence-chart .lane-band { fill: var(--surface-alt); opacity: .5; }
-.sequence-chart .gridline { stroke: var(--grid-line); stroke-width: 1; }
 .sequence-chart .axis { stroke: var(--axis-line); stroke-width: 1; fill: none; }
 .sequence-chart .lane-label { fill: var(--ink-2); font-size: 11.5px; }
 .sequence-chart .tick-label { fill: var(--ink-3); font-size: 11px; }
