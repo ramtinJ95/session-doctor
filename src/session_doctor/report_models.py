@@ -116,6 +116,7 @@ class FailureGroupEvidence(ReportModel):
     occurrence_count: int
     record_ids: list[str]
     source_event_ids: list[str]
+    unresolved_source_event_ids: list[str]
 
 
 class FileLoopEvidence(ReportModel):
@@ -126,6 +127,7 @@ class FileLoopEvidence(ReportModel):
     edit_count: int
     file_activity_ids: list[str]
     source_event_ids: list[str]
+    unresolved_source_event_ids: list[str]
 
 
 class ClassificationReferenceEvidence(ReportModel):

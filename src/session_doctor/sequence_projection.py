@@ -7,7 +7,6 @@ from typing import Literal
 
 from session_doctor.diagnostic_models import DiagnosticSnapshot
 from session_doctor.report_models import (
-    BoundedEvidence,
     ClassificationReferenceEvidence,
     CommandFailureEvidence,
     EvidenceItem,
@@ -71,7 +70,7 @@ def build_session_sequence(
     *,
     scores: list[ReportScore],
     classifications: list[ReportClassification],
-    evidence: dict[str, BoundedEvidence],
+    evidence: dict[str, list[EvidenceItem]],
     ending: ReportEnding,
 ) -> SessionSequence:
     activities = activity_rows(snapshot)
@@ -203,7 +202,7 @@ def evidence_marker_rows(
     *,
     scores: list[ReportScore],
     classifications: list[ReportClassification],
-    evidence: dict[str, BoundedEvidence],
+    evidence: dict[str, list[EvidenceItem]],
     ending: ReportEnding,
 ) -> tuple[list[SequenceEvidenceMarker], Counter[str]]:
     references = list(marker_references(scores, classifications, evidence, ending))
@@ -242,7 +241,7 @@ def evidence_marker_rows(
 def marker_references(
     scores: list[ReportScore],
     classifications: list[ReportClassification],
-    evidence: dict[str, BoundedEvidence],
+    evidence: dict[str, list[EvidenceItem]],
     ending: ReportEnding,
 ) -> Iterable[MarkerReference]:
     for score in scores:
@@ -254,8 +253,8 @@ def marker_references(
             *classification.unresolved_source_event_ids,
         ):
             yield MarkerReference("classification", classification.classification_id, event_id)
-    for section_name, section in evidence.items():
-        for item in section.items:
+    for section_name, items in evidence.items():
+        for item in items:
             for event_id in item_source_event_ids(item):
                 yield MarkerReference(section_name, item.evidence_id, event_id)
     for event_id in (*ending.source_event_ids, *ending.unresolved_source_event_ids):
@@ -268,7 +267,7 @@ def item_source_event_ids(item: EvidenceItem) -> tuple[str | None, ...]:
     if isinstance(item, (CommandFailureEvidence, ToolFailureEvidence)):
         return (item.source_event_id,)
     if isinstance(item, (FailureGroupEvidence, FileLoopEvidence)):
-        return tuple(item.source_event_ids)
+        return tuple((*item.source_event_ids, *item.unresolved_source_event_ids))
     if isinstance(item, ClassificationReferenceEvidence):
         return (item.source_event_id,)
     return ()
