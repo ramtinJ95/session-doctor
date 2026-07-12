@@ -126,11 +126,11 @@ svg text { font-family: inherit; }
 .legend-key.risk { --c: var(--risk); }
 .legend-key.rest { --c: var(--deemph); }
 .legend-key.evidence { width: 0; height: .85rem; background: none; border-left: 2px dashed var(--ink-3); border-radius: 0; }
-.series-0 { --c: var(--series-1); }
-.series-1 { --c: var(--series-2); }
-.series-2 { --c: var(--series-3); }
-.series-3 { --c: var(--series-4); }
-.series-4 { --c: var(--series-5); }
+.series-1 { --c: var(--series-1); }
+.series-2 { --c: var(--series-2); }
+.series-3 { --c: var(--series-3); }
+.series-4 { --c: var(--series-4); }
+.series-5 { --c: var(--series-5); }
 .trend-chart { display: block; min-width: 48rem; width: 100%; height: auto; }
 .trend-chart .grid-h { stroke: var(--grid-line); stroke-width: 1; }
 .trend-chart .axis { stroke: var(--axis-line); stroke-width: 1; fill: none; }
