@@ -38,6 +38,8 @@ Ingestion preserves source provenance while normalizing messages, tool calls
 and results, commands, file activity, model usage, and parse warnings. Analysis
 then derives evidence-backed features and classifications. Reports and graphs
 read those stored results; they never silently ingest or analyze sessions.
+Standalone HTML reports and dashboards render the same typed results and write
+only the explicit output file selected by the user.
 
 ### What it measures
 
@@ -143,11 +145,14 @@ uv run session-doctor projects list
 uv run session-doctor trends --project /path/to/project
 uv run session-doctor trends --project /path/to/project \
   --bucket month --periods 12 --format json
+uv run session-doctor trends --project /path/to/project \
+  --format html --output trends.html
 ```
 
 Project values are exact observed path hints, not inferred repository roots.
-Trends are read-only. Directional statements require an explicit project scope
-and enough compatible evidence.
+Trends are database-read-only. HTML mode atomically replaces the explicit
+`--output` file; its parent directory must already exist. Directional
+statements require an explicit project scope and enough compatible evidence.
 
 ### Inspect one session
 
@@ -156,12 +161,15 @@ uv run session-doctor report <session-id> --agent codex
 uv run session-doctor report <session-id> --agent codex \
   --format markdown > report.md
 uv run session-doctor report <session-id> --agent codex --format json
+uv run session-doctor report <session-id> --agent codex \
+  --format html --output report.html
 uv run session-doctor graph <session-id> --agent codex > graph.json
 ```
 
-`report` and `graph` are exact-session, read-only views. They do not ingest,
-analyze, write artifacts, or cache derived data. Stale or missing analysis is
-shown explicitly.
+`report` and `graph` are exact-session, database-read-only views. They do not
+ingest, analyze, write database rows, or cache derived data. Report HTML mode
+atomically replaces only the explicit output file; it creates no directory,
+sibling asset, or browser window. Stale or missing analysis is shown explicitly.
 
 ## CLI reference
 
@@ -180,15 +188,16 @@ command.
 | `analyze SESSION_ID` | Analyze one session | `--agent NAME`, `--format terminal\|json`, `--artifact PATH`, `--no-artifact` |
 | `analyze --all` | Restore or rebuild analysis coverage | `--project PATH`, `--agent NAME`, `--force`, `--write-artifacts` |
 | `summary` | Show aggregate diagnostics | `--project PATH`, `--agent NAME`, `--limit N`, `--format terminal\|json` |
-| `trends` | Show aligned trends and recurrence | `--bucket week\|month`, `--periods 1..120`, plus summary filters |
+| `trends` | Show aligned trends and recurrence | `--format terminal\|json\|html`, `--output PATH` for HTML, `--bucket week\|month`, `--periods 1..120`, plus summary filters |
 | `projects list` | List observed project/CWD hints | `--agent NAME`, `--limit N`, `--format terminal\|json` |
-| `report SESSION_ID` | Build an exact-session report | `--agent NAME`, `--format terminal\|markdown\|json`, `--limit N`, `--show-text` |
+| `report SESSION_ID` | Build an exact-session report | `--agent NAME`, `--format terminal\|markdown\|json\|html`, `--output PATH` for HTML, `--limit N`, `--show-text` |
 | `graph SESSION_ID` | Build an exact-session evidence graph | `--agent NAME`; JSON only |
 | `integrations path` | Locate the bundled Agent Skill | — |
 
 Most query commands accept `--db PATH`. `summary`, `trends`, `projects list`,
-`report`, and `graph` are read-only. `db init`, `ingest`, and `analyze` write
-local state.
+`report`, and `graph` are database-read-only. `report` and `trends` HTML modes
+are explicit filesystem writes; `--output` is required for HTML and rejected
+for other formats. `db init`, `ingest`, and `analyze` write local state.
 
 ## Privacy and local data
 
@@ -201,13 +210,19 @@ local data needed for analysis:
   fields such as paths, URLs, and search queries may still be stored locally;
 - reports omit message text by default;
 - `report --show-text` reveals only the displayed persisted evidence messages;
+- standalone HTML is one self-contained offline file with no remote resources,
+  network requests, telemetry, browser storage, database path, or sibling assets;
 - graphs never include message text;
 - displayed command examples and home paths are redacted;
 - evidence text exposed by `--show-text` is otherwise verbatim and may itself
   contain sensitive data.
 
-Treat the database and generated artifacts as private. The tool has no
-telemetry and makes no external API or model calls.
+Treat the database, analysis artifacts, and generated HTML as private. Choose
+output paths deliberately: HTML always replaces the named file and may contain
+redacted paths, commands, evidence IDs, and explicitly requested bounded
+message text. The output path itself can reveal sensitive context, so avoid
+shared locations. The tool has no telemetry and makes no external API or model
+calls.
 
 ## Optional Agent Skill
 
@@ -228,7 +243,10 @@ and confirmation rules.
 
 - Native agent log formats can drift and require adapter updates.
 - Project paths are observed hints rather than a project registry.
-- Graph output is structured JSON, not a graphical visualization.
+- Graph output remains structured JSON; report and trends have standalone HTML
+  views but no full-session graph visualization.
+- HTML is not hosted, does not start a server or launch a browser, and does not
+  render full transcripts. Calendar dates are observed timezone-naive dates.
 - OpenCode, exports, MCP/query access, CI, PyPI publishing, and a GitHub Release
   are not included in the current dogfood baseline.
 - Before 1.0, incompatible databases and artifacts may need explicit rebuilds.
