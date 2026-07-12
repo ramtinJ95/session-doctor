@@ -374,12 +374,13 @@ def volume_coverage_chart(identifier: str, buckets: tuple[TrendBucket, ...]) -> 
                 )
             )
         if rest:
+            gap = SEGMENT_GAP if analyzed else 0.0
             rest_top = PLOT_BASE - analyzed_height - rest_height
-            if analyzed:
-                rest_top -= SEGMENT_GAP
-            elements.append(bar_mark(x, rest_top, bar_width, rest_height, "volume-rest", title))
+            elements.append(
+                bar_mark(x, rest_top, bar_width, rest_height - gap, "volume-rest", title)
+            )
     elements.append("</svg></div>")
-    legend = chart_legend([("series-0", "Current analyzed"), ("rest", "Without current analysis")])
+    legend = chart_legend([("series-1", "Current analyzed"), ("rest", "Without current analysis")])
     rows = [
         bucket_row(bucket)
         + [
@@ -428,14 +429,14 @@ def score_chart(identifier: str, buckets: tuple[TrendBucket, ...]) -> str:
                     for bucket_index, value, _ in run
                 )
                 elements.append(
-                    f'<polyline class="series-line series-{score_index}" aria-hidden="true" '
+                    f'<polyline class="series-line series-{score_index + 1}" aria-hidden="true" '
                     f'points="{coordinates}"></polyline>'
                 )
         for bucket_index, value, sample_count in points:
             cx = PLOT_LEFT + (bucket_index + 0.5) * step
             cy = PLOT_TOP + (1 - value) * PLOT_HEIGHT
             elements.append(
-                f'<circle class="series-dot series-{score_index}" aria-hidden="true" '
+                f'<circle class="series-dot series-{score_index + 1}" aria-hidden="true" '
                 f'cx="{cx:.2f}" cy="{cy:.2f}" r="4">'
                 f"<title>{text(humanize(score_name))} {bucket_label(buckets[bucket_index])}: "
                 f"{number(value)} ({sample_count} sample{'s' if sample_count != 1 else ''})"
@@ -453,7 +454,7 @@ def score_chart(identifier: str, buckets: tuple[TrendBucket, ...]) -> str:
             )
         rows.append(row)
     legend = chart_legend(
-        [(f"series-{index}", humanize(name)) for index, name in enumerate(SCORE_NAMES)]
+        [(f"series-{index + 1}", humanize(name)) for index, name in enumerate(SCORE_NAMES)]
     )
     return card(
         "".join(elements)
