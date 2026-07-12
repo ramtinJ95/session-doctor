@@ -65,12 +65,18 @@ session-doctor integrations path
 session-doctor --show-completion
 ```
 
-Commands that write database rows, artifacts, or shell configuration:
+`report` and `trends` belong in this inspection class only for terminal,
+Markdown, or JSON output. Their HTML modes below are filesystem writes even
+though they remain database-read-only.
+
+Commands that write database rows, explicit files, or shell configuration:
 
 ```text
 session-doctor db init
 session-doctor ingest
 session-doctor analyze
+session-doctor report SESSION_ID --format html --output PATH
+session-doctor trends --format html --output PATH
 session-doctor --install-completion
 ```
 
@@ -88,6 +94,10 @@ Before each write, show the exact proposed public command and state:
   analysis for affected sessions
 - for `analyze`, that derived rows for selected sessions will be replaced
 - whether an analysis artifact will be written
+- for report/trends HTML, the exact output path and that an existing named file
+  will be atomically replaced without another prompt
+- for report/trends HTML, that the parent must already exist and the command
+  writes no implicit artifact, directory, cache, or sibling asset
 - for `--install-completion`, that shell configuration will be changed
 
 Ask for explicit confirmation for that command and scope. Do not reuse consent
@@ -116,6 +126,10 @@ Write confirmation does not authorize `--show-text`. Never use it routinely or
 speculatively. It authorizes only displayed evidence-message text, never full
 transcripts, tool output, command output, arguments, commands, diffs, file
 content, or sidecar content.
+
+These disclosure rules apply equally to HTML. An HTML command with
+`--show-text` requires both confirmations: one for replacing the exact output
+file and one for revealing bounded evidence-message text.
 
 ## Choose Scope Without Guessing
 
@@ -195,15 +209,37 @@ Never weaken sample, density, coverage, or materiality gates. Keep top-level and
 sidechain cohorts separate. Preserve `insufficient_data`, empty periods,
 untimed/stale exclusions, and non-causal agent observations.
 
+When the user asks for a standalone dashboard, propose the exact confirmed
+command:
+
+```text
+session-doctor trends --project PATH --format html --output OUTPUT.html [--db PATH]
+```
+
+HTML writes one self-contained file and atomically replaces that exact path. It
+does not create directories, sibling assets, database rows, or launch a
+browser. Success prints the output-path confirmation, not the HTML document.
+
 ### Exact-Session Reports
 
 Use `report SESSION_ID --agent AGENT --format json` for structured
 interpretation, terminal for concise review, or Markdown when the user asks for
-Markdown. Reports are read-only and do not ingest or analyze. Preserve
+Markdown. Reports are database-read-only and do not ingest or analyze. Preserve
 `current`, `stale`, or `missing` analysis status, bounded
 `total/displayed/omitted` counts, unresolved evidence, limitations, and the
 exact suggested analysis action. Do not silently recover stale/missing
 analysis.
+
+When the user asks for a standalone exact-session report, propose the exact
+confirmed command:
+
+```text
+session-doctor report SESSION_ID --agent AGENT --format html --output OUTPUT.html [--db PATH]
+```
+
+HTML writes one self-contained file and atomically replaces that exact path. It
+does not create directories, sibling assets, database rows, or launch a
+browser. Success prints the output-path confirmation, not the HTML document.
 
 Use `--show-text` only through the separate disclosure protocol.
 

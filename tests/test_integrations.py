@@ -94,6 +94,20 @@ def test_skill_has_write_disclosure_and_interpretation_guards() -> None:
     assert "If stale/missing analysis is returned" in skill_text
 
 
+def test_skill_classifies_html_as_an_explicit_replacing_write() -> None:
+    skill_text = skill_markdown()
+
+    assert "session-doctor report SESSION_ID --format html --output PATH" in skill_text
+    assert "session-doctor trends --format html --output PATH" in skill_text
+    assert "filesystem writes" in skill_text
+    assert "exact output path" in skill_text
+    assert "atomically replaced without another prompt" in skill_text
+    assert "requires both confirmations" in skill_text
+    assert "writes no implicit artifact, directory, cache, or sibling asset" in skill_text
+    assert "does not create directories, sibling assets, database rows, or launch a" in skill_text
+    assert "Success prints the output-path confirmation, not the HTML document" in skill_text
+
+
 def test_integrations_path_does_not_create_files(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     before = tuple(tmp_path.iterdir())
@@ -131,7 +145,7 @@ def test_built_distributions_and_clean_wheel_install_include_skill(tmp_path) -> 
     venv.EnvBuilder(with_pip=False).create(environment)
     python = environment / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
     subprocess.run(
-        ["uv", "pip", "install", "--python", str(python), "--no-deps", str(wheel_path)],
+        ["uv", "pip", "install", "--python", str(python), str(wheel_path)],
         check=True,
         capture_output=True,
         text=True,
@@ -152,6 +166,79 @@ def test_built_distributions_and_clean_wheel_install_include_skill(tmp_path) -> 
     installed_skill = Path(result.stdout.strip())
     assert installed_skill.is_dir()
     assert (installed_skill / "SKILL.md").is_file()
+
+    executable = environment / (
+        "Scripts/session-doctor.exe" if sys.platform == "win32" else "bin/session-doctor"
+    )
+    database_path = tmp_path / "installed.duckdb"
+    fixture_path = Path(__file__).parent / "fixtures" / "codex" / "repeated-failure-session.jsonl"
+
+    def run_cli(*arguments: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(executable), *arguments],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=tmp_path,
+        )
+
+    run_cli(
+        "ingest",
+        "--agent",
+        "codex",
+        "--source",
+        str(fixture_path),
+        "--db",
+        str(database_path),
+    )
+    run_cli("analyze", "--all", "--db", str(database_path), "--format", "json")
+    session_id_result = subprocess.run(
+        [
+            str(python),
+            "-c",
+            (
+                "import duckdb; print(duckdb.connect(" + repr(str(database_path)) + ")"
+                ".execute('SELECT session_id FROM sessions').fetchone()[0])"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+    session_id = session_id_result.stdout.strip()
+    report_path = tmp_path / "installed-report.html"
+    trends_path = tmp_path / "installed-trends.html"
+    report_path.write_text("replace me", encoding="utf-8")
+    report_result = run_cli(
+        "report",
+        session_id,
+        "--db",
+        str(database_path),
+        "--format",
+        "html",
+        "--output",
+        str(report_path),
+    )
+    trends_result = run_cli(
+        "trends",
+        "--db",
+        str(database_path),
+        "--format",
+        "html",
+        "--output",
+        str(trends_path),
+    )
+
+    assert report_result.stdout.strip() == f"Wrote HTML report: {report_path}"
+    assert trends_result.stdout.strip() == f"Wrote HTML trends dashboard: {trends_path}"
+    assert "<!doctype html>" not in report_result.stdout
+    assert "<!doctype html>" not in trends_result.stdout
+    assert report_path.read_text(encoding="utf-8").startswith("<!doctype html>")
+    assert trends_path.read_text(encoding="utf-8").startswith("<!doctype html>")
+    assert not (tmp_path / "artifacts").exists()
+    assert not tuple(tmp_path.glob("*.css"))
+    assert not tuple(tmp_path.glob("*.js"))
 
 
 def skill_markdown() -> str:

@@ -3,6 +3,15 @@
 All notable changes are recorded here. This project remains pre-1.0: database,
 artifact, payload, and CLI contracts may change incompatibly during dogfooding.
 
+## Unreleased
+
+- add schema-version-2 exact-session sequence projections and separate daily
+  top-level/sidechain trend calendars
+- add standalone offline HTML formats for exact-session reports and project
+  trends, requiring explicit output paths and atomic file replacement
+- preserve bounded message disclosure, analysis coverage, risk denominators,
+  guarded judgments, and unavailable states in visual output
+
 ## 0.1.0 - 2026-07-10
 
 First dogfood baseline.

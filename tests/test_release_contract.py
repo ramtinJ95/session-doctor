@@ -37,6 +37,9 @@ def test_changelog_records_dogfood_scope_and_compatibility() -> None:
     assert "First dogfood baseline" in changelog
     assert "0.x databases and generated artifacts may need rebuilding" in changelog
     assert "no OpenCode adapter, MCP/query server, export command, CI, PyPI package" in changelog
+    assert "## Unreleased" in changelog
+    assert "standalone offline HTML formats" in changelog
+    assert "explicit output paths and atomic file replacement" in changelog
 
 
 def test_dogfood_issue_template_requires_privacy_safe_evidence() -> None:
@@ -63,3 +66,23 @@ def test_dogfood_issue_template_requires_privacy_safe_evidence() -> None:
 
     assert all(marker in template for marker in required_markers)
     assert template.count("required: true") >= 8
+
+
+def test_public_docs_describe_html_write_and_privacy_contract() -> None:
+    readme = (ROOT / "README.md").read_text()
+    design = (ROOT / "docs" / "session-doctor-design.md").read_text()
+
+    required_readme = (
+        "--format html --output report.html",
+        "--format html --output trends.html",
+        "database-read-only",
+        "atomically replaces",
+        "parent directory must already exist",
+        "one self-contained offline file",
+        "no remote resources",
+        "generated HTML as private",
+    )
+    assert all(marker in readme for marker in required_readme)
+    assert "Phase 11: Standalone Visual Reports And Trend Dashboards" in design
+    assert "renderers consume typed projections only" in design
+    assert "Graph remains JSON-only" in design

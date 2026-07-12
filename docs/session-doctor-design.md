@@ -43,15 +43,17 @@ session-doctor sessions list [--agent AGENT]
 session-doctor analyze <session-id> [--agent AGENT] [--format terminal|json] [--artifact PATH] [--no-artifact]
 session-doctor analyze --all [--project PATH] [--agent AGENT] [--force]
 session-doctor summary [--format terminal|json] [--project PATH] [--agent AGENT] [--limit N]
-session-doctor trends [--project PATH] [--agent AGENT] [--bucket week|month] [--periods N]
+session-doctor trends [--project PATH] [--agent AGENT] [--bucket week|month] [--periods N] [--format terminal|json|html] [--output PATH]
 session-doctor projects list [--agent AGENT] [--limit N] [--format terminal|json]
-session-doctor report <session-id> [--agent AGENT] [--format terminal|markdown|json] [--limit N] [--show-text]
+session-doctor report <session-id> [--agent AGENT] [--format terminal|markdown|json|html] [--output PATH] [--limit N] [--show-text]
 session-doctor graph <session-id> [--agent AGENT] [--format json]
 session-doctor integrations path
 ```
 
-`report` and `graph` are exact-session, on-demand read surfaces. `explain` and
-`export` remain design ideas but are not current CLI commands.
+`report` and `graph` are exact-session, on-demand database-read surfaces.
+`report` and `trends` HTML modes are explicit filesystem writes to a required
+output path. `explain` and `export` remain design ideas but are not current CLI
+commands.
 
 The CLI should be local-only by default. It should not call an LLM or external
 API on its own unless an explicit future option enables that. LLM capability can
@@ -83,7 +85,8 @@ implementation slice.
 
 As of the current repository state, Phase 5 deterministic feature hardening,
 Phase 6 classification scoring, Phase 7 aggregate summaries, Phase 8
-project-level trends, and Phase 9 reports/graph projection are implemented.
+project-level trends, Phase 9 reports/graph projection, and Phase 11 standalone
+visual reports are implemented.
 The exact-session report JSON contract is schema version 2. It includes a
 bounded `sequence` projection ordered by source record index, with fixed
 activity categories, explicit unresolved counts, and exact evidence markers.
@@ -108,7 +111,8 @@ Codex/Pi/Claude root or subagent JSONL source
   -> persisted analysis rows + optional JSON artifact
   -> aggregate summary queries over ingested/analyzed sessions
   -> aligned project/agent/cohort trend and recurrence views
-  -> exact-session terminal/Markdown/JSON reports
+  -> exact-session terminal/Markdown/JSON/HTML reports
+  -> standalone project-trends HTML dashboards
   -> exact-session conservative JSON evidence graphs
 ```
 
@@ -150,6 +154,10 @@ The tool can currently:
   problematic files only across distinct valid root-session families
 - locate one optional bundled Agent Skill shared by Codex, Claude Code, and Pi
   without installing or modifying agent configuration
+- render exact-session and project-trend typed projections as one-file offline
+  HTML without querying DuckDB or reimplementing analysis in the renderer
+- atomically replace only an explicit existing-parent HTML output path, without
+  creating sibling assets, caches, database rows, or launching a browser
 
 Implemented commands:
 
@@ -170,11 +178,11 @@ session-doctor analyze --all [--project PATH] [--agent codex|claude|pi]
 session-doctor analyze --all [--force] [--write-artifacts] [--format terminal|json]
 session-doctor summary [--db PATH] [--format terminal|json]
 session-doctor summary [--agent codex|claude|pi] [--project PATH] [--limit N]
-session-doctor trends [--db PATH] [--format terminal|json]
+session-doctor trends [--db PATH] [--format terminal|json|html] [--output PATH]
 session-doctor trends [--project PATH] [--agent codex|claude|pi]
 session-doctor trends [--bucket week|month] [--periods 1..120] [--limit N]
 session-doctor projects list [--db PATH] [--agent codex|claude|pi] [--limit N]
-session-doctor report <session-id> [--db PATH] [--agent codex|claude|pi] [--format terminal|markdown|json]
+session-doctor report <session-id> [--db PATH] [--agent codex|claude|pi] [--format terminal|markdown|json|html] [--output PATH]
 session-doctor report <session-id> [--limit N] [--show-text]
 session-doctor graph <session-id> [--db PATH] [--agent codex|claude|pi] [--format json]
 session-doctor integrations path
@@ -190,6 +198,7 @@ src/session_doctor/
   ingest_workflow.py, analysis_workflow.py, batch_analysis.py
   diagnostic_models.py, report_models.py
   summary_payload.py, trend_payload.py, report_payload.py, report_renderers.py
+  html/       shared offline document/components/charts plus report/trends composition
   graph_projection.py, graph_payload.py
   integration_assets.py, integrations/session-doctor/SKILL.md
   normalization.py, privacy.py, ids.py, config.py
@@ -337,6 +346,10 @@ where applicable.
   session.
 - Reports deliberately omit full transcripts and disclose message text only
   for displayed persisted evidence under `--show-text`.
+- Report and trends HTML are standalone offline files, not hosted dashboards,
+  servers, browser launchers, full transcript replays, or graph diagrams.
+- HTML output has no implicit default and no retention/versioning policy; the
+  exact named file is always replaced after successful rendering.
 - Graphs are derived on demand as typed JSON; graphical rendering, graph
   algorithms, persistence, and merged-family graphs remain deferred.
 - Observed project paths are hints, not inferred VCS roots or a project
@@ -1373,17 +1386,22 @@ Default storage behavior:
 - store command text locally, but redact obvious secrets in reports
 - store full paths locally, but display home-relative or redacted paths in
   reports
+- require an explicit existing-parent output path for HTML and atomically
+  replace only that named file
+- keep standalone HTML self-contained: no database path, remote resource,
+  network request, telemetry, browser persistence, or sibling asset
+- include message text in HTML only for displayed bounded evidence under the
+  same explicit `--show-text` contract
 
-Raw-content support can be added later behind explicit flags, for example:
+Current explicit message disclosure is limited to:
 
 ```bash
-session-doctor ingest --store-tool-output
 session-doctor report <session-id> --show-text
-session-doctor report <session-id> --show-tool-output
 ```
 
-The default should optimize for safe local analytics and classification, not
-verbatim replay.
+Raw tool-output storage or display flags remain future ideas, not current CLI
+contracts. The default should optimize for safe local analytics and
+classification, not verbatim replay.
 
 ## Adapter Implementation Order
 
@@ -1791,8 +1809,8 @@ session-doctor graph <session-id>
 
 Output is typed deterministic JSON nodes/edges. Causal edges, inferred goals,
 agent blame, and invented error entities are deliberately excluded. Graphviz,
-HTML, algorithms, persistence, merged-family graphs, and MCP/query access remain
-deferred until dogfooding establishes a concrete need.
+graph HTML visualization, algorithms, persistence, merged-family graphs, and
+MCP/query access remain deferred until dogfooding establishes a concrete need.
 
 ## Layer 8: Reporting
 
@@ -1830,8 +1848,18 @@ times, the same test failure appeared twice, and the final user message correcte
 the assistant's previous approach.
 ```
 
-Reports should be available as terminal output and Markdown. Machine-readable
-JSON should be available for agents and tests.
+Exact-session reports are available as terminal output, Markdown,
+machine-readable JSON, and one-file offline HTML. Project trends are available
+as terminal output, machine-readable JSON, and one-file offline HTML. HTML
+renderers consume typed projections only; they do not query DuckDB or derive new
+analysis.
+
+The session HTML sequence is bounded activity density plus exact evidence
+markers in observed source-record order. Position does not represent elapsed
+time or causality. Trend calendars default to neutral session volume and expose
+risky-session rate separately with current-analysis coverage and denominators.
+Top-level and sidechain cohorts remain separate, and unavailable rates remain
+unavailable rather than becoming zero.
 
 ## Phase Plan
 
@@ -2029,8 +2057,9 @@ session-doctor trends --project /path/to/project
 session-doctor projects list
 ```
 
-Status: complete. Trends and project discovery remain local-only and read-only;
-batch analysis is a separate explicit mutation. Fixture and copied-local
+Status: complete. Trends and project discovery remain local-only and
+database-read-only; Phase 11 HTML mode adds one explicit output-file write.
+Batch analysis is a separate explicit mutation. Fixture and copied-local
 validation cover Codex, Claude Code, and Pi. Sparse copied-local history returned
 honest `insufficient_data` rather than weakening fixed gates.
 
@@ -2060,7 +2089,7 @@ Start with JSON output:
 
 Later output formats can be added after the graph semantics stabilize.
 
-Status: complete. Phase 9 keeps both commands read-only,
+Status: complete. Phase 9 keeps both commands database-read-only,
 generates exact-session reports and graphs on demand, exposes stale/missing
 analysis honestly, limits message disclosure to explicit evidence-only
 `--show-text`, and uses conservative provenance rather than causal graph edges.
@@ -2091,6 +2120,27 @@ approved step; CI, PyPI, GitHub Release, and MCP/query access remain deferred.
 
 Detailed plan: `docs/phase-10-plan.md`.
 Validation: `docs/phase-10-validation.md`.
+
+### Phase 11: Standalone Visual Reports And Trend Dashboards
+
+Add two local graphical surfaces without turning graph projection into a
+full-session diagram:
+
+- an exact-session HTML diagnostic report composed from `SessionReport`;
+- a project-trends HTML dashboard composed from `TrendReport`;
+- typed source-order sequence and daily observed-date calendar projections;
+- explicit `--output` paths with atomic replacement and no sibling assets;
+- offline semantic HTML, inline CSS/SVG, and optional first-party progressive
+  enhancement with no network access or browser persistence.
+
+Both commands remain database-read-only. HTML mode is an explicit filesystem
+write, requires an existing parent directory and `.html`/`.htm` destination,
+and replaces that named regular file. Graph remains JSON-only.
+
+Status: complete.
+
+Detailed plan: `docs/phase-11-plan.md`.
+Validation: `docs/phase-11-validation.md`.
 
 ## Non-Goals For First Iteration
 

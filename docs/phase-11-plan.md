@@ -1,6 +1,7 @@
 # Phase 11 Plan: Standalone Visual Reports And Trend Dashboards
 
-Status: planned and grilled; implementation not started.
+Status: complete; implementation and privacy-safe validation finished on
+2026-07-12. See `docs/phase-11-validation.md`.
 
 ## Goal
 
