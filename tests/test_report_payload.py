@@ -372,7 +372,7 @@ def test_report_cli_rejects_invalid_options_and_missing_session(tmp_path, monkey
 
     invalid_format = runner.invoke(
         app,
-        ["report", "session-1", "--db", str(store.database_path), "--format", "html"],
+        ["report", "session-1", "--db", str(store.database_path), "--format", "yaml"],
     )
     invalid_limit = runner.invoke(
         app,
