@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from session_doctor.privacy import redact_home
@@ -30,6 +30,29 @@ from .components import (
     text,
 )
 from .document import HtmlRenderError, document
+
+CHART_WIDTH = 960
+PLOT_LEFT = 56
+PLOT_TOP = 18
+PLOT_WIDTH = 884
+PLOT_HEIGHT = 220
+PLOT_BASE = PLOT_TOP + PLOT_HEIGHT
+CHART_HEIGHT = PLOT_BASE + 34
+SEGMENT_GAP = 2.0
+MONTH_ABBREVIATIONS = (
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+)
 
 
 def render_trends_html(report: TrendReport) -> str:
@@ -101,7 +124,7 @@ def coverage_section(report: TrendReport) -> str:
     return (
         '<section class="section" aria-labelledby="scope-coverage">'
         '<h2 id="scope-coverage">Scope and analysis coverage</h2>'
-        '<div class="grid">'
+        '<div class="grid kpi">'
         + "".join(
             stat_card(label, value)
             for label, value in (
@@ -192,9 +215,10 @@ def calendar_grid(
     cohort_name: str,
 ) -> str:
     max_sessions = max((cell.sessions for cell in cells), default=0)
+    offset = cells[0].observed_date.weekday()
     placeholders = "".join(
         '<li class="calendar-cell calendar-placeholder" aria-hidden="true"></li>'
-        for _ in range(cells[0].observed_date.weekday())
+        for _ in range(offset)
     )
     items = []
     for cell in cells:
@@ -205,9 +229,46 @@ def calendar_grid(
             f'<span class="sr-only">{text(label)}</span></li>'
         )
     return (
-        '<div class="calendar-wrap">'
+        '<div class="calendar-wrap"><div class="calendar">'
+        f'<div class="calendar-months" aria-hidden="true">{calendar_months(cells, offset)}</div>'
+        '<div class="calendar-body">'
+        '<div class="calendar-weekdays" aria-hidden="true">'
+        '<span style="grid-row: 1">Mon</span>'
+        '<span style="grid-row: 3">Wed</span>'
+        '<span style="grid-row: 5">Fri</span></div>'
         f'<ol class="calendar-grid" aria-label="{attr(cohort_name)} {attr(metric)} '
-        f'calendar">{placeholders}{"".join(items)}</ol></div>'
+        f'calendar">{placeholders}{"".join(items)}</ol>'
+        "</div></div></div>" + calendar_legend(metric)
+    )
+
+
+def calendar_months(cells: tuple[DailyCalendarCell, ...], offset: int) -> str:
+    labels = []
+    last_week = None
+    for index, cell in enumerate(cells):
+        if index and cell.observed_date.day != 1:
+            continue
+        week = (index + offset) // 7
+        if last_week is not None and week - last_week < 3:
+            continue
+        month_name = MONTH_ABBREVIATIONS[cell.observed_date.month - 1]
+        labels.append(f'<span style="left: {week}rem">{month_name}</span>')
+        last_week = week
+    return "".join(labels)
+
+
+def calendar_legend(metric: str) -> str:
+    if metric == "volume":
+        swatches = "".join(
+            f'<span class="legend-cell{" level-" + str(level) if level else ""}"></span>'
+            for level in range(5)
+        )
+        return f'<p class="calendar-legend">Fewer {swatches} more sessions per day</p>'
+    swatches = "".join(f'<span class="legend-cell risk-{level}"></span>' for level in range(1, 5))
+    return (
+        '<p class="calendar-legend">0% <span class="legend-cell"></span>'
+        f'{swatches} 100% risky<span class="gap"></span>'
+        '<span class="legend-cell unavailable"></span> rate unavailable</p>'
     )
 
 
@@ -276,37 +337,49 @@ def cohort_charts(identifier: str, name: str, cohort: TrendCohort) -> str:
 
 
 def volume_coverage_chart(identifier: str, buckets: tuple[TrendBucket, ...]) -> str:
-    width, height, left, top = 960, 260, 70, 25
-    plot_width, plot_height = 870, 190
-    max_sessions = max((bucket.metrics.sessions for bucket in buckets), default=1) or 1
-    step = plot_width / len(buckets)
+    max_total = max((bucket.metrics.sessions for bucket in buckets), default=1) or 1
+    step = PLOT_WIDTH / len(buckets)
     elements = chart_shell(
         f"{identifier}-volume-title",
         f"{identifier}-volume-description",
         "Session volume and current-analysis coverage",
-        "Neutral bars show session counts. Green points show current-analysis coverage; "
-        "missing points mean coverage is unavailable.",
-        width,
-        height,
+        "Stacked bars show sessions per bucket split into current-analyzed sessions and "
+        "sessions without current analysis.",
     )
-    elements.append(axis_markup(left, top, plot_width, plot_height))
+    elements.append(chart_frame(count_ticks(max_total), x_ticks(buckets, step)))
     for index, bucket in enumerate(buckets):
-        x = left + index * step + step * 0.15
-        bar_height = (bucket.metrics.sessions / max_sessions) * plot_height
-        elements.append(
-            f'<rect class="volume" aria-hidden="true" x="{x:.2f}" '
-            f'y="{top + plot_height - bar_height:.2f}" width="{step * 0.7:.2f}" '
-            f'height="{bar_height:.2f}"></rect>'
+        total = bucket.metrics.sessions
+        if not total:
+            continue
+        analyzed = min(max(bucket.metrics.current_analyzed, 0), total)
+        rest = total - analyzed
+        bar_width = min(step * 0.62, 24.0)
+        x = PLOT_LEFT + (index + 0.5) * step - bar_width / 2
+        analyzed_height = (analyzed / max_total) * PLOT_HEIGHT
+        rest_height = (rest / max_total) * PLOT_HEIGHT
+        title = (
+            f"{bucket_label(bucket)}: {total} sessions; {analyzed} current analyzed; "
+            f"coverage {percent(bucket.metrics.current_analysis_coverage)}"
         )
-        coverage = bucket.metrics.current_analysis_coverage
-        if coverage is not None:
-            cy = top + (1 - coverage) * plot_height
-            cx = left + (index + 0.5) * step
+        if analyzed:
             elements.append(
-                f'<circle class="coverage" aria-hidden="true" cx="{cx:.2f}" '
-                f'cy="{cy:.2f}" r="4"></circle>'
+                bar_mark(
+                    x,
+                    PLOT_BASE - analyzed_height,
+                    bar_width,
+                    analyzed_height,
+                    "volume",
+                    title,
+                    rounded_top=not rest,
+                )
             )
+        if rest:
+            rest_top = PLOT_BASE - analyzed_height - rest_height
+            if analyzed:
+                rest_top -= SEGMENT_GAP
+            elements.append(bar_mark(x, rest_top, bar_width, rest_height, "volume-rest", title))
     elements.append("</svg></div>")
+    legend = chart_legend([("series-0", "Current analyzed"), ("rest", "Without current analysis")])
     rows = [
         bucket_row(bucket)
         + [
@@ -318,38 +391,55 @@ def volume_coverage_chart(identifier: str, buckets: tuple[TrendBucket, ...]) -> 
     ]
     return card(
         "".join(elements)
-        + table(
-            ["Bucket start", "Bucket end", "Sessions", "Current analyzed", "Coverage"],
-            rows,
-            caption="Text alternative: session volume and analysis coverage",
+        + legend
+        + disclosure(
+            "Data table: session volume and analysis coverage",
+            table(
+                ["Bucket start", "Bucket end", "Sessions", "Current analyzed", "Coverage"],
+                rows,
+                caption="Text alternative: session volume and analysis coverage",
+            ),
         ),
         heading="Session volume and analysis coverage",
     )
 
 
 def score_chart(identifier: str, buckets: tuple[TrendBucket, ...]) -> str:
-    width, height, left, top = 960, 260, 70, 25
-    plot_width, plot_height = 870, 190
-    step = plot_width / len(buckets)
+    step = PLOT_WIDTH / len(buckets)
     elements = chart_shell(
         f"{identifier}-scores-title",
         f"{identifier}-scores-description",
         "Score averages",
-        "Points show available 0 to 1 score averages by bucket. Missing points mean no samples.",
-        width,
-        height,
+        "Lines connect available 0 to 1 score averages by bucket. Gaps mean no samples.",
     )
-    elements.append(axis_markup(left, top, plot_width, plot_height))
+    elements.append(chart_frame([(0.0, "0.0"), (0.5, "0.5"), (1.0, "1.0")], x_ticks(buckets, step)))
     for score_index, score_name in enumerate(SCORE_NAMES):
+        points: list[tuple[int, float, int]] = []
         for bucket_index, bucket in enumerate(buckets):
             score = next(row for row in bucket.metrics.scores if row.metric_name == score_name)
             if score.average is None:
                 continue
-            cx = left + (bucket_index + 0.5) * step
-            cy = top + (1 - score.average) * plot_height
+            points.append((bucket_index, score.average, score.sample_count))
+        for run in consecutive_runs(points):
+            if len(run) > 1:
+                coordinates = " ".join(
+                    f"{PLOT_LEFT + (bucket_index + 0.5) * step:.2f},"
+                    f"{PLOT_TOP + (1 - value) * PLOT_HEIGHT:.2f}"
+                    for bucket_index, value, _ in run
+                )
+                elements.append(
+                    f'<polyline class="series-line series-{score_index}" aria-hidden="true" '
+                    f'points="{coordinates}"></polyline>'
+                )
+        for bucket_index, value, sample_count in points:
+            cx = PLOT_LEFT + (bucket_index + 0.5) * step
+            cy = PLOT_TOP + (1 - value) * PLOT_HEIGHT
             elements.append(
-                f'<circle class="series-{score_index}" aria-hidden="true" cx="{cx:.2f}" '
-                f'cy="{cy:.2f}" r="4"></circle>'
+                f'<circle class="series-dot series-{score_index}" aria-hidden="true" '
+                f'cx="{cx:.2f}" cy="{cy:.2f}" r="4">'
+                f"<title>{text(humanize(score_name))} {bucket_label(buckets[bucket_index])}: "
+                f"{number(value)} ({sample_count} sample{'s' if sample_count != 1 else ''})"
+                "</title></circle>"
             )
     elements.append("</svg></div>")
     rows = []
@@ -362,50 +452,47 @@ def score_chart(identifier: str, buckets: tuple[TrendBucket, ...]) -> str:
                 f"{'s' if score.sample_count != 1 else ''})"
             )
         rows.append(row)
-    legend = (
-        '<ul class="legend">'
-        + "".join(
-            f'<li><span class="legend-key series-{index}"></span>{text(humanize(name))}</li>'
-            for index, name in enumerate(SCORE_NAMES)
-        )
-        + "</ul>"
+    legend = chart_legend(
+        [(f"series-{index}", humanize(name)) for index, name in enumerate(SCORE_NAMES)]
     )
     return card(
         "".join(elements)
         + legend
-        + table(
-            ["Bucket start", "Bucket end", *[humanize(name) for name in SCORE_NAMES]],
-            rows,
-            caption="Text alternative: score averages and sample counts",
+        + disclosure(
+            "Data table: score averages and sample counts",
+            table(
+                ["Bucket start", "Bucket end", *[humanize(name) for name in SCORE_NAMES]],
+                rows,
+                caption="Text alternative: score averages and sample counts",
+            ),
         ),
         heading="Score averages",
     )
 
 
 def risk_chart(identifier: str, buckets: tuple[TrendBucket, ...]) -> str:
-    width, height, left, top = 960, 260, 70, 25
-    plot_width, plot_height = 870, 190
-    step = plot_width / len(buckets)
+    step = PLOT_WIDTH / len(buckets)
     elements = chart_shell(
         f"{identifier}-risk-title",
         f"{identifier}-risk-description",
         "Risky-session rate",
         "Bars show risky-session rate among current analyzed sessions. Missing bars mean the "
         "rate is unavailable.",
-        width,
-        height,
     )
-    elements.append(axis_markup(left, top, plot_width, plot_height))
+    elements.append(chart_frame([(0.0, "0%"), (0.5, "50%"), (1.0, "100%")], x_ticks(buckets, step)))
     for index, bucket in enumerate(buckets):
         rate = bucket.metrics.risky_session_rate
         if rate is None:
             continue
-        bar_height = rate * plot_height
+        bar_width = min(step * 0.5, 20.0)
+        x = PLOT_LEFT + (index + 0.5) * step - bar_width / 2
+        bar_height = rate * PLOT_HEIGHT
+        title = (
+            f"{bucket_label(bucket)}: {bucket.metrics.risky_sessions} of "
+            f"{bucket.metrics.current_analyzed} current analyzed risky ({percent(rate)})"
+        )
         elements.append(
-            f'<rect class="risk-bar" aria-hidden="true" '
-            f'x="{left + index * step + step * 0.15:.2f}" '
-            f'y="{top + plot_height - bar_height:.2f}" width="{step * 0.7:.2f}" '
-            f'height="{bar_height:.2f}"></rect>'
+            bar_mark(x, PLOT_BASE - bar_height, bar_width, bar_height, "risk-bar", title)
         )
     elements.append("</svg></div>")
     rows = [
@@ -419,16 +506,19 @@ def risk_chart(identifier: str, buckets: tuple[TrendBucket, ...]) -> str:
     ]
     return card(
         "".join(elements)
-        + table(
-            [
-                "Bucket start",
-                "Bucket end",
-                "Risky sessions",
-                "Current analyzed denominator",
-                "Rate",
-            ],
-            rows,
-            caption="Text alternative: risky-session rates and denominators",
+        + disclosure(
+            "Data table: risky-session rates and denominators",
+            table(
+                [
+                    "Bucket start",
+                    "Bucket end",
+                    "Risky sessions",
+                    "Current analyzed denominator",
+                    "Rate",
+                ],
+                rows,
+                caption="Text alternative: risky-session rates and denominators",
+            ),
         ),
         heading="Risky-session rate",
     )
@@ -439,22 +529,116 @@ def chart_shell(
     description_id: str,
     title: str,
     description: str,
-    width: int,
-    height: int,
 ) -> list[str]:
     return [
         '<div class="chart-scroll">'
         f'<svg class="trend-chart" role="img" aria-labelledby="{attr(title_id)} '
-        f'{attr(description_id)}" viewBox="0 0 {width} {height}">',
+        f'{attr(description_id)}" viewBox="0 0 {CHART_WIDTH} {CHART_HEIGHT}">',
         f'<title id="{attr(title_id)}">{text(title)}</title>',
         f'<desc id="{attr(description_id)}">{text(description)}</desc>',
     ]
 
 
-def axis_markup(left: int, top: int, width: int, height: int) -> str:
+def chart_frame(
+    y_ticks: Iterable[tuple[float, str]],
+    x_tick_positions: Iterable[tuple[float, str]],
+) -> str:
+    parts = []
+    for fraction, label in y_ticks:
+        y = PLOT_TOP + (1 - fraction) * PLOT_HEIGHT
+        if fraction > 0:
+            parts.append(
+                f'<line class="grid-h" aria-hidden="true" x1="{PLOT_LEFT}" y1="{y:.2f}" '
+                f'x2="{PLOT_LEFT + PLOT_WIDTH}" y2="{y:.2f}"></line>'
+            )
+        parts.append(
+            f'<text class="tick-label" aria-hidden="true" text-anchor="end" '
+            f'x="{PLOT_LEFT - 8}" y="{y + 3.5:.2f}">{text(label)}</text>'
+        )
+    parts.append(
+        f'<line class="axis" aria-hidden="true" x1="{PLOT_LEFT}" y1="{PLOT_BASE}" '
+        f'x2="{PLOT_LEFT + PLOT_WIDTH}" y2="{PLOT_BASE}"></line>'
+    )
+    for x, label in x_tick_positions:
+        parts.append(
+            f'<line class="axis" aria-hidden="true" x1="{x:.2f}" y1="{PLOT_BASE}" '
+            f'x2="{x:.2f}" y2="{PLOT_BASE + 4}"></line>'
+        )
+        parts.append(
+            f'<text class="tick-label" aria-hidden="true" text-anchor="middle" '
+            f'x="{x:.2f}" y="{PLOT_BASE + 18}">{text(label)}</text>'
+        )
+    return "".join(parts)
+
+
+def count_ticks(max_value: int) -> list[tuple[float, str]]:
+    values = sorted({0, round(max_value / 2), max_value})
+    return [(value / max_value, str(value)) for value in values]
+
+
+def x_ticks(buckets: tuple[TrendBucket, ...], step: float) -> list[tuple[float, str]]:
+    stride = max(1, math.ceil(len(buckets) / 7))
+    indices = list(range(0, len(buckets), stride))
+    last = len(buckets) - 1
+    if indices[-1] != last:
+        if last - indices[-1] < stride:
+            indices[-1] = last
+        else:
+            indices.append(last)
+    return [(PLOT_LEFT + (index + 0.5) * step, bucket_label(buckets[index])) for index in indices]
+
+
+def bucket_label(bucket: TrendBucket) -> str:
+    return bucket.start.date().isoformat() if bucket.start is not None else "n/a"
+
+
+def bar_mark(
+    x: float,
+    y_top: float,
+    width: float,
+    height: float,
+    css_class: str,
+    title: str,
+    *,
+    rounded_top: bool = True,
+) -> str:
+    height = max(height, 1.5)
+    radius = min(3.0, width / 2, height) if rounded_top else 0.0
+    if radius > 0.5:
+        shape = (
+            f'<path class="{css_class}" aria-hidden="true" d="M{x:.2f} {y_top + height:.2f} '
+            f"v{-(height - radius):.2f} q0 {-radius:.2f} {radius:.2f} {-radius:.2f} "
+            f"h{width - 2 * radius:.2f} q{radius:.2f} 0 {radius:.2f} {radius:.2f} "
+            f'v{height - radius:.2f} z">'
+        )
+        return shape + f"<title>{text(title)}</title></path>"
     return (
-        f'<path class="axis" aria-hidden="true" d="M {left} {top} V {top + height} '
-        f'H {left + width}"></path>'
+        f'<rect class="{css_class}" aria-hidden="true" x="{x:.2f}" y="{y_top:.2f}" '
+        f'width="{width:.2f}" height="{height:.2f}">'
+        f"<title>{text(title)}</title></rect>"
+    )
+
+
+def consecutive_runs(
+    points: list[tuple[int, float, int]],
+) -> list[list[tuple[int, float, int]]]:
+    runs: list[list[tuple[int, float, int]]] = []
+    for point in points:
+        if runs and point[0] == runs[-1][-1][0] + 1:
+            runs[-1].append(point)
+        else:
+            runs.append([point])
+    return runs
+
+
+def chart_legend(entries: list[tuple[str, str]]) -> str:
+    return (
+        '<ul class="legend">'
+        + "".join(
+            f'<li><span class="legend-key {key}"></span>{text(label)}</li>'
+            for key, label in entries
+        )
+        + "</ul>"
     )
 
 
