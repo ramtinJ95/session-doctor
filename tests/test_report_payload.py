@@ -190,7 +190,21 @@ def test_report_stale_analysis_is_successful_explicit_partial_output(tmp_path) -
         feature_value="1",
         score=1,
     )
-    store.replace_analysis_rows(stale_run, [], [stale_feature], [])
+    stale_file_feature = SessionFeature(
+        session_feature_id="stale-file-loop",
+        analysis_run_id=stale_run.analysis_run_id,
+        session_id=bundle.session.session_id,
+        feature_name="same_file_edited_repeatedly_count",
+        feature_value="2",
+        score=1,
+        evidence={
+            "paths": ["/private/STALE_FILE.py"],
+            "source_event_ids_by_path": {
+                "/private/STALE_FILE.py": ["event-1", "missing-stale-event"]
+            },
+        },
+    )
+    store.replace_analysis_rows(stale_run, [], [stale_feature, stale_file_feature], [])
     snapshot = store.load_diagnostic_snapshot(bundle.session.session_id)
     assert snapshot is not None
 
@@ -203,6 +217,9 @@ def test_report_stale_analysis_is_successful_explicit_partial_output(tmp_path) -
     assert report.classifications == []
     assert all(section.status == "unavailable" for section in report.evidence.values())
     assert report.ending.status == "unavailable"
+    assert report.sequence.evidence_markers == []
+    assert report.sequence.unresolved_evidence_markers == []
+    assert "STALE_FILE" not in report.model_dump_json()
     assert any(row.code == "analysis_stale" for row in report.limitations)
 
 

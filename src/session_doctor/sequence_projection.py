@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
 
-from session_doctor.diagnostic_models import DiagnosticSnapshot
+from session_doctor.diagnostic_models import AnalysisCompatibility, DiagnosticSnapshot
 from session_doctor.ids import stable_id
 from session_doctor.report_models import (
     ClassificationReferenceEvidence,
@@ -207,7 +207,8 @@ def evidence_marker_rows(
     ending: ReportEnding,
 ) -> tuple[list[SequenceEvidenceMarker], Counter[str]]:
     references = list(marker_references(scores, classifications, evidence, ending))
-    references.extend(file_loop_marker_references(snapshot))
+    if snapshot.analysis.compatibility is AnalysisCompatibility.CURRENT:
+        references.extend(file_loop_marker_references(snapshot))
     markers: list[SequenceEvidenceMarker] = []
     unresolved: Counter[str] = Counter()
     seen: set[tuple[str, str, str | None]] = set()
