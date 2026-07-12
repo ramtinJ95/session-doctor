@@ -116,7 +116,7 @@ def sequence_chart(sequence: SessionSequence) -> str:
     legend = (
         '<ul class="legend" aria-label="Sequence legend">'
         '<li><span class="legend-key"></span>Neutral activity density</li>'
-        '<li><span class="legend-key risk"></span>Failure or warning activity/marker</li>'
+        '<li><span class="legend-key risk"></span>Failure, warning, or negative evidence</li>'
         '<li><span class="legend-key evidence"></span>Neutral evidence marker</li>'
         "</ul>"
     )

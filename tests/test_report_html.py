@@ -72,6 +72,7 @@ def test_report_html_is_deterministic_semantic_offline_and_private(tmp_path) -> 
     assert "Text alternative: session sequence activity totals" in first
     assert 'class="marker marker-neutral"' in first
     assert 'class="marker marker-risk"' in first
+    assert "Failure, warning, or negative evidence" in first
     assert "Exact ending evidence references" in first
     assert report.ending.late_failed_command_ids[0] in first
     assert "Content-Security-Policy" in first
