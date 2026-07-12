@@ -16,6 +16,14 @@ LANES = (
     ("file_activity", "File activity", False),
     ("parse_warning", "Parse warnings", True),
 )
+RISK_MARKER_CATEGORIES = {
+    "command_failures",
+    "tool_failures",
+    "repeated_failures",
+    "repeated_file_edits",
+    "frustration_markers",
+    "stop_or_pause_markers",
+}
 
 
 def sequence_chart(sequence: SessionSequence) -> str:
@@ -75,15 +83,21 @@ def sequence_chart(sequence: SessionSequence) -> str:
     span = max(last - first, 1)
     for marker in sequence.evidence_markers:
         x = label_width + ((marker.record_index - first) / span) * plot_width
+        marker_class = (
+            "marker marker-risk"
+            if marker.category in RISK_MARKER_CATEGORIES
+            else "marker marker-neutral"
+        )
         elements.append(
-            f'<line class="marker" aria-hidden="true" x1="{x:.2f}" y1="{top - 7}" '
+            f'<line class="{marker_class}" aria-hidden="true" x1="{x:.2f}" '
+            f'y1="{top - 7}" '
             f'x2="{x:.2f}" '
             f'y2="{top + len(LANES) * lane_height}">'
             f"<title>{text(marker.category)} evidence {text(marker.evidence_id)} at "
             f"record {marker.record_index}</title></line>"
         )
         elements.append(
-            f'<circle class="marker" aria-hidden="true" cx="{x:.2f}" '
+            f'<circle class="{marker_class}" aria-hidden="true" cx="{x:.2f}" '
             f'cy="{top - 10}" r="3">'
             f"<title>{text(marker.category)} evidence marker</title></circle>"
         )
@@ -98,7 +112,8 @@ def sequence_chart(sequence: SessionSequence) -> str:
     legend = (
         '<ul class="legend" aria-label="Sequence legend">'
         '<li><span class="legend-key"></span>Neutral activity density</li>'
-        '<li><span class="legend-key risk"></span>Failure, warning, or evidence marker</li>'
+        '<li><span class="legend-key risk"></span>Failure or warning activity/marker</li>'
+        '<li><span class="legend-key evidence"></span>Neutral evidence marker</li>'
         "</ul>"
     )
     return (

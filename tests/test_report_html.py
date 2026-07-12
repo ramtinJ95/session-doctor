@@ -15,6 +15,7 @@ from session_doctor.schemas import AgentName, AnalysisRun, SessionFeature, Sessi
 from session_doctor.store import TABLE_NAMES, DuckDBStore
 
 runner = CliRunner()
+FIXTURE_ROOT = Path(__file__).parent / "fixtures"
 
 
 class StructureParser(HTMLParser):
@@ -68,11 +69,16 @@ def test_report_html_is_deterministic_semantic_offline_and_private(tmp_path) -> 
     evidence_sections_with_rows = sum(bool(section.items) for section in report.evidence.values())
     assert parser.details >= evidence_sections_with_rows
     assert "Text alternative: session sequence activity totals" in first
+    assert 'class="marker marker-neutral"' in first
+    assert 'class="marker marker-risk"' in first
+    assert "Exact ending evidence references" in first
+    assert report.ending.late_failed_command_ids[0] in first
     assert "Content-Security-Policy" in first
     assert "default-src &#x27;none&#x27;" in first
     assert "prefers-color-scheme: dark" in first
     assert "prefers-reduced-motion: reduce" in first
     assert "@media print" in first
+    assert "overflow-wrap: anywhere" in first
     assert "https://" not in first
     assert "http://" not in first
     assert "fetch(" not in first
@@ -345,6 +351,57 @@ def test_report_cli_rejects_symlink_and_unwritable_parent(tmp_path, monkeypatch)
     assert target.read_text() == "target"
     assert unwritable_result.exit_code == 2
     assert "parent directory is not writable" in unwritable_result.stdout
+
+
+def test_native_three_adapter_and_sidechain_html_smoke(tmp_path) -> None:
+    database_path = tmp_path / "native.duckdb"
+    for agent in ("codex", "claude", "pi"):
+        ingest = runner.invoke(
+            app,
+            [
+                "ingest",
+                "--agent",
+                agent,
+                "--source",
+                str(FIXTURE_ROOT / agent / "repeated-failure-session.jsonl"),
+                "--db",
+                str(database_path),
+            ],
+        )
+        assert ingest.exit_code == 0
+    topology = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "claude",
+            "--source",
+            str(FIXTURE_ROOT / "claude" / "topology"),
+            "--db",
+            str(database_path),
+        ],
+    )
+    assert topology.exit_code == 0
+    analysis = runner.invoke(app, ["analyze", "--all", "--db", str(database_path)])
+    assert analysis.exit_code == 0
+    store = DuckDBStore(database_path)
+    sessions = store.list_session_summaries()
+    sidechain_found = False
+
+    for session in sessions:
+        snapshot = store.load_diagnostic_snapshot(session.session_id)
+        assert snapshot is not None
+        sidechain_found |= snapshot.normalized.session.is_sidechain
+        output = tmp_path / f"{session.session_id}.html"
+        result = invoke_html(store, session.session_id, output)
+        assert result.exit_code == 0
+        html = output.read_text(encoding="utf-8")
+        assert html.startswith("<!doctype html>")
+        assert session.session_id in html
+        assert "Source record position does not imply" in html
+
+    assert {session.agent_name for session in sessions} == {"codex", "claude", "pi"}
+    assert sidechain_found
 
 
 def invoke_html(store: DuckDBStore, session_id: str, output: Path):
