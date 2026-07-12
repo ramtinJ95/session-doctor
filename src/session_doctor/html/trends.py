@@ -178,7 +178,7 @@ def calendar_views(name: str, cohort: TrendCohort) -> str:
         '<div data-calendar-view="volume">'
         f"{calendar_grid(cohort.calendar, 'volume', name)}"
         "</div>"
-        '<div data-calendar-view="risk" hidden>'
+        '<div data-calendar-view="risk">'
         f"{calendar_grid(cohort.calendar, 'risk', name)}"
         "</div>"
         f"{calendar_summary(cohort.calendar)}"
@@ -514,6 +514,7 @@ def cohort_judgments(name: str, cohort: TrendCohort) -> str:
             [
                 "Agent",
                 "Sessions",
+                "Current analyzed denominator",
                 "Current coverage",
                 "Risky-session rate",
                 *[humanize(name) for name in SCORE_NAMES],
@@ -522,6 +523,7 @@ def cohort_judgments(name: str, cohort: TrendCohort) -> str:
                 [
                     code(row.agent_name),
                     text(row.metrics.sessions),
+                    text(row.metrics.current_analyzed),
                     text(percent(row.metrics.current_analysis_coverage)),
                     text(percent(row.metrics.risky_session_rate)),
                     *[score_observation(row.metrics, score_name) for score_name in SCORE_NAMES],
