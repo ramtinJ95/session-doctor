@@ -27,10 +27,10 @@ from .cli_options import (
     database_info_for_path,
     database_path_from_option,
     database_path_is_valid,
+    html_output_path_from_options,
     os_access_writable,
     path_can_be_created,
     project_filters_from_options,
-    report_output_path_from_options,
     require_analysis_output_format,
     require_current_database_schema,
     require_existing_database_path,
@@ -38,6 +38,7 @@ from .cli_options import (
     require_positive_limit,
     require_report_output_format,
     require_summary_output_format,
+    require_trend_output_format,
     require_valid_database_path,
     scope_filters_from_options,
     source_selection_for_ingest,
@@ -66,7 +67,13 @@ from .cli_renderers import (
 from .config import supports_current_python
 from .graph_payload import graph_payload
 from .graph_projection import project_graph
-from .html import HtmlRenderError, HtmlWriteError, render_report_html, write_html
+from .html import (
+    HtmlRenderError,
+    HtmlWriteError,
+    render_report_html,
+    render_trends_html,
+    write_html,
+)
 from .ingest_workflow import IngestSummary, ingest_sources
 from .integration_assets import IntegrationAssetError, session_doctor_skill_directory
 from .report_payload import build_session_report
@@ -541,11 +548,19 @@ def trends(
     ] = 10,
     output_format: Annotated[
         str,
-        typer.Option("--format", help="Output format: terminal or json."),
+        typer.Option("--format", help="Output format: terminal, json, or html."),
     ] = "terminal",
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            help="HTML destination to replace atomically. Required only for --format html.",
+        ),
+    ] = None,
 ) -> None:
     """Show deterministic project-level session trends."""
-    require_summary_output_format(output_format)
+    require_trend_output_format(output_format)
+    html_output = html_output_path_from_options(output_format, output)
     filters = trend_filters_from_options(agent, project, bucket, periods, limit)
     database_path = database_path_from_option(db)
     require_valid_database_path(database_path)
@@ -553,6 +568,16 @@ def trends(
     require_current_database_schema(database_path)
     report = DuckDBStore(database_path).trends(filters)
 
+    if output_format == "html":
+        assert html_output is not None
+        try:
+            html_document = render_trends_html(report)
+            write_html(html_output, html_document)
+        except (HtmlRenderError, HtmlWriteError):
+            console.print("[red]Could not write HTML trends dashboard.[/red]")
+            raise typer.Exit(1) from None
+        typer.echo(f"Wrote HTML trends dashboard: {html_output}")
+        return
     if output_format == "json":
         typer.echo(json.dumps(trend_payload(report), indent=2, sort_keys=True))
         return
@@ -649,7 +674,7 @@ def report(
     """Generate a privacy-safe exact-session diagnostic report."""
     require_report_output_format(output_format)
     require_positive_limit(limit)
-    html_output = report_output_path_from_options(output_format, output)
+    html_output = html_output_path_from_options(output_format, output)
     database_path = database_path_from_option(db)
     require_valid_database_path(database_path)
     require_existing_database_path(database_path)
