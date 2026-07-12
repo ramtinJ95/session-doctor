@@ -77,8 +77,12 @@ def build_session_report(
     session = snapshot.normalized.session
     project_hint, project_hint_source = display_project_hint(session.project_path, session.cwd)
     current = snapshot.analysis.compatibility.value == "current"
+    evidence_items = build_evidence_items(snapshot, show_text=show_text) if current else {}
     evidence = (
-        build_evidence(snapshot, limit=limit, show_text=show_text)
+        {
+            section: bounded_evidence(evidence_items[section], limit)
+            for section in EVIDENCE_SECTION_ORDER
+        }
         if current
         else {
             section: unavailable_evidence(f"analysis_{snapshot.analysis.compatibility.value}")
@@ -144,7 +148,7 @@ def build_session_report(
             snapshot,
             scores=scores,
             classifications=classifications,
-            evidence=evidence,
+            evidence=evidence_items,
             ending=ending,
         ),
         evidence=evidence,
@@ -207,23 +211,19 @@ def classification_rows(snapshot: DiagnosticSnapshot) -> list[ReportClassificati
     ]
 
 
-def build_evidence(
+def build_evidence_items(
     snapshot: DiagnosticSnapshot,
     *,
-    limit: int,
     show_text: bool,
-) -> dict[str, BoundedEvidence]:
-    result: dict[str, BoundedEvidence] = {}
+) -> dict[str, list[EvidenceItem]]:
+    result: dict[str, list[EvidenceItem]] = {}
     for section, feature_name in MESSAGE_SECTIONS.items():
-        items = message_signal_items(snapshot, feature_name, show_text)
-        result[section] = bounded_evidence(items, limit)
-    result["command_failures"] = bounded_evidence(command_failure_items(snapshot), limit)
-    result["tool_failures"] = bounded_evidence(tool_failure_items(snapshot), limit)
-    result["repeated_failures"] = bounded_evidence(failure_group_items(snapshot), limit)
-    result["repeated_file_edits"] = bounded_evidence(file_loop_items(snapshot), limit)
-    result["classification_evidence"] = bounded_evidence(
-        classification_reference_items(snapshot), limit
-    )
+        result[section] = list(message_signal_items(snapshot, feature_name, show_text))
+    result["command_failures"] = list(command_failure_items(snapshot))
+    result["tool_failures"] = list(tool_failure_items(snapshot))
+    result["repeated_failures"] = list(failure_group_items(snapshot))
+    result["repeated_file_edits"] = list(file_loop_items(snapshot))
+    result["classification_evidence"] = list(classification_reference_items(snapshot))
     return result
 
 
@@ -358,6 +358,11 @@ def failure_group_items(snapshot: DiagnosticSnapshot) -> list[FailureGroupEviden
                     for event_id in source_event_ids
                     if event_id in snapshot.indexes.raw_events_by_id
                 ],
+                unresolved_source_event_ids=[
+                    event_id
+                    for event_id in source_event_ids
+                    if event_id not in snapshot.indexes.raw_events_by_id
+                ],
             )
         )
     items.sort(key=lambda item: (item.group_type, item.fingerprint))
@@ -394,7 +399,21 @@ def file_loop_items(snapshot: DiagnosticSnapshot) -> list[FileLoopEvidence]:
                 edit_count=len(activities),
                 file_activity_ids=sorted(row.file_activity_id for row in activities),
                 source_event_ids=sorted(
-                    {row.source_event_id for row in activities if row.source_event_id is not None}
+                    {
+                        event_id
+                        for event_id in (
+                            source_event_ids
+                            or [row.source_event_id for row in activities if row.source_event_id]
+                        )
+                        if event_id in snapshot.indexes.raw_events_by_id
+                    }
+                ),
+                unresolved_source_event_ids=sorted(
+                    {
+                        event_id
+                        for event_id in source_event_ids
+                        if event_id not in snapshot.indexes.raw_events_by_id
+                    }
                 ),
             )
         )

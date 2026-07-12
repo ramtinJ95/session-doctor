@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime
 
@@ -18,6 +19,7 @@ from session_doctor.diagnostic_models import (
     RecurrenceTemporalExclusions,
 )
 from session_doctor.ids import stable_id
+from session_doctor.report_models import FailureGroupEvidence, FileLoopEvidence
 from session_doctor.report_payload import build_session_report
 from session_doctor.report_renderers import render_session_report_markdown
 from session_doctor.schemas import AgentName, AnalysisRun, SessionFeature, SessionSource
@@ -111,6 +113,50 @@ def test_report_show_text_discloses_only_displayed_evidence_messages(tmp_path) -
     assert all(
         section.omitted == section.total - section.displayed for section in report.evidence.values()
     )
+    complete_markers = build_session_report(snapshot, limit=10).sequence.evidence_markers
+    assert report.sequence.evidence_markers == complete_markers
+
+
+def test_report_sequence_preserves_unresolved_group_and_file_markers(tmp_path) -> None:
+    store, session_id = analyzed_store(tmp_path)
+    snapshot = store.load_diagnostic_snapshot(session_id)
+    assert snapshot is not None
+    replaced_features = []
+    for feature in snapshot.analysis.session_features:
+        evidence = deepcopy(feature.evidence)
+        if feature.feature_name == "repeated_failure_count":
+            groups = evidence.get("groups")
+            assert isinstance(groups, list)
+            for group in groups:
+                assert isinstance(group, dict)
+                group["source_event_ids"] = [
+                    *group.get("source_event_ids", []),
+                    "missing-failure-event",
+                ]
+        elif feature.feature_name == "same_file_edited_repeatedly_count":
+            evidence = {
+                "paths": ["/tmp/example.py"],
+                "source_event_ids_by_path": {
+                    "/tmp/example.py": ["event-4", "event-7", "missing-file-event"]
+                },
+            }
+        replaced_features.append(feature.model_copy(update={"evidence": evidence}))
+    snapshot = replace(
+        snapshot,
+        analysis=replace(snapshot.analysis, session_features=tuple(replaced_features)),
+    )
+
+    report = build_session_report(snapshot)
+
+    failure_item = report.evidence["repeated_failures"].items[0]
+    file_item = report.evidence["repeated_file_edits"].items[0]
+    assert isinstance(failure_item, FailureGroupEvidence)
+    assert isinstance(file_item, FileLoopEvidence)
+    assert failure_item.unresolved_source_event_ids == ["missing-failure-event"]
+    assert file_item.unresolved_source_event_ids == ["missing-file-event"]
+    unresolved = {row.category: row.count for row in report.sequence.unresolved_evidence_markers}
+    assert unresolved["repeated_failures"] >= 1
+    assert unresolved["repeated_file_edits"] >= 1
 
 
 def test_report_stale_analysis_is_successful_explicit_partial_output(tmp_path) -> None:
