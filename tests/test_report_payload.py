@@ -43,6 +43,7 @@ def test_report_payload_is_stable_explainable_and_private_by_default(tmp_path) -
         "summary",
         "scores",
         "classifications",
+        "sequence",
         "evidence",
         "ending",
         "project_context",
@@ -50,7 +51,7 @@ def test_report_payload_is_stable_explainable_and_private_by_default(tmp_path) -
         "review_actions",
         "limitations",
     ]
-    assert report.schema_version == 1
+    assert report.schema_version == 2
     assert report.analysis.status == "current"
     assert [row.name for row in report.scores] == [
         "friction_score",
@@ -60,6 +61,32 @@ def test_report_payload_is_stable_explainable_and_private_by_default(tmp_path) -
         "project_complexity_signal",
     ]
     assert all(row.component_values for row in report.scores)
+    assert report.sequence.ordering_basis == "source_record_order"
+    assert report.sequence.first_record_index == 1
+    assert report.sequence.last_record_index == 10
+    assert report.sequence.total_resolved_activities == 10
+    assert report.sequence.total_unresolved_activities == 0
+    assert len(report.sequence.bins) == 10
+    assert (
+        sum(sum(bin_row.counts.model_dump().values()) for bin_row in report.sequence.bins)
+        == report.sequence.total_resolved_activities
+    )
+    assert report.sequence.resolved_activity_counts.model_dump() == {
+        "user_message": 4,
+        "assistant_message": 1,
+        "tool_call": 0,
+        "tool_result": 0,
+        "tool_failure": 1,
+        "command_success": 0,
+        "command_failure": 2,
+        "command_unknown": 0,
+        "file_activity": 2,
+        "parse_warning": 0,
+    }
+    assert report.sequence.evidence_markers == sorted(
+        report.sequence.evidence_markers,
+        key=lambda row: (row.record_index, row.category, row.evidence_id, row.source_event_id),
+    )
     assert report.privacy.message_text_included is False
     assert "Please fix the failing pytest" not in serialized
     assert "I will run the tests" not in serialized
@@ -249,7 +276,7 @@ def test_report_cli_supports_all_formats_without_mutating_store(tmp_path) -> Non
     terminal_result = runner.invoke(app, ["report", session_id, "--db", str(store.database_path)])
 
     assert json_result.exit_code == 0
-    assert json.loads(json_result.stdout)["schema_version"] == 1
+    assert json.loads(json_result.stdout)["schema_version"] == 2
     assert markdown_result.exit_code == 0
     assert markdown_result.stdout.startswith("# Session report")
     assert terminal_result.exit_code == 0

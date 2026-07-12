@@ -39,6 +39,7 @@ from session_doctor.report_models import (
     ToolFailureEvidence,
 )
 from session_doctor.schemas import SessionFeature
+from session_doctor.sequence_projection import build_session_sequence
 from session_doctor.store.aggregate_queries import SCORE_NAMES
 
 MESSAGE_SECTIONS = {
@@ -139,6 +140,13 @@ def build_session_report(
         ),
         scores=scores,
         classifications=classifications,
+        sequence=build_session_sequence(
+            snapshot,
+            scores=scores,
+            classifications=classifications,
+            evidence=evidence,
+            ending=ending,
+        ),
         evidence=evidence,
         ending=ending,
         project_context=project_context,

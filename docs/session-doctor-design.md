@@ -84,6 +84,13 @@ implementation slice.
 As of the current repository state, Phase 5 deterministic feature hardening,
 Phase 6 classification scoring, Phase 7 aggregate summaries, Phase 8
 project-level trends, and Phase 9 reports/graph projection are implemented.
+The exact-session report JSON contract is schema version 2. It includes a
+bounded `sequence` projection ordered by source record index, with fixed
+activity categories, explicit unresolved counts, and exact evidence markers.
+The trend JSON contract includes complete per-day `calendar` cells for each
+top-level and sidechain cohort. Calendar dates use stored timezone-naive
+observed datetimes, include zero-session dates in the selected window, and keep
+analysis coverage and risky-session denominators explicit.
 The repository has a working local CLI for ingesting and analyzing Codex, Pi,
 and Claude Code root/subagent logs. Claude discovery also classifies metadata,
 persisted tool results, memory, and auxiliary files. Related sidecars are

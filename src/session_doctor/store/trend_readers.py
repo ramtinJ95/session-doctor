@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import duckdb
@@ -25,6 +25,7 @@ from .trend_models import (
     AnalysisCompatibilityCounts,
     AnalyzerVersionCount,
     ClassificationAggregate,
+    DailyCalendarCell,
     ProjectObservation,
     ProjectObservations,
     ScoreAggregate,
@@ -107,8 +108,8 @@ def build_trend_report(
         window=window,
         scope=scope,
         cohorts=TrendCohorts(
-            top_level=build_cohort(top_level_rows, intervals, filters),
-            sidechain=build_cohort(sidechain_rows, intervals, filters),
+            top_level=build_cohort(top_level_rows, intervals, window, filters),
+            sidechain=build_cohort(sidechain_rows, intervals, window, filters),
         ),
         projects=project_observations(windowed_rows, filters.limit),
         recurring_patterns=read_recurring_patterns(connection, filters, window, rows),
@@ -242,6 +243,7 @@ def compatibility_counts(rows: tuple[SessionTrendRow, ...]) -> AnalysisCompatibi
 def build_cohort(
     rows: tuple[SessionTrendRow, ...],
     intervals: tuple[tuple[datetime, datetime], ...],
+    window: TrendWindow,
     filters: TrendFilters,
 ) -> TrendCohort:
     totals = metrics_for_rows(rows)
@@ -272,7 +274,44 @@ def build_cohort(
         )
         for agent_name in sorted({row.agent_name for row in rows})
     )
-    return TrendCohort(totals=totals, buckets=buckets, judgments=judgments, agents=agents)
+    return TrendCohort(
+        totals=totals,
+        buckets=buckets,
+        calendar=daily_calendar(rows, window),
+        judgments=judgments,
+        agents=agents,
+    )
+
+
+def daily_calendar(
+    rows: tuple[SessionTrendRow, ...],
+    window: TrendWindow,
+) -> tuple[DailyCalendarCell, ...]:
+    if window.start is None or window.end is None:
+        return ()
+    rows_by_date: dict[date, list[SessionTrendRow]] = {}
+    for row in rows:
+        if row.started_at is not None:
+            rows_by_date.setdefault(row.started_at.date(), []).append(row)
+    cells: list[DailyCalendarCell] = []
+    start = window.start
+    while start < window.end:
+        end = start + timedelta(days=1)
+        metrics = metrics_for_rows(tuple(rows_by_date.get(start.date(), ())))
+        cells.append(
+            DailyCalendarCell(
+                observed_date=start.date(),
+                start=start,
+                end=end,
+                sessions=metrics.sessions,
+                current_analyzed=metrics.current_analyzed,
+                stale_analysis=metrics.stale_analysis,
+                never_analyzed=metrics.never_analyzed,
+                risky_sessions=metrics.risky_sessions,
+            )
+        )
+        start = end
+    return tuple(cells)
 
 
 def project_observations(
