@@ -30,6 +30,7 @@ from .cli_options import (
     os_access_writable,
     path_can_be_created,
     project_filters_from_options,
+    report_output_path_from_options,
     require_analysis_output_format,
     require_current_database_schema,
     require_existing_database_path,
@@ -65,6 +66,7 @@ from .cli_renderers import (
 from .config import supports_current_python
 from .graph_payload import graph_payload
 from .graph_projection import project_graph
+from .html import HtmlRenderError, HtmlWriteError, render_report_html, write_html
 from .ingest_workflow import IngestSummary, ingest_sources
 from .integration_assets import IntegrationAssetError, session_doctor_skill_directory
 from .report_payload import build_session_report
@@ -619,8 +621,15 @@ def report(
     ] = None,
     output_format: Annotated[
         str,
-        typer.Option("--format", help="Output format: terminal, markdown, or json."),
+        typer.Option("--format", help="Output format: terminal, markdown, json, or html."),
     ] = "terminal",
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            help="HTML destination to replace atomically. Required only for --format html.",
+        ),
+    ] = None,
     limit: Annotated[
         int,
         typer.Option("--limit", help="Maximum rows per bounded evidence section."),
@@ -640,6 +649,7 @@ def report(
     """Generate a privacy-safe exact-session diagnostic report."""
     require_report_output_format(output_format)
     require_positive_limit(limit)
+    html_output = report_output_path_from_options(output_format, output)
     database_path = database_path_from_option(db)
     require_valid_database_path(database_path)
     require_existing_database_path(database_path)
@@ -655,6 +665,16 @@ def report(
         snapshot.normalized.session.agent_name.value, expected_agent_name
     )
     payload = build_session_report(snapshot, limit=limit, show_text=show_text)
+    if output_format == "html":
+        assert html_output is not None
+        try:
+            html_document = render_report_html(payload)
+            write_html(html_output, html_document)
+        except (HtmlRenderError, HtmlWriteError):
+            console.print("[red]Could not write HTML report.[/red]")
+            raise typer.Exit(1) from None
+        typer.echo(f"Wrote HTML report: {html_output}")
+        return
     if output_format == "json":
         typer.echo(payload.model_dump_json(indent=2))
         return

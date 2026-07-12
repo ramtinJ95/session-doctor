@@ -105,10 +105,42 @@ def require_summary_output_format(output_format: str) -> None:
 
 
 def require_report_output_format(output_format: str) -> None:
-    if output_format in {"terminal", "markdown", "json"}:
+    if output_format in {"terminal", "markdown", "json", "html"}:
         return
-    console.print("[red]Invalid --format:[/red] expected terminal, markdown, or json")
+    console.print("[red]Invalid --format:[/red] expected terminal, markdown, json, or html")
     raise typer.Exit(2)
+
+
+def report_output_path_from_options(
+    output_format: str,
+    output: Path | None,
+) -> Path | None:
+    if output_format != "html":
+        if output is not None:
+            console.print("[red]Invalid --output:[/red] only supported with --format html")
+            raise typer.Exit(2)
+        return None
+    if output is None:
+        console.print("[red]Missing --output:[/red] required with --format html")
+        raise typer.Exit(2)
+    destination = output.expanduser()
+    if destination.suffix.lower() not in {".html", ".htm"}:
+        console.print("[red]Invalid --output:[/red] expected an .html or .htm file")
+        raise typer.Exit(2)
+    try:
+        if not destination.parent.exists() or not destination.parent.is_dir():
+            console.print("[red]Invalid --output:[/red] parent directory does not exist")
+            raise typer.Exit(2)
+        if not os_access_writable(destination.parent):
+            console.print("[red]Invalid --output:[/red] parent directory is not writable")
+            raise typer.Exit(2)
+        if destination.is_symlink() or (destination.exists() and not destination.is_file()):
+            console.print("[red]Invalid --output:[/red] destination must be a regular file")
+            raise typer.Exit(2)
+    except OSError:
+        console.print("[red]Invalid --output:[/red] destination could not be inspected")
+        raise typer.Exit(2) from None
+    return destination
 
 
 def require_graph_output_format(output_format: str) -> None:
