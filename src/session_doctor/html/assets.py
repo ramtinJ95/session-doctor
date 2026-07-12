@@ -66,7 +66,7 @@ h3 { margin-top: 0; font-size: 1.1rem; }
 .lede, .muted { color: var(--muted); }
 .section { margin-block: var(--space-6); scroll-margin-top: var(--space-4); }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); gap: var(--space-4); }
-.card { min-width: 0; padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
+.card { min-width: 0; padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); overflow-wrap: anywhere; }
 .card > :last-child { margin-bottom: 0; }
 .status-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .badge { display: inline-flex; align-items: center; border: 1px solid currentColor; border-radius: 999px; padding: .12rem .55rem; font-size: .8rem; font-weight: 700; letter-spacing: .02em; }
@@ -91,10 +91,13 @@ progress::-moz-progress-bar { background: var(--accent); }
 .sequence-chart .lane-label { fill: var(--muted); font-size: 12px; }
 .sequence-chart .activity { fill: var(--accent); }
 .sequence-chart .activity-risk { fill: var(--risk); }
-.sequence-chart .marker { stroke: var(--risk); stroke-width: 1.5; fill: var(--surface); }
+.sequence-chart .marker { stroke-width: 1.5; fill: var(--surface); }
+.sequence-chart .marker-neutral { stroke: var(--accent); }
+.sequence-chart .marker-risk { stroke: var(--risk); }
 .legend { display: flex; flex-wrap: wrap; gap: var(--space-3); padding: 0; list-style: none; color: var(--muted); font-size: .88rem; }
 .legend-key { display: inline-block; width: .8rem; height: .8rem; margin-right: var(--space-1); background: var(--accent); border-radius: 2px; }
 .legend-key.risk { background: var(--risk); }
+.legend-key.evidence { background: transparent; border-left: 2px solid var(--accent); }
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: .92rem; }
 th, td { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
@@ -102,7 +105,7 @@ th { color: var(--muted); font-weight: 650; }
 code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .9em; overflow-wrap: anywhere; }
 details { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); margin-block: var(--space-3); }
 summary { cursor: pointer; padding: var(--space-3) var(--space-4); font-weight: 700; }
-details > .details-body { padding: 0 var(--space-4) var(--space-4); }
+details > .details-body { padding: 0 var(--space-4) var(--space-4); overflow-wrap: anywhere; }
 .empty { padding: var(--space-4); border: 1px dashed var(--border); border-radius: var(--radius); color: var(--muted); background: var(--surface-alt); }
 .notice { border-left: .3rem solid var(--unavailable); padding: var(--space-3) var(--space-4); background: var(--unavailable-soft); }
 .notice.risk { border-color: var(--risk); background: var(--risk-soft); }

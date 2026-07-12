@@ -455,14 +455,39 @@ def ending_recurrence_actions(report: SessionReport) -> str:
             ("Limitations", report.limitations),
         )
     )
+    ending_references = ending_reference_disclosure(ending)
     return (
         '<section class="section" aria-labelledby="ending-recurrence-actions">'
         '<h2 id="ending-recurrence-actions">Ending, recurrence, and actions</h2>'
         '<div class="grid">'
-        f"{card(ending_details, heading='Ending evidence')}"
+        f"{card(ending_details + ending_references, heading='Ending evidence')}"
         f"{card(project_context_summary(report), heading='Historical project context')}"
         "</div>"
         f"{recurrence_sections(report)}{recurrence_exclusions(report)}{statements}</section>"
+    )
+
+
+def ending_reference_disclosure(ending: ReportEnding) -> str:
+    groups = (
+        ("Resolved source events", ending.source_event_ids),
+        ("Unresolved source events", ending.unresolved_source_event_ids),
+        ("Late failed commands", ending.late_failed_command_ids),
+        ("Late parse warnings", ending.late_parse_warning_ids),
+    )
+    rows = [
+        [text(label), ", ".join(code(item) for item in identifiers)]
+        for label, identifiers in groups
+        if identifiers
+    ]
+    if not rows:
+        return '<p class="muted">No exact ending evidence references are available.</p>'
+    return disclosure(
+        "Exact ending evidence references",
+        table(
+            ["Reference category", "Persisted IDs"],
+            rows,
+            caption="Exact ending evidence and unresolved references",
+        ),
     )
 
 
