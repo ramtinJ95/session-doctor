@@ -1,0 +1,33 @@
+{
+  "schema_version": "boundary-pilot-manifest-v1",
+  "annotation_protocol_version": "annotation-protocol-v1",
+  "partition": "pilot_development",
+  "family_policy_status": "unavailable_until_pr12",
+  "episode_packet_generation": "blocked_until_frozen_boundaries_after_pr8",
+  "cases": [
+    {"pilot_case_id":"bp-001","adapter":"codex","fixture":"tests/fixtures/codex/basic-session.jsonl","region":0,"strata":["success","short"],"source_family_status":"unknown"},
+    {"pilot_case_id":"bp-002","adapter":"codex","fixture":"tests/fixtures/codex/basic-session.jsonl","region":1,"strata":["success","tool_use"],"source_family_status":"unknown"},
+    {"pilot_case_id":"bp-003","adapter":"codex","fixture":"tests/fixtures/codex/current-response-items.jsonl","region":0,"strata":["response_items","medium"],"source_family_status":"unknown"},
+    {"pilot_case_id":"bp-004","adapter":"codex","fixture":"tests/fixtures/codex/current-response-items.jsonl","region":1,"strata":["response_items","success"],"source_family_status":"unknown"},
+    {"pilot_case_id":"bp-005","adapter":"codex","fixture":"tests/fixtures/codex/current-response-item-ambiguities.jsonl","region":0,"strata":["prior_disagreement","ambiguous"],"source_family_status":"ambiguous"},
+    {"pilot_case_id":"bp-006","adapter":"codex","fixture":"tests/fixtures/codex/current-response-item-ambiguities.jsonl","region":1,"strata":["active","ambiguous"],"source_family_status":"ambiguous"},
+    {"pilot_case_id":"bp-007","adapter":"codex","fixture":"tests/fixtures/codex/event-msg-fallback.jsonl","region":0,"strata":["fallback","incomplete"],"source_family_status":"unknown"},
+    {"pilot_case_id":"bp-008","adapter":"codex","fixture":"tests/fixtures/codex/repeated-failure-session.jsonl","region":0,"strata":["repeated_failure","blocker"],"source_family_status":"unknown"},
+    {"pilot_case_id":"bp-009","adapter":"codex","fixture":"tests/fixtures/codex/repeated-failure-session.jsonl","region":1,"strata":["recovery_candidate","long"],"source_family_status":"unknown"},
+    {"pilot_case_id":"bp-010","adapter":"claude","fixture":"tests/fixtures/claude/basic-session.jsonl","region":0,"strata":["success","short"],"source_family_status":"unknown"},
+    {"pilot_case_id":"bp-011","adapter":"claude","fixture":"tests/fixtures/claude/basic-session.jsonl","region":1,"strata":["tool_use","delegation"],"source_family_status":"unknown"},
+    {"pilot_case_id":"bp-012","adapter":"claude","fixture":"tests/fixtures/claude/drift-and-warnings.jsonl","region":0,"strata":["parser_warning","incomplete"],"source_family_status":"unknown"},
+    {"pilot_case_id":"bp-013","adapter":"claude","fixture":"tests/fixtures/claude/drift-and-warnings.jsonl","region":1,"strata":["prior_disagreement","medium"],"source_family_status":"ambiguous"},
+    {"pilot_case_id":"bp-014","adapter":"claude","fixture":"tests/fixtures/claude/repeated-failure-session.jsonl","region":0,"strata":["repeated_failure","blocker"],"source_family_status":"unknown"},
+    {"pilot_case_id":"bp-015","adapter":"claude","fixture":"tests/fixtures/claude/repeated-failure-session.jsonl","region":1,"strata":["recovery_candidate","long"],"source_family_status":"unknown"},
+    {"pilot_case_id":"bp-016","adapter":"claude","fixture":"tests/fixtures/claude/repeated-failure-session.jsonl","region":2,"strata":["active","long"],"source_family_status":"unknown"},
+    {"pilot_case_id":"bp-017","adapter":"pi","fixture":"tests/fixtures/pi/basic-session.jsonl","region":0,"strata":["success","short"],"source_family_status":"unknown"},
+    {"pilot_case_id":"bp-018","adapter":"pi","fixture":"tests/fixtures/pi/basic-session.jsonl","region":1,"strata":["model_change","medium"],"source_family_status":"unknown"},
+    {"pilot_case_id":"bp-019","adapter":"pi","fixture":"tests/fixtures/pi/basic-session.jsonl","region":2,"strata":["tool_use","success"],"source_family_status":"unknown"},
+    {"pilot_case_id":"bp-020","adapter":"pi","fixture":"tests/fixtures/pi/repeated-failure-session.jsonl","region":0,"strata":["repeated_failure","blocker"],"source_family_status":"unknown"},
+    {"pilot_case_id":"bp-021","adapter":"pi","fixture":"tests/fixtures/pi/repeated-failure-session.jsonl","region":1,"strata":["recovery_candidate","long"],"source_family_status":"unknown"},
+    {"pilot_case_id":"bp-022","adapter":"pi","fixture":"tests/fixtures/pi/repeated-failure-session.jsonl","region":2,"strata":["active","incomplete"],"source_family_status":"unknown"},
+    {"pilot_case_id":"bp-023","adapter":"codex","fixture":"tests/fixtures/codex/event-msg-fallback.jsonl","region":1,"strata":["cross_adapter_parity","fallback"],"source_family_status":"unknown"},
+    {"pilot_case_id":"bp-024","adapter":"claude","fixture":"tests/fixtures/claude/drift-and-warnings.jsonl","region":2,"strata":["cross_adapter_parity","parser_warning"],"source_family_status":"unknown"}
+  ]
+}
