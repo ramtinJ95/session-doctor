@@ -164,7 +164,8 @@ def backfill_capture_history(connection: duckdb.DuckDBPyConnection) -> None:
         """
         SELECT b.snapshot_bundle_id, b.bundle_content_id, b.agent_name,
             b.native_session_identity, b.captured_at, s.logical_source_id,
-            s.capture_sequence, b.native_bundle_capture_sequence
+            s.capture_sequence, b.native_bundle_capture_sequence,
+            b.native_identity_status
         FROM snapshot_bundles AS b
         JOIN source_snapshots AS s ON s.snapshot_id = b.primary_snapshot_id
         LEFT JOIN bundle_capture_metadata AS c USING (snapshot_bundle_id)
@@ -183,18 +184,22 @@ def backfill_capture_history(connection: duckdb.DuckDBPyConnection) -> None:
         logical_source_id,
         _source_capture_sequence,
         _bundle_capture_sequence,
+        native_identity_status,
     ) in rows:
         lineage_id = stable_id("bundle-lineage", agent_name, native_identity, logical_source_id)
         previous = previous_by_lineage.get(lineage_id)
         sequence = previous[3] + 1 if previous else 1
         previous_bundle_id = previous[0] if previous else None
+        capture_status = (
+            "parse_failed" if native_identity_status == "fallback_parse_failed" else "complete"
+        )
         connection.execute(
             """
             INSERT INTO bundle_capture_metadata (
                 snapshot_bundle_id, lineage_id, lineage_capture_sequence,
                 previous_lineage_bundle_id, capture_started_at,
                 capture_completed_at, capture_status, evidence_json
-            ) VALUES (?, ?, ?, ?, ?, ?, 'complete', ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 bundle_id,
@@ -203,11 +208,12 @@ def backfill_capture_history(connection: duckdb.DuckDBPyConnection) -> None:
                 previous_bundle_id,
                 captured_at,
                 captured_at,
+                capture_status,
                 json.dumps({"migration": "schema-v5-to-v6"}),
             ],
         )
-        state = "possibly_active"
-        if (
+        state = "snapshot_incomplete" if capture_status == "parse_failed" else "possibly_active"
+        if capture_status == "complete" and (
             previous
             and previous[1] == content_id
             and int(_source_capture_sequence) == previous[4] + 1
