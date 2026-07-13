@@ -58,6 +58,30 @@ CLAUDE_METADATA_ONLY_TYPES = {
     "progress",
     "queue-operation",
 }
+
+
+def claude_topology_directory_members(directory: Path) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            str(path) for pattern in ("*.jsonl", "*.meta.json") for path in directory.glob(pattern)
+        )
+    )
+
+
+def trailing_json_record_malformed(path: Path, source_bytes: bytes) -> bool:
+    try:
+        lines = source_bytes.decode("utf-8").splitlines()
+    except UnicodeDecodeError as exc:
+        raise SourceFormatError(path, "source is not valid UTF-8") from exc
+    if not lines:
+        return False
+    try:
+        json.loads(lines[-1])
+    except json.JSONDecodeError:
+        return True
+    return False
+
+
 CLAUDE_MESSAGE_TYPES = {"assistant", "system", "user"}
 
 
@@ -214,7 +238,12 @@ class ClaudeCodeAdapter(BaseAdapter):
         topology_input_hashes: dict[str, str | None] | None = None
         topology_directory: Path | None = None
         topology_directory_members: tuple[str, ...] = ()
+        parse_incomplete_paths: set[Path] = set()
         if source.source_kind is SourceKind.ROOT_SESSION and session_dir.is_dir():
+            topology_directory = session_dir / "subagents"
+            topology_directory_members = claude_topology_directory_members(topology_directory)
+            source.metadata["capture_topology_directory"] = str(topology_directory)
+            source.metadata["capture_topology_directory_members"] = list(topology_directory_members)
             transcripts = sorted((session_dir / "subagents").glob("*.jsonl"))
             candidates.extend(transcripts)
             candidates.extend(candidate.with_suffix(".meta.json") for candidate in transcripts)
@@ -223,19 +252,15 @@ class ClaudeCodeAdapter(BaseAdapter):
                     transcript_bytes = transcript.read_bytes()
                     evidence_sources.append((transcript, transcript_bytes))
                     expected_hashes[transcript] = hashlib.sha256(transcript_bytes).hexdigest()
+                    if trailing_json_record_malformed(transcript, transcript_bytes):
+                        parse_incomplete_paths.add(transcript)
                 except OSError:
                     continue
         elif source.source_kind is SourceKind.SUBSESSION:
             candidates.append(source_path.with_suffix(".meta.json"))
             root_path = session_dir.parent / f"{session_dir.name}.jsonl"
             topology_directory = session_dir / "subagents"
-            topology_directory_members = tuple(
-                sorted(
-                    str(path)
-                    for pattern in ("*.jsonl", "*.meta.json")
-                    for path in topology_directory.glob(pattern)
-                )
-            )
+            topology_directory_members = claude_topology_directory_members(topology_directory)
             topology_paths = [root_path]
             topology_paths.extend(sorted((session_dir / "subagents").glob("*.jsonl")))
             topology_paths.extend(sorted((session_dir / "subagents").glob("*.meta.json")))
@@ -268,6 +293,11 @@ class ClaudeCodeAdapter(BaseAdapter):
                 for path in topology_paths
             }
             enrich_claude_sources(topology_sources, topology_bytes)
+            parse_incomplete_paths.update(
+                path
+                for path, content in topology_bytes.items()
+                if path.suffix == ".jsonl" and trailing_json_record_malformed(path, content)
+            )
             current = next(
                 (
                     candidate
@@ -291,7 +321,11 @@ class ClaudeCodeAdapter(BaseAdapter):
                         topology_bytes[parent_path]
                     ).hexdigest()
         for evidence_path, evidence_bytes in evidence_sources:
-            for line in evidence_bytes.decode("utf-8").splitlines():
+            try:
+                evidence_lines = evidence_bytes.decode("utf-8").splitlines()
+            except UnicodeDecodeError as exc:
+                raise SourceFormatError(evidence_path, "source is not valid UTF-8") from exc
+            for line in evidence_lines:
                 try:
                     record = json.loads(line)
                 except json.JSONDecodeError:
@@ -316,6 +350,8 @@ class ClaudeCodeAdapter(BaseAdapter):
                 member_metadata["capture_expected_sha256"] = expected_hashes[path]
             if topology_input_hashes is not None:
                 member_metadata["capture_topology_input_sha256"] = topology_input_hashes
+            if path in parse_incomplete_paths:
+                member_metadata["capture_parse_incomplete"] = True
             if topology_directory is not None:
                 member_metadata["capture_topology_directory"] = str(topology_directory)
                 member_metadata["capture_topology_directory_members"] = list(
