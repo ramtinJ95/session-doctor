@@ -29,6 +29,8 @@ BOUNDARY_CAPABILITIES = {"delegation_topology", "native_causal_links"}
 def export_boundary_packets(
     stored: StoredNormalization,
     foundation: SemanticFoundation,
+    *,
+    evaluation_corpus_id: str = "boundary-development-v1",
 ) -> tuple[EvaluationPacketExport, ...]:
     events = packet_events(stored)
     user_positions = [
@@ -43,6 +45,7 @@ def export_boundary_packets(
                 events,
                 left_position,
                 right_position,
+                evaluation_corpus_id,
             )
         )
     return tuple(exports)
@@ -54,6 +57,7 @@ def boundary_packet(
     events: list[PacketEvent],
     left_position: int,
     right_position: int,
+    evaluation_corpus_id: str,
 ) -> EvaluationPacketExport:
     left = events[left_position]
     right = events[right_position]
@@ -65,6 +69,7 @@ def boundary_packet(
             "right": right.source_event_id or right.evidence_id,
             "schema": EVALUATION_SCHEMA_VERSION,
             "protocol": ANNOTATION_PROTOCOL_VERSION,
+            "evaluation_corpus_id": evaluation_corpus_id,
         }
     )
     targets, redaction_terms = routing_identities(stored, foundation)
@@ -102,6 +107,7 @@ def boundary_packet(
     packet_id = digest_json(
         {
             "normalization_run_id": stored.run.normalization_run_id,
+            "evaluation_corpus_id": evaluation_corpus_id,
             "judge_packet": packet.model_dump(mode="json"),
         }
     )
@@ -111,6 +117,7 @@ def boundary_packet(
     routing = RoutingEnvelope(
         packet_id=packet_id,
         packet_kind=PacketKind.BOUNDARY,
+        evaluation_corpus_id=evaluation_corpus_id,
         normalization_run_id=stored.run.normalization_run_id,
         snapshot_bundle_id=stored.run.snapshot_bundle_id,
         target_model_identities=targets,
@@ -358,8 +365,12 @@ def load_boundary_pilot(manifest_path: Path) -> tuple[BoundaryPacket, ...]:
         if source is None:
             raise ValueError("pilot source is missing")
         turns = source["user_turns"]
-        structures = source["intervening_structures"]
-        if len(structures) != len(turns) - 1 or region < 0 or region >= len(structures):
+        intervening_events = source["intervening_events"]
+        if (
+            len(intervening_events) != len(turns) - 1
+            or region < 0
+            or region >= len(intervening_events)
+        ):
             raise ValueError("pilot region does not resolve to adjacent user turns")
         left = turns[region]
         right = turns[region + 1]
@@ -375,7 +386,8 @@ def load_boundary_pilot(manifest_path: Path) -> tuple[BoundaryPacket, ...]:
             pilot_event(packet_seed, left),
             pilot_event(packet_seed, right),
         ]
-        intervening_id = opaque_evidence_id(packet_seed, f"{source_id}-between-{region}")
+        intervening = intervening_events[region]
+        intervening_id = opaque_evidence_id(packet_seed, str(intervening["event_id"]))
         packet = BoundaryPacket(
             packet_id="",
             left_user_event_id=adjacent[0].evidence_id,
@@ -384,8 +396,13 @@ def load_boundary_pilot(manifest_path: Path) -> tuple[BoundaryPacket, ...]:
             intervening_normalized_events=[
                 PacketEvent(
                     evidence_id=intervening_id,
-                    entity_kind="pilot_intervening_structure",
-                    structure={"classification": structures[region]},
+                    source_event_id=intervening_id,
+                    entity_kind=str(intervening["entity_kind"]),
+                    role=(str(intervening["role"]) if "role" in intervening else None),
+                    text=(str(intervening["text"]) if "text" in intervening else None),
+                    structure={
+                        str(key): value for key, value in intervening.get("structure", {}).items()
+                    },
                 )
             ],
             bounded_context_events=[],
@@ -400,6 +417,57 @@ def load_boundary_pilot(manifest_path: Path) -> tuple[BoundaryPacket, ...]:
     if len({packet.packet_id for packet in packets}) != len(packets):
         raise ValueError("pilot packet identities are not unique")
     return tuple(packets)
+
+
+def export_boundary_pilot(
+    manifest_path: Path,
+    snapshot_bundle_id: str,
+) -> tuple[EvaluationPacketExport, ...]:
+    manifest = json.loads(manifest_path.read_text())
+    source_document = json.loads(
+        (manifest_path.parent / str(manifest["source_corpus"])).read_text()
+    )
+    corpus_content_id = digest_json({"manifest": manifest, "sources": source_document})
+    sources = {str(row["source_id"]): row for row in source_document["sources"]}
+    packets = load_boundary_pilot(manifest_path)
+    exports = []
+    for case, packet in zip(manifest["cases"], packets, strict=True):
+        source = sources[str(case["source_id"])]
+        targets = [
+            canonical_json(
+                {
+                    "model": str(source["target_model"]),
+                    "provider": str(source["target_provider"]),
+                }
+            )
+        ]
+        unsigned_packet = packet.model_copy(update={"packet_id": ""})
+        packet_id = digest_json(
+            {
+                "pilot_corpus_content_id": corpus_content_id,
+                "evaluation_corpus_id": manifest["manifest_version"],
+                "judge_packet": unsigned_packet.model_dump(mode="json"),
+            }
+        )
+        packet = packet.model_copy(update={"packet_id": packet_id})
+        judge_json = canonical_json(packet.model_dump(mode="json"))
+        exports.append(
+            EvaluationPacketExport(
+                routing=RoutingEnvelope(
+                    packet_id=packet_id,
+                    packet_kind=PacketKind.BOUNDARY,
+                    evaluation_corpus_id=str(manifest["manifest_version"]),
+                    normalization_run_id=None,
+                    snapshot_bundle_id=snapshot_bundle_id,
+                    target_model_identities=targets,
+                    excluded_judge_identities=targets,
+                    identity_exposure_status=identity_exposure_status(judge_json, targets),
+                    judge_packet_hash=hashlib.sha256(judge_json.encode()).hexdigest(),
+                ),
+                judge_packet=packet,
+            )
+        )
+    return tuple(exports)
 
 
 def pilot_event(packet_seed: str, turn: dict[str, object]) -> PacketEvent:

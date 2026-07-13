@@ -62,7 +62,8 @@ class RoutingEnvelope(SessionDoctorModel):
     annotation_protocol_version: Literal["annotation-protocol-v1"] = ANNOTATION_PROTOCOL_VERSION
     packet_id: str
     packet_kind: PacketKind
-    normalization_run_id: str
+    evaluation_corpus_id: str
+    normalization_run_id: str | None
     snapshot_bundle_id: str
     source_family_id: str | None = None
     source_family_status: SourceFamilyStatus = SourceFamilyStatus.UNKNOWN
@@ -113,6 +114,25 @@ class BoundaryPacket(SessionDoctorModel):
     def validate_boundary_rubric(self) -> BoundaryPacket:
         if self.allowed_answers != ["ambiguous", "no_split", "split"]:
             raise ValueError("boundary packet answers are fixed by protocol")
+        if len(self.adjacent_user_turns) != 2 or any(
+            event.role != "user" for event in self.adjacent_user_turns
+        ):
+            raise ValueError("boundary packet requires exactly two adjacent user turns")
+        expected_anchors = [
+            event.source_event_id or event.evidence_id for event in self.adjacent_user_turns
+        ]
+        if [self.left_user_event_id, self.right_user_event_id] != expected_anchors:
+            raise ValueError("boundary anchors must match adjacent user turns")
+        event_ids = [
+            event.evidence_id
+            for event in (
+                self.adjacent_user_turns
+                + self.intervening_normalized_events
+                + self.bounded_context_events
+            )
+        ]
+        if len(event_ids) != len(set(event_ids)):
+            raise ValueError("boundary packet evidence IDs must be unique")
         return self
 
 
@@ -149,6 +169,22 @@ class JudgeAnnotation(SessionDoctorModel):
     rationale: str
     created_at: datetime
 
+    @model_validator(mode="after")
+    def validate_judge_provenance(self) -> JudgeAnnotation:
+        if not self.evidence_ids:
+            raise ValueError("judge annotation requires evidence")
+        if any(
+            not value.strip()
+            for value in (
+                self.judge_model,
+                self.judge_provider,
+                self.judge_prompt_version,
+                self.rationale,
+            )
+        ):
+            raise ValueError("judge identity, prompt, and rationale must be nonblank")
+        return self
+
 
 class JudgePanelResolution(SessionDoctorModel):
     judge_panel_resolution_id: str
@@ -175,8 +211,12 @@ class AuditSelection(SessionDoctorModel):
 
 
 class AuditProtocol(SessionDoctorModel):
+    audit_protocol_id: str
     annotation_protocol_version: Literal["annotation-protocol-v1"] = ANNOTATION_PROTOCOL_VERSION
+    evaluation_corpus_id: str
+    expected_packet_count: int = Field(gt=0)
     selection_seed_id: str
+    cohort_packet_ids: list[str]
     eligible_packet_ids: list[str]
     selected_packet_ids: list[str]
     frozen_at: datetime
@@ -195,6 +235,14 @@ class HumanAdjudication(SessionDoctorModel):
     evidence_ids: list[str]
     rationale: str
     reviewed_at: datetime
+
+    @model_validator(mode="after")
+    def validate_human_provenance(self) -> HumanAdjudication:
+        if not self.evidence_ids:
+            raise ValueError("human adjudication requires evidence")
+        if not self.reviewer_identity.strip() or not self.rationale.strip():
+            raise ValueError("human reviewer identity and rationale must be nonblank")
+        return self
 
 
 class ReferenceResolution(SessionDoctorModel):
