@@ -327,6 +327,7 @@ def normalization_status(
             summary.snapshot_bundle_id,
             adapter_name=adapter.name.value,
             adapter_version=adapter.version,
+            capability_declarations=adapter.capabilities,
         )
         status_payload = {
             "snapshot_id": snapshot_id,

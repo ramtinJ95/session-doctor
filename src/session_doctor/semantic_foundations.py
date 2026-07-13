@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+from collections.abc import Mapping
 from pathlib import Path
+from typing import cast
 
 from session_doctor.adapters import ParsedSessionBundle
-from session_doctor.ids import stable_id
 from session_doctor.schemas import (
     AdapterCapabilityDeclaration,
     CapabilityEvidence,
@@ -32,11 +35,17 @@ def derive_semantic_foundation(
     *,
     terminal_observed: bool,
     observed_vcs_root: str | None,
+    terminal_evidence_ids: tuple[str, ...] = (),
 ) -> SemanticFoundation:
     return SemanticFoundation(
         semantic_foundation_version=SEMANTIC_FOUNDATION_VERSION,
         ordering=derive_ordering(bundle),
-        capabilities=derive_capabilities(bundle, declarations, terminal_observed),
+        capabilities=derive_capabilities(
+            bundle,
+            declarations,
+            terminal_observed,
+            terminal_evidence_ids,
+        ),
         project_identity=derive_project_identity(bundle, observed_vcs_root),
         model_identity=derive_model_identity(bundle),
         usage=derive_usage_projection(bundle),
@@ -44,15 +53,38 @@ def derive_semantic_foundation(
 
 
 def derive_ordering(bundle: ParsedSessionBundle) -> OrderingProjection:
+    source_indexes: set[tuple[str, int]] = set()
+    for event in bundle.raw_events:
+        source_index = (event.source_id, event.record_index)
+        if source_index in source_indexes:
+            raise ValueError(
+                f"duplicate source record index: {event.source_id}:{event.record_index}"
+            )
+        source_indexes.add(source_index)
     ordered_events = sorted(
         bundle.raw_events,
-        key=lambda event: (event.source_id, event.record_index, event.event_id),
+        key=lambda event: (event.source_id, event.record_index),
     )
+    native_id_groups: dict[tuple[str, str], list[str]] = {}
+    for event in ordered_events:
+        if event.native_event_id is not None:
+            native_id_groups.setdefault((event.source_id, event.native_event_id), []).append(
+                event.event_id
+            )
     native_ids = {
-        (event.source_id, event.native_event_id): event.event_id
-        for event in ordered_events
-        if event.native_event_id is not None
+        key: event_ids[0] for key, event_ids in native_id_groups.items() if len(event_ids) == 1
     }
+    ambiguous_native_ids = sorted(
+        native_id
+        for (_source_id, native_id), event_ids in native_id_groups.items()
+        if len(event_ids) > 1
+    )
+    unresolved_parent_event_ids = sorted(
+        event.event_id
+        for event in ordered_events
+        if event.native_parent_id is not None
+        and (event.source_id, event.native_parent_id) not in native_ids
+    )
     edges = sorted(
         (
             CausalOrderEdge(
@@ -76,6 +108,8 @@ def derive_ordering(bundle: ParsedSessionBundle) -> OrderingProjection:
             for event in ordered_events
         ],
         causal_edges=edges,
+        ambiguous_native_event_ids=ambiguous_native_ids,
+        unresolved_parent_event_ids=unresolved_parent_event_ids,
     )
 
 
@@ -83,12 +117,12 @@ def derive_capabilities(
     bundle: ParsedSessionBundle,
     declarations: tuple[AdapterCapabilityDeclaration, ...],
     terminal_observed: bool,
+    terminal_evidence_ids: tuple[str, ...] = (),
 ) -> list[CapabilityEvidence]:
+    ordering = derive_ordering(bundle)
     evidence_by_capability = {
-        "native_causal_links": sorted(
-            event.event_id for event in bundle.raw_events if event.native_parent_id is not None
-        ),
-        "terminal_evidence": ["native-terminal"] if terminal_observed else [],
+        "native_causal_links": sorted(edge.child_event_id for edge in ordering.causal_edges),
+        "terminal_evidence": (sorted(set(terminal_evidence_ids)) if terminal_observed else []),
         "delegation_topology": (
             [bundle.session.session_id]
             if bundle.session is not None and bundle.session.parent_session_id is not None
@@ -182,16 +216,33 @@ def derive_model_identity(bundle: ParsedSessionBundle) -> ModelIdentity:
     models: set[str] = set()
     if bundle.session is not None:
         if bundle.session.model:
-            models.add(bundle.session.model)
+            models.add(model_identity_key(bundle.session.model_provider, bundle.session.model))
         metadata_models = bundle.session.metadata.get("models")
         if isinstance(metadata_models, list):
-            models.update(value for value in metadata_models if isinstance(value, str) and value)
-    models.update(row.model for row in bundle.model_usage if row.model)
+            for value in metadata_models:
+                add_model_value(models, value)
+        model_changes = bundle.session.metadata.get("model_changes")
+        if isinstance(model_changes, list):
+            for value in model_changes:
+                add_model_value(models, value)
     models.update(
-        value
-        for message in bundle.messages
-        if isinstance((value := message.metadata.get("model")), str) and value
+        model_identity_key(row.provider, row.model) for row in bundle.model_usage if row.model
     )
+    for message in bundle.messages:
+        model = message.metadata.get("model")
+        provider = message.metadata.get("provider")
+        if isinstance(model, str) and model:
+            models.add(
+                model_identity_key(
+                    provider if isinstance(provider, str) else None,
+                    model,
+                )
+            )
+    models = {
+        value
+        for value in models
+        if "/" in value or not any(other.endswith(f"/{value}") for other in models)
+    }
     ordered_models = sorted(models)
     state = (
         ModelIdentityState.UNKNOWN
@@ -201,6 +252,28 @@ def derive_model_identity(bundle: ParsedSessionBundle) -> ModelIdentity:
         else ModelIdentityState.MIXED_MODELS
     )
     return ModelIdentity(state=state, models=ordered_models)
+
+
+def add_model_value(models: set[str], value: object) -> None:
+    if isinstance(value, str) and value:
+        models.add(value)
+        return
+    if not isinstance(value, Mapping):
+        return
+    mapping = cast(Mapping[str, object], value)
+    model = mapping.get("model")
+    provider = mapping.get("provider")
+    if isinstance(model, str) and model:
+        models.add(
+            model_identity_key(
+                provider if isinstance(provider, str) else None,
+                model,
+            )
+        )
+
+
+def model_identity_key(provider: str | None, model: str) -> str:
+    return f"{provider}/{model}" if provider else model
 
 
 def derive_usage_projection(bundle: ParsedSessionBundle) -> UsageProjection:
@@ -213,15 +286,9 @@ def derive_usage_projection(bundle: ParsedSessionBundle) -> UsageProjection:
 
 
 def semantic_analysis_identity(components: SemanticAnalysisComponents) -> str:
-    return stable_id(
-        components.normalization_run_id,
-        components.lifecycle_observation_id,
-        components.lifecycle_policy_version,
-        components.ordering_version,
-        components.segmentation_version,
-        components.relation_rule_set_version,
-        components.result_rule_set_version,
-        components.finding_rule_set_version,
-        components.facet_policy_version,
-        components.configuration_hash,
-    )
+    payload = json.dumps(
+        components.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()

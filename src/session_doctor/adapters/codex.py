@@ -106,6 +106,16 @@ class CodexAdapter(BaseAdapter):
                 latest_task_event = str(payload_type)
         return latest_task_event == "task_complete"
 
+    def terminal_evidence_ids(self, bundle: ParsedSessionBundle) -> tuple[str, ...]:
+        task_events = [
+            event
+            for event in bundle.raw_events
+            if event.metadata.get("payload_type") in {"task_started", "task_complete"}
+        ]
+        if not task_events or task_events[-1].metadata.get("payload_type") != "task_complete":
+            return ()
+        return (task_events[-1].event_id,)
+
     def parse_source(self, source: SessionSource, source_bytes: bytes) -> ParsedSessionBundle:
         source_path = Path(source.source_path).expanduser()
         valid_records, malformed_warnings = read_codex_jsonl(source, source_path, source_bytes)

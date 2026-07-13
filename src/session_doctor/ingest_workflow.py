@@ -128,6 +128,7 @@ def ingest_sources(
                 observed_vcs_root = observe_vcs_root(
                     bundle.session.cwd if bundle.session is not None else None
                 )
+                terminal_evidence_ids = adapter.terminal_evidence_ids(bundle)
             except Exception as exc:
                 if isinstance(exc, BundleMemberCaptureError):
                     bundle_members = exc.members
@@ -197,6 +198,7 @@ def ingest_sources(
             captured_bundle,
             adapter_version=adapter.version,
             capability_declarations=adapter.capabilities,
+            terminal_evidence_ids=terminal_evidence_ids,
         )
 
         source_kind = session_source.source_kind.value

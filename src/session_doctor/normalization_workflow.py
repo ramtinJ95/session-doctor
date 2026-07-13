@@ -36,4 +36,5 @@ def normalize_snapshot(
         bundle,
         adapter_version=adapter.version,
         capability_declarations=adapter.capabilities,
+        terminal_evidence_ids=adapter.terminal_evidence_ids(bundle),
     )

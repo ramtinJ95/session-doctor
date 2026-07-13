@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass
@@ -84,6 +85,27 @@ def normalization_identity(
     )
 
 
+def normalization_configuration_hash(
+    base_configuration_hash: str,
+    declarations: tuple[AdapterCapabilityDeclaration, ...],
+) -> str:
+    capability_names = [row.capability for row in declarations]
+    if len(capability_names) != len(set(capability_names)):
+        raise NormalizationConflictError("duplicate adapter capability declaration")
+    payload = json.dumps(
+        {
+            "base_configuration_hash": base_configuration_hash,
+            "capabilities": [
+                row.model_dump(mode="json")
+                for row in sorted(declarations, key=lambda item: item.capability)
+            ],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
 def persist_normalization(
     database_path: Path,
     snapshot_bundle_id: str,
@@ -94,6 +116,7 @@ def persist_normalization(
     normalization_version: str = NORMALIZATION_VERSION,
     configuration_hash: str = NORMALIZATION_CONFIGURATION_HASH,
     capability_declarations: tuple[AdapterCapabilityDeclaration, ...] = (),
+    terminal_evidence_ids: tuple[str, ...] = (),
 ) -> NormalizationRun:
     with write_connection(database_path) as connection, transaction(connection):
         return persist_normalization_rows(
@@ -105,6 +128,7 @@ def persist_normalization(
             normalization_version,
             configuration_hash,
             capability_declarations,
+            terminal_evidence_ids,
         )
 
 
@@ -117,7 +141,11 @@ def persist_normalization_rows(
     normalization_version: str = NORMALIZATION_VERSION,
     configuration_hash: str = NORMALIZATION_CONFIGURATION_HASH,
     capability_declarations: tuple[AdapterCapabilityDeclaration, ...] = (),
+    terminal_evidence_ids: tuple[str, ...] = (),
 ) -> NormalizationRun:
+    configuration_hash = normalization_configuration_hash(
+        configuration_hash, capability_declarations
+    )
     bundle_row = connection.execute(
         """
         SELECT b.bundle_content_id, b.agent_name, c.evidence_json,
@@ -219,6 +247,7 @@ def persist_normalization_rows(
             lifecycle_evidence.get("terminal_observed") is True
             or str(bundle_row[3]) == "terminal_observed"
         ),
+        terminal_evidence_ids=terminal_evidence_ids,
         observed_vcs_root=(observed_vcs_root if isinstance(observed_vcs_root, str) else None),
     )
     foundation_json = canonical_model_json(foundation)
@@ -325,7 +354,11 @@ def normalization_coverage(
     adapter_version: str,
     normalization_version: str = NORMALIZATION_VERSION,
     configuration_hash: str = NORMALIZATION_CONFIGURATION_HASH,
+    capability_declarations: tuple[AdapterCapabilityDeclaration, ...] = (),
 ) -> NormalizationCoverage:
+    configuration_hash = normalization_configuration_hash(
+        configuration_hash, capability_declarations
+    )
     with read_connection(database_path) as connection:
         rows = connection.execute(
             """

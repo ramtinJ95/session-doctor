@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from session_doctor.adapters import ParsedSessionBundle
 from session_doctor.adapters.codex import CodexAdapter
 from session_doctor.schemas import (
@@ -90,6 +92,30 @@ def test_concurrent_sources_remain_partial_order() -> None:
     assert ordering.causal_edges == []
 
 
+def test_ambiguous_native_ids_and_duplicate_source_indexes_do_not_guess() -> None:
+    observed_at = datetime(2026, 7, 13, 12, 0, tzinfo=UTC)
+    ambiguous = ParsedSessionBundle(
+        raw_events=[
+            raw_event("first", "source-1", 0, observed_at, native_event_id="shared"),
+            raw_event("second", "source-1", 1, observed_at, native_event_id="shared"),
+            raw_event("child", "source-1", 2, observed_at, native_parent_id="shared"),
+        ]
+    )
+    ordering = derive_ordering(ambiguous)
+    assert ordering.causal_edges == []
+    assert ordering.ambiguous_native_event_ids == ["shared"]
+    assert ordering.unresolved_parent_event_ids == ["child"]
+
+    duplicate_index = ParsedSessionBundle(
+        raw_events=[
+            raw_event("first", "source-1", 0, observed_at),
+            raw_event("second", "source-1", 0, observed_at),
+        ]
+    )
+    with pytest.raises(ValueError, match="duplicate source record index"):
+        derive_ordering(duplicate_index)
+
+
 def test_capability_support_does_not_turn_missing_evidence_into_zero() -> None:
     declaration = AdapterCapabilityDeclaration(
         capability="model_usage",
@@ -102,6 +128,20 @@ def test_capability_support_does_not_turn_missing_evidence_into_zero() -> None:
     assert evidence[0].support is CapabilitySupport.SUPPORTED
     assert evidence[0].evidence_status == "unavailable"
     assert evidence[0].evidence_ids == []
+    unresolved = ParsedSessionBundle(
+        raw_events=[
+            raw_event(
+                "child",
+                "source-1",
+                0,
+                datetime(2026, 7, 13, 12, 0, tzinfo=UTC),
+                native_parent_id="missing",
+            )
+        ]
+    )
+    causal_declaration = declaration.model_copy(update={"capability": "native_causal_links"})
+    causal = derive_capabilities(unresolved, (causal_declaration,), False)
+    assert causal[0].evidence_status == "unavailable"
 
 
 def test_project_identity_precedence_and_observed_vcs_root(tmp_path) -> None:
@@ -167,6 +207,7 @@ def test_ingestion_observed_vcs_identity_is_persisted(tmp_path) -> None:
         captured_bundle.snapshot_bundle_id,
         adapter_name="codex",
         adapter_version=CodexAdapter.version,
+        capability_declarations=CodexAdapter.capabilities,
     )
     assert coverage.current_normalization_run_id is not None
 
@@ -183,11 +224,18 @@ def test_model_and_usage_states_preserve_mixed_and_unavailable() -> None:
         source_id="source-1",
         agent_name=AgentName.CODEX,
         model="model-a",
+        model_provider="provider-a",
+        metadata={
+            "model_changes": [
+                {"provider": "provider-b", "model": "model-b"},
+            ]
+        },
     )
     cumulative = ModelUsage(
         model_usage_id="usage-1",
         session_id=session.session_id,
         model="model-b",
+        provider="provider-b",
         aggregation_semantics=UsageSemantics.CUMULATIVE,
     )
     incremental = ModelUsage(
@@ -205,7 +253,7 @@ def test_model_and_usage_states_preserve_mixed_and_unavailable() -> None:
     usage = derive_usage_projection(bundle)
 
     assert model_identity.state is ModelIdentityState.MIXED_MODELS
-    assert model_identity.models == ["model-a", "model-b"]
+    assert model_identity.models == ["provider-a/model-a", "provider-b/model-b"]
     assert usage.aggregation is UsageSemantics.AGGREGATION_UNAVAILABLE
     assert (
         derive_usage_projection(ParsedSessionBundle()).aggregation

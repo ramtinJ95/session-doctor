@@ -83,6 +83,9 @@ class BaseAdapter(ABC):
     def terminal_observed(self, source: SessionSource, source_bytes: bytes) -> bool:
         return False
 
+    def terminal_evidence_ids(self, bundle: ParsedSessionBundle) -> tuple[str, ...]:
+        return ()
+
     def bundle_member_sources(
         self, source: SessionSource, source_bytes: bytes
     ) -> tuple[tuple[SessionSource, str], ...]:

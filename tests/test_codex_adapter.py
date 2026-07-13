@@ -9,8 +9,15 @@ from session_doctor.adapters.codex import (
     CodexAdapter,
 )
 from session_doctor.adapters.codex_files import file_activities_from_patch_event
+from session_doctor.adapters.codex_tools import model_usage_from_token_count
 from session_doctor.ids import source_id_for_path, stable_id
-from session_doctor.schemas import AgentName, NormalizedRole, SessionSource
+from session_doctor.schemas import (
+    AgentName,
+    NormalizedRole,
+    RawEvent,
+    SessionSource,
+    UsageSemantics,
+)
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "codex"
 
@@ -38,6 +45,30 @@ def test_codex_terminal_state_uses_latest_task_lifecycle_event() -> None:
     assert adapter.terminal_observed(source, fixture_bytes) is True
     assert adapter.terminal_observed(source, resumed) is False
     assert adapter.terminal_observed(source, completed_again) is True
+
+
+def test_codex_turn_membership_is_not_a_parent_edge() -> None:
+    fixture_path = FIXTURE_DIR / "basic-session.jsonl"
+    bundle = CodexAdapter().parse_live_source(source_for_fixture(fixture_path))
+    task_event = next(
+        event for event in bundle.raw_events if event.metadata.get("payload_type") == "task_started"
+    )
+
+    assert task_event.native_parent_id is None
+    assert task_event.metadata["turn_id"] == "turn-1"
+
+
+def test_codex_empty_token_count_is_aggregation_unavailable() -> None:
+    event = RawEvent(
+        event_id="event-1",
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+        record_index=0,
+    )
+
+    usage = model_usage_from_token_count("session-1", event, {"info": {}})
+
+    assert usage.aggregation_semantics is UsageSemantics.AGGREGATION_UNAVAILABLE
 
 
 def test_codex_parse_source_normalizes_core_records() -> None:

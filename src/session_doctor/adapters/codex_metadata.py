@@ -46,6 +46,22 @@ def extract_session_metadata(
     session_id = stable_id("session", AgentName.CODEX.value, source.source_path, native_session_id)
     cwd = string_value(latest_turn.get("cwd")) or string_value(session_meta.get("cwd"))
     model = string_value(latest_turn.get("model")) or string_value(session_meta.get("model"))
+    model_changes = [
+        {
+            "provider": string_value(turn.get("model_provider"))
+            or string_value(session_meta.get("model_provider")),
+            "model": string_value(turn.get("model")),
+        }
+        for turn in turn_contexts
+        if string_value(turn.get("model")) is not None
+    ]
+    if not model_changes and model is not None:
+        model_changes.append(
+            {
+                "provider": string_value(session_meta.get("model_provider")),
+                "model": model,
+            }
+        )
 
     session = Session(
         session_id=session_id,
@@ -64,6 +80,7 @@ def extract_session_metadata(
             "originator": string_value(session_meta.get("originator")),
             "source": string_value(session_meta.get("source")),
             "has_compaction": has_compaction,
+            "model_changes": model_changes,
         },
     )
     return CodexSessionMetadata(session=session, session_id=session_id)
