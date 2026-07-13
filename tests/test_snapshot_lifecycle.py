@@ -444,13 +444,33 @@ def test_schema_v5_history_is_backfilled_without_losing_raw_bytes(tmp_path) -> N
         )
         connection.execute(
             "INSERT INTO snapshot_bundles VALUES "
-            "('bundle-2', 'bundle-content-1', 'pi', 'native-1', 'snapshot-2', "
+            "('bundle-2', 'bundle-content-1', 'pi', 'parse-failed:source-1', 'snapshot-2', "
             "'observed', 2, 'bundle-1', ?)",
             [captured_at - timedelta(hours=1)],
         )
         connection.execute(
             "INSERT INTO snapshot_bundle_members VALUES "
             "('bundle-2', 'logical-1', 'snapshot-2', 0, 'primary', 'captured')"
+        )
+        connection.execute(
+            """
+            INSERT INTO source_snapshots VALUES (
+                'snapshot-3', 'source-1', 'pi', 'root_session',
+                '/sessions/source-1.jsonl', NULL, NULL, NULL, '{}', 'logical-1',
+                'blob-1', 'content-1', 3, ?, NULL, 'captured', 'snapshot-2'
+            )
+            """,
+            [captured_at + timedelta(hours=1)],
+        )
+        connection.execute(
+            "INSERT INTO snapshot_bundles VALUES "
+            "('bundle-3', 'bundle-content-1', 'pi', 'native-1', 'snapshot-3', "
+            "'observed', 3, 'bundle-2', ?)",
+            [captured_at + timedelta(hours=1)],
+        )
+        connection.execute(
+            "INSERT INTO snapshot_bundle_members VALUES "
+            "('bundle-3', 'logical-1', 'snapshot-3', 0, 'primary', 'captured')"
         )
 
     store = DuckDBStore(database_path)
@@ -465,11 +485,20 @@ def test_schema_v5_history_is_backfilled_without_losing_raw_bytes(tmp_path) -> N
             """
             SELECT snapshot_bundle_id, lineage_capture_sequence,
                 previous_lineage_bundle_id
-            FROM bundle_capture_metadata ORDER BY lineage_capture_sequence
+            FROM bundle_capture_metadata
+            WHERE lineage_id = (
+                SELECT lineage_id FROM bundle_capture_metadata
+                WHERE snapshot_bundle_id = 'bundle-1'
+            )
+            ORDER BY lineage_capture_sequence
             """
         ).fetchall()
         states = connection.execute(
             "SELECT state FROM lifecycle_observations ORDER BY snapshot_bundle_id"
         ).fetchall()
-    assert lineage == [("bundle-1", 1, None), ("bundle-2", 2, "bundle-1")]
-    assert states == [("possibly_active",), ("possibly_active",)]
+    assert lineage == [("bundle-1", 1, None), ("bundle-3", 2, "bundle-1")]
+    assert states == [
+        ("possibly_active",),
+        ("possibly_active",),
+        ("possibly_active",),
+    ]

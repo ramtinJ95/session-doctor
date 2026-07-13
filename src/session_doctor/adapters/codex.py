@@ -75,6 +75,7 @@ class CodexAdapter(BaseAdapter):
         ]
 
     def terminal_observed(self, source: SessionSource, source_bytes: bytes) -> bool:
+        latest_task_event: str | None = None
         for line in source_bytes.decode("utf-8").splitlines():
             try:
                 record = json.loads(line)
@@ -83,9 +84,12 @@ class CodexAdapter(BaseAdapter):
             if not isinstance(record, dict) or record.get("type") != "event_msg":
                 continue
             payload = record.get("payload")
-            if isinstance(payload, dict) and payload.get("type") == "task_complete":
-                return True
-        return False
+            if not isinstance(payload, dict):
+                continue
+            payload_type = payload.get("type")
+            if payload_type in {"task_started", "task_complete"}:
+                latest_task_event = str(payload_type)
+        return latest_task_event == "task_complete"
 
     def parse_source(self, source: SessionSource, source_bytes: bytes) -> ParsedSessionBundle:
         source_path = Path(source.source_path).expanduser()

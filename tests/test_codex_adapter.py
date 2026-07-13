@@ -23,6 +23,23 @@ def source_for_fixture(path: Path) -> SessionSource:
     )
 
 
+def test_codex_terminal_state_uses_latest_task_lifecycle_event() -> None:
+    fixture_path = FIXTURE_DIR / "basic-session.jsonl"
+    source = source_for_fixture(fixture_path)
+    fixture_bytes = fixture_path.read_bytes()
+    resumed = fixture_bytes + (
+        b'\n{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-2"}}'
+    )
+    completed_again = resumed + (
+        b'\n{"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-2"}}'
+    )
+
+    adapter = CodexAdapter()
+    assert adapter.terminal_observed(source, fixture_bytes) is True
+    assert adapter.terminal_observed(source, resumed) is False
+    assert adapter.terminal_observed(source, completed_again) is True
+
+
 def test_codex_parse_source_normalizes_core_records() -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
     bundle = CodexAdapter().parse_live_source(source_for_fixture(fixture_path))
