@@ -281,6 +281,13 @@ ModelIdentityKind
 UsageSemantics
   incremental | cumulative | unavailable
 
+ActionOutcome
+  success | ordinary_failure | policy_gate | timeout_or_cancelled | unknown
+
+OrdinaryFailureReason
+  command_not_found | permission | network | test_assertion
+  tool_reported_failure | unknown
+
 FacetTier
   none | low | medium | high
 
@@ -466,6 +473,15 @@ panel-dispute/panel-insufficient review. `source_audit_selection_id` follows the
 same rule for a final resolution. An audit never overwrites the unanimous panel
 record. Its human adjudication and the final reference resolution preserve
 whether consensus was confirmed, reversed, or left ambiguous.
+
+All referenced records must share `packet_id` and
+`annotation_protocol_version` with their referenced panel. An audit selection
+may reference only a unanimous panel. A consensus-audit human adjudication must
+reference a `selected` audit record for that same panel; dispute and insufficient
+adjudications must reference the corresponding disputed or insufficient panel
+and no audit record. A reference resolution may cite only panel, audit, and
+human records satisfying these co-reference rules. Imports reject cross-packet,
+cross-protocol, cross-panel, or status-incompatible links.
 
 ## Versioning And Determinism
 
