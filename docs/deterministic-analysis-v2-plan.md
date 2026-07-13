@@ -55,9 +55,11 @@ transcripts, the primary analysis unit.
   unresolved tooling blocker.
 - Approval and safety denials are separate policy-gate evidence, not ordinary
   tool failures.
-- Failure categories remain narrow and observable: command-not-found,
-  permission, network, test/assertion, policy gate, timeout/cancelled, and
-  unknown.
+- Action outcomes first separate `success`, `ordinary_failure`, `policy_gate`,
+  `timeout_or_cancelled`, and `unknown`. Only ordinary failures receive the
+  narrow reasons command-not-found, permission, network, test/assertion,
+  tool-reported failure, or unknown. Policy gates and cancellations never enter
+  ordinary-failure counts.
 
 ### Results And Validation
 
@@ -314,10 +316,12 @@ possibly_active
 snapshot_incomplete
 ```
 
-For sources without terminal markers, one capture remains `possibly_active`.
-A later ingestion observing the same content hash after the explicit settling
-interval changes the snapshot to `settled_unknown`. Ingestion never waits and
-re-reads implicitly.
+For sources without terminal markers, one capture produces a
+`possibly_active` lifecycle observation. A later ingestion observing the same
+content hash after the explicit settling interval creates a new
+`settled_unknown` lifecycle observation for the later bundle. Prior snapshots,
+lifecycle observations, and analyses remain unchanged. Ingestion never waits
+and re-reads implicitly.
 
 The latest active snapshot is still analyzed descriptively. Result state,
 efficiency totals, and unresolved-ending conclusions remain provisional and do
@@ -472,26 +476,42 @@ partial_progress
 blocked_unresolved
 stopped
 interrupted_unknown
-not_applicable
 unknown
 in_progress
 ```
 
-Initial precedence:
+Response-state precedence:
 
-1. active snapshot -> `in_progress`;
-2. explicit replacement without stop -> `interrupted_unknown`;
-3. explicit stop without later restart -> `stopped`;
-4. unresolved target blocker -> `blocked_unresolved`;
-5. scope-linked post-change validator ->
+1. a substantive assistant response in an explicit native final-response phase,
+   or the settled inferred-delivery rule defined above -> `delivered`;
+2. an explicit native completed response phase that records no assistant
+   response, or explicit task stop/replacement before any response to the
+   current request -> `missing`;
+3. a possibly-active latest episode with pending tool work or an unclosed
+   assistant turn and no delivery evidence -> `in_progress`;
+4. all other cases, including settled silence, adapter-unavailable final-phase
+   evidence, and incomplete trailing source -> `unknown`.
+
+Work-evidence precedence over captured evidence:
+
+1. explicit replacement without stop -> `interrupted_unknown`;
+2. explicit stop without later restart -> `stopped`;
+3. unresolved target blocker -> `blocked_unresolved`;
+4. scope-linked post-change validator ->
    `post_change_validation_observed`;
-6. recognized target operation success -> `operation_success_observed`;
-7. inspection evidence plus delivered response ->
+5. recognized target operation success -> `operation_success_observed`;
+6. inspection evidence plus delivered response ->
    `evidence_delivery_observed`;
-8. mutation without linked validation -> `change_observed_unvalidated`;
-9. other target-linked progress -> `partial_progress`;
-10. response-only informational episode -> `not_applicable` work state;
-11. insufficient evidence -> `unknown`.
+7. mutation without linked validation -> `change_observed_unvalidated`;
+8. other target-linked progress -> `partial_progress`;
+9. active latest episode with no captured work evidence -> `in_progress`;
+10. insufficient evidence, including response-only observed mode -> `unknown`.
+
+Lifecycle provisionality is orthogonal to both states. An active snapshot does
+not erase a captured blocker, mutation, validator, operation, or partial
+progress; it sets `provisional = true` and excludes the result from finalized
+rates. Finalized and provisional values are separate rows/identities, never two
+fields that silently overwrite one another.
 
 User acceptance is a separate delivery-certainty relation. It cannot promote
 work evidence to post-change validation.
@@ -896,7 +916,13 @@ Tests:
 - audit sample stable for one seed;
 - target model excluded from its judge panel;
 - routing identity never appears in a blind-eligible judge packet;
-- identity-exposed packets remain explicitly ineligible for blinded claims.
+- identity-exposed and target-identity-unverifiable packets remain explicitly
+  ineligible for the affected blinded claims;
+- pre-PR-12 packets represent family identity as unknown/ambiguous rather than
+  inventing a leakage family;
+- boundary and episode capabilities are task-minimized and anonymized;
+- panel consensus, audit selection, human adjudication, and final reference
+  resolution remain separate immutable records.
 
 Gate:
 
@@ -912,7 +938,10 @@ Deliverables:
 - implement explicit new-task override and ambiguous merge behavior;
 - remove v1 score/classification producer, rows, payloads, and tests;
 - change `analyze` to episode/lifecycle/observation output;
-- make summary, report, graph, and trends explicitly unavailable.
+- make summary, report, graph, trends, and `projects list` explicitly
+  unavailable;
+- update README, changelog, and the bundled integration skill to describe the
+  temporary command availability and remove all v1 labels/scores guidance.
 
 Tests:
 
@@ -923,6 +952,7 @@ Tests:
 - cross-session content remains separate; continuation relations are deferred
   to the relation framework;
 - unavailable commands fail with one deliberate message and no fallback.
+- public docs and integration guidance cannot invoke unavailable/v1 semantics.
 
 Gate:
 
@@ -936,8 +966,9 @@ Deliverables:
 - tune only segmentation rules against development references;
 - add accepted cases as synthetic regressions;
 - freeze a provisional segmentation version for relation development;
-- generate frozen episode packets from adjudicated boundaries for later result,
-  finding, and facet annotation.
+- freeze adjudicated boundary IDs and deterministic episode-evidence packet
+  inputs; do not assign task-specific packet IDs until each owning relation,
+  result, finding, or facet rubric and allowed-answer set is versioned.
 
 Gate:
 
@@ -1029,6 +1060,8 @@ Gate:
 Deliverables:
 
 - annotate and tune relation families separately;
+- generate relation-task packets from frozen episode evidence and the versioned
+  relation answer rubric;
 - audit broad repetition false positives and recovery/validation precision;
 - calibrate continuation/family identity before recurrence consumers exist;
 - add synthetic regressions;
@@ -1075,6 +1108,8 @@ Gate:
 Deliverables:
 
 - annotate/tune result precedence and support using frozen episode boundaries;
+- generate result-task packets from frozen episode evidence and the versioned
+  result answer rubric;
 - measure coverage, abstention, active false-finalization, and judge agreement;
 - add synthetic regressions;
 - run a fresh result checkpoint.
@@ -1112,6 +1147,8 @@ Gate:
 Deliverables:
 
 - annotate/tune one finding family at a time;
+- generate finding-task packets only after that finding rubric and allowed
+  answers are versioned;
 - audit attention precision and broad-repetition behavior;
 - add synthetic regressions;
 - run fresh finding checkpoints only for supported public findings.
@@ -1176,6 +1213,8 @@ Gate:
 Deliverables:
 
 - annotate facet tiers and pairwise orderings;
+- generate facet-task packets only after PR 17 freezes that facet rubric and
+  allowed answers;
 - tune one facet at a time;
 - audit length bias and missing-capability effects;
 - add synthetic regressions;
@@ -1219,6 +1258,8 @@ Gate:
 Deliverables:
 
 - restore summary with independent facet rank groups;
+- restore `projects list` as a normalization-only project identity view without
+  analysis coverage/version fields;
 - add total/eligible/active/unknown/mixed-model denominators;
 - add result/finding/facet distributions and recurring independent-family
   evidence;
@@ -1235,6 +1276,7 @@ Tests:
 - all three adapters represented with missing capability explicit.
 - delegated child episodes excluded from additive denominators while parent
   rollup includes their evidence once.
+- project listing works with no analysis rows and exposes identity provenance.
 
 Gate:
 
@@ -1280,7 +1322,8 @@ Deliverables:
 - define experimental-to-validated as a metadata-only release-state change;
 - rerun the full deterministic synthetic and end-to-end suite against the exact
   post-marker artifact before declaring completion;
-- update README, design, changelog, integration skill, and validation docs;
+- update README, design, changelog, integration skill, and validation docs from
+  their transition state to the validated complete v2 surface;
 - confirm v1 code/results are gone while durable raw snapshots remain.
 
 Gate:

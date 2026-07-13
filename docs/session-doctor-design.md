@@ -39,8 +39,8 @@ At PR 7:
 
 - v1 labels, scores, derived tables, payloads, and tests are deleted;
 - `analyze` switches to the episode/lifecycle/observation contract;
-- `summary`, `trends`, `report`, and `graph` remain registered but fail before
-  opening the database with exit code 2 and this message shape:
+- `summary`, `trends`, `report`, `graph`, and `projects list` remain registered
+  but fail before opening the database with exit code 2 and this message shape:
 
   ```text
   <command> is unavailable during the deterministic analysis v2 rebuild; see docs/deterministic-analysis-v2-plan.md.
@@ -48,19 +48,21 @@ At PR 7:
 
 - no command falls back to v1 or serves a partial v2 projection;
 - `version`, `doctor`, `adapters list`, `db init`, `db info`, `ingest`,
-  `sessions list`, `projects list`, and `integrations path` remain available;
+  `sessions list`, and `integrations path` remain available;
 - restored v2 analysis surfaces are marked experimental until PR 23 passes the
   untouched final-test gate.
 
-`projects list` remains available because it lists observed metadata rather
-than interpreting analytical results.
+`projects list` is unavailable because its current payload includes v1 analysis
+coverage/version fields. PR 21 restores it as a normalization-only project
+identity view with no derived-analysis dependency.
 
-Until PR 7 removes the dependent v1 projections, the implemented historical
-**Phase 11: Standalone Visual Reports And Trend Dashboards** contract remains
-in force: HTML renderers consume typed projections only, write one
-self-contained offline file, and do not query DuckDB. Graph remains JSON-only.
-The v2 report/graph/trend replacements inherit those output-safety constraints
-when PRs 20-22 restore them.
+### Phase 11: Standalone Visual Reports And Trend Dashboards
+
+Until PR 7 removes the dependent v1 projections, HTML renderers consume typed
+projections only, write one self-contained offline file, and do not query
+DuckDB. Graph remains JSON-only. These are current output-safety requirements,
+not references to the historical phase document. The v2 report/graph/trend
+replacements inherit them when PRs 20-22 restore those surfaces.
 
 ## Architecture
 
@@ -270,7 +272,6 @@ WorkEvidenceState
   blocked_unresolved
   stopped
   interrupted_unknown
-  not_applicable
   unknown
   in_progress
 
@@ -289,8 +290,20 @@ FamilyIdentityStatus
 AnnotationPacketKind
   boundary | episode
 
-AnnotationResolution
-  judge_consensus | human_review_required | human_resolved | ambiguous
+IdentityExposureStatus
+  blind_eligible | identity_exposed | target_identity_unverifiable
+
+JudgeConsensusStatus
+  unanimous | disputed | insufficient
+
+AuditSelectionStatus
+  not_selected | selected
+
+HumanReviewKind
+  judge_disagreement | consensus_audit
+
+ReferenceResolutionStatus
+  judge_consensus | human_resolved | ambiguous
 
 ReleaseState
   experimental | validated
@@ -313,13 +326,19 @@ annotation_protocol_version
 packet_id
 packet_kind
 source_family_id
+source_family_status
+family_policy_version
 target_model_identities
 excluded_judge_identities
 identity_exposure_status
 judge_packet_hash
 ```
 
-Routing identity is never included in a blind-eligible judge packet.
+`source_family_id` and `family_policy_version` are nullable while
+`source_family_status` is `unknown` or `ambiguous`; they become required only
+for an `established` family after PR 12. Routing identity is never included in
+a blind-eligible judge packet. `target_identity_unverifiable` is ineligible for
+any claim requiring exclusion of the target model from its own judge panel.
 
 ### Boundary Packet
 
@@ -333,7 +352,7 @@ right_user_event_id
 adjacent_user_turns
 intervening_normalized_events
 bounded_context_events
-capability_support
+anonymized_capability_support
 ```
 
 Allowed answers are `split`, `no_split`, and `ambiguous`. Evidence IDs must
@@ -386,6 +405,56 @@ Three distinct non-target judges form the default panel. Only unanimity becomes
 automatic judge consensus. Disagreement requires human review. A frozen random
 20% of unanimous pilot cases receives human audit. Human-unresolved cases may
 remain ambiguous.
+
+### Panel, Audit, And Human Adjudication
+
+Judge answers are immutable inputs. Consensus, audit selection, and final
+reference resolution are separate versioned records:
+
+```text
+JudgePanelResolution
+  schema_version
+  annotation_protocol_version
+  packet_id
+  judge_annotation_ids
+  consensus_status
+  unanimous_answer
+  resolved_at
+
+AuditSelection
+  schema_version
+  annotation_protocol_version
+  packet_id
+  selection_status
+  selection_seed_id
+  selection_reason
+  selected_at
+
+HumanAdjudication
+  schema_version
+  annotation_protocol_version
+  packet_id
+  review_kind
+  reviewer_identity
+  answer
+  evidence_ids
+  rationale
+  reviewed_at
+
+ReferenceResolution
+  schema_version
+  annotation_protocol_version
+  packet_id
+  resolution_status
+  answer
+  source_judge_panel_resolution_id
+  source_human_adjudication_ids
+  resolved_at
+```
+
+An audit never overwrites the unanimous panel record. Its human adjudication
+and the final reference resolution preserve whether consensus was confirmed,
+reversed, or left ambiguous.
 
 ## Versioning And Determinism
 
