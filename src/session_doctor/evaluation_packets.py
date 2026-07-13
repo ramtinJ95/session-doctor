@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 from importlib.resources import files
@@ -77,13 +78,15 @@ def boundary_packet(
         }
     )
     targets, redaction_terms = routing_identities(stored, foundation)
+    blinded_left = blind_event(left, redaction_terms, packet_seed)
+    blinded_right = blind_event(right, redaction_terms, packet_seed)
     packet = BoundaryPacket(
         packet_id="",
-        left_user_event_id=opaque_source_event_id(packet_seed, left),
-        right_user_event_id=opaque_source_event_id(packet_seed, right),
+        left_user_event_id=blinded_left.source_event_id or blinded_left.evidence_id,
+        right_user_event_id=blinded_right.source_event_id or blinded_right.evidence_id,
         adjacent_user_turns=[
-            blind_event(left, redaction_terms, packet_seed),
-            blind_event(right, redaction_terms, packet_seed),
+            blinded_left,
+            blinded_right,
         ],
         intervening_normalized_events=[
             blind_event(event, redaction_terms, packet_seed)
@@ -146,15 +149,16 @@ def packet_events(stored: StoredNormalization) -> list[PacketEvent]:
         text_length: int | None = None,
         structure: dict[str, object] | None = None,
     ) -> None:
+        resolved_source_event_id = source_event_id if source_event_id in record_indexes else None
         rows.append(
             (
-                record_indexes.get(source_event_id or "", 2**31 - 1),
+                record_indexes.get(resolved_source_event_id or "", 2**31 - 1),
                 entity_rank,
                 entity_order,
                 evidence_id,
                 PacketEvent(
                     evidence_id=evidence_id,
-                    source_event_id=source_event_id,
+                    source_event_id=resolved_source_event_id,
                     entity_kind=entity_kind,
                     role=role,
                     text=text,
@@ -232,13 +236,8 @@ def routing_identities(
         terms.add(model.model)
         if model.provider:
             terms.add(model.provider)
-    return targets, tuple(
-        sorted(
-            (term for term in terms if len(term) >= 3),
-            key=lambda term: len(term),
-            reverse=True,
-        )
-    )
+    redaction_terms: list[str] = [term for term in terms if term]
+    return targets, tuple(sorted(redaction_terms, key=lambda term: len(term), reverse=True))
 
 
 def blind_event(
@@ -293,6 +292,13 @@ def redact_value(value: object, terms: tuple[str, ...]) -> object:
 
 
 def replace_case_insensitive(value: str, target: str, replacement: str) -> str:
+    if len(target) < 3:
+        return re.sub(
+            rf"(?<!\w){re.escape(target)}(?!\w)",
+            replacement,
+            value,
+            flags=re.IGNORECASE,
+        )
     lower_value = value.casefold()
     lower_target = target.casefold()
     output: list[str] = []

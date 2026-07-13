@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -242,6 +243,50 @@ def test_boundary_packet_export_is_deterministic_blinded_and_preseal(tmp_path) -
         export_boundary_packets(stored, exposed_foundation)[0].routing.identity_exposure_status
         is IdentityExposureStatus.IDENTITY_EXPOSED
     )
+    messages_without_source = list(stored.bundle.messages)
+    messages_without_source[4] = messages_without_source[4].model_copy(
+        update={"source_event_id": None}
+    )
+    messages_without_source[1] = messages_without_source[1].model_copy(
+        update={"source_event_id": "missing-event"}
+    )
+    unresolved_stored = replace(
+        stored,
+        bundle=stored.bundle.model_copy(update={"messages": messages_without_source}),
+    )
+    unresolved_exports = export_boundary_packets(unresolved_stored, foundation)
+    unresolved_packet = unresolved_exports[-1].judge_packet
+    assert isinstance(unresolved_packet, BoundaryPacket)
+    assert unresolved_packet.adjacent_user_turns[1].source_event_id is None
+    assert (
+        unresolved_packet.right_user_event_id
+        == unresolved_packet.adjacent_user_turns[1].evidence_id
+    )
+    unresolved_boundary_packets = []
+    for exported in unresolved_exports:
+        assert isinstance(exported.judge_packet, BoundaryPacket)
+        unresolved_boundary_packets.append(exported.judge_packet)
+    unresolved_message = next(
+        event
+        for packet in unresolved_boundary_packets
+        for event in (packet.intervening_normalized_events + packet.bounded_context_events)
+        if event.text == "message 1"
+    )
+    assert unresolved_message.source_event_id is None
+
+    pi_messages = list(stored.bundle.messages)
+    pi_messages[0] = pi_messages[0].model_copy(
+        update={"text": "Use pi but preserve compile output"}
+    )
+    pi_stored = replace(
+        stored,
+        run=replace(stored.run, adapter_name="pi"),
+        bundle=stored.bundle.model_copy(update={"messages": pi_messages}),
+    )
+    pi_packet_json = canonical_json(
+        export_boundary_packets(pi_stored, foundation)[0].judge_packet.model_dump(mode="json")
+    )
+    assert "Use [identity_redacted] but preserve compile output" in pi_packet_json
 
 
 def test_judge_import_rejects_hallucinated_evidence_and_target_judge(tmp_path) -> None:

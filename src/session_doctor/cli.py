@@ -365,6 +365,10 @@ def evaluation_export_boundaries(
     database_path = database_path_from_option(db)
     require_valid_database_path(database_path)
     require_current_database_schema(database_path)
+    output = output.expanduser()
+    if output.exists() or not output.parent.is_dir():
+        console.print("[red]Evaluation export failed:[/red] output must be a new directory")
+        raise typer.Exit(1)
     store = DuckDBStore(database_path)
     stored = store.load_normalization(normalization_run_id)
     foundation = store.load_semantic_foundation(normalization_run_id)
@@ -374,11 +378,11 @@ def evaluation_export_boundaries(
     exports = export_boundary_packets(stored, foundation)
     try:
         register_evaluation_corpus(database_path, normalization_run_id, exports)
-        write_packet_exports(exports, output.expanduser())
+        write_packet_exports(exports, output)
     except (ValueError, EvaluationImportError) as exc:
         console.print(f"[red]Evaluation export failed:[/red] {exc}")
         raise typer.Exit(1) from exc
-    typer.echo(f"Exported {len(exports)} boundary packets: {output.expanduser()}")
+    typer.echo(f"Exported {len(exports)} boundary packets: {output}")
 
 
 @evaluation_app.command("export-episodes")
