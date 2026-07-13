@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import duckdb
 import pytest
+from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from session_doctor.adapters import ParsedSessionBundle
@@ -21,7 +24,11 @@ from session_doctor.evaluation_models import (
     JudgeConsensusStatus,
     ReferenceResolutionStatus,
 )
-from session_doctor.evaluation_packets import canonical_json, export_boundary_packets
+from session_doctor.evaluation_packets import (
+    canonical_json,
+    export_boundary_packets,
+    load_boundary_pilot,
+)
 from session_doctor.ids import stable_id
 from session_doctor.schemas import (
     AgentName,
@@ -39,15 +46,23 @@ from session_doctor.store import (
     EvaluationImportError,
     SnapshotPruneBlocked,
     create_reference_resolution,
+    freeze_audit_protocol,
     import_human_adjudication,
     import_judge_annotation,
     register_evaluation_packet,
     resolve_judge_panel,
     select_panel_audit,
 )
-from session_doctor.store.evaluation import audit_bucket
+from session_doctor.store.migrations import SCHEMA_VERSION, rebuild_derived_schema
 
 runner = CliRunner()
+
+
+def first_audit_packet(seed: str, exports: tuple[EvaluationPacketExport, ...]) -> str:
+    return min(
+        (row.routing.packet_id for row in exports),
+        key=lambda packet_id: hashlib.sha256(f"{seed}\0{packet_id}".encode()).hexdigest(),
+    )
 
 
 def evaluation_fixture(
@@ -80,14 +95,10 @@ def evaluation_fixture(
             agent_name=source.agent_name,
             record_index=index,
         )
-        for index in range(5)
+        for index in range(11)
     ]
     roles = [
-        NormalizedRole.USER,
-        NormalizedRole.ASSISTANT,
-        NormalizedRole.USER,
-        NormalizedRole.ASSISTANT,
-        NormalizedRole.USER,
+        NormalizedRole.USER if index % 2 == 0 else NormalizedRole.ASSISTANT for index in range(11)
     ]
     messages = [
         Message(
@@ -156,7 +167,7 @@ def annotation(
 
 def test_boundary_packet_export_is_deterministic_blinded_and_preseal(tmp_path) -> None:
     store, exports, normalization_run_id = evaluation_fixture(tmp_path)
-    assert len(exports) == 2
+    assert len(exports) == 5
     first = exports[0]
     assert isinstance(first.judge_packet, BoundaryPacket)
     stored = store.load_normalization(normalization_run_id)
@@ -174,8 +185,14 @@ def test_boundary_packet_export_is_deterministic_blinded_and_preseal(tmp_path) -
     assert first.routing.source_family_id is None
     assert first.routing.family_policy_version is None
     assert first.routing.source_family_status == "unknown"
-    assert first.judge_packet.left_user_event_id == "event-0"
-    assert first.judge_packet.right_user_event_id == "event-2"
+    assert first.judge_packet.left_user_event_id.startswith("ev_")
+    assert "event-0" not in judge_json
+    assert first.judge_packet.right_user_event_id.startswith("ev_")
+    redacted_text = "Ask [identity_redacted] [identity_redacted] via [identity_redacted]"
+    assert (
+        first.judge_packet.adjacent_user_turns[0].text_hash
+        == hashlib.sha256(redacted_text.encode()).hexdigest()
+    )
     unknown_foundation = foundation.model_copy(
         update={
             "model_identity": ModelIdentity(
@@ -228,6 +245,15 @@ def test_judge_import_rejects_hallucinated_evidence_and_target_judge(tmp_path) -
     )
     with pytest.raises(EvaluationImportError, match="cannot judge"):
         import_judge_annotation(store.database_path, target_judge)
+    target_variant = target_judge.model_copy(
+        update={
+            "judge_annotation_id": "target-variant",
+            "judge_provider": " TARGET-PROVIDER ",
+            "judge_model": "Target-Model",
+        }
+    )
+    with pytest.raises(EvaluationImportError, match="cannot judge"):
+        import_judge_annotation(store.database_path, target_variant)
     wrong_protocol = valid.model_copy(
         update={
             "judge_annotation_id": "wrong-protocol",
@@ -238,11 +264,39 @@ def test_judge_import_rejects_hallucinated_evidence_and_target_judge(tmp_path) -
         import_judge_annotation(store.database_path, wrong_protocol)
 
 
+def test_packet_contract_rejects_provenance_and_mutable_discriminators(tmp_path) -> None:
+    store, exports, normalization_run_id = evaluation_fixture(tmp_path)
+    packet = exports[0]
+    invalid_routing = packet.routing.model_copy(update={"normalization_run_id": "other-run"})
+    with pytest.raises(EvaluationImportError, match="routing"):
+        register_evaluation_packet(
+            store.database_path,
+            normalization_run_id,
+            packet.model_copy(update={"routing": invalid_routing}),
+        )
+    with pytest.raises(ValidationError):
+        BoundaryPacket.model_validate(
+            {**packet.judge_packet.model_dump(mode="json"), "packet_kind": "episode"}
+        )
+    with pytest.raises(ValidationError):
+        BoundaryPacket.model_validate(
+            {**packet.judge_packet.model_dump(mode="json"), "allowed_answers": ["invented"]}
+        )
+
+
 def test_panel_consensus_audit_and_reference_records_remain_separate(tmp_path) -> None:
     store, exports, _ = evaluation_fixture(tmp_path)
     packet = exports[0]
     assert isinstance(packet.judge_packet, BoundaryPacket)
     evidence_id = packet.judge_packet.left_user_event_id
+    seed = next(
+        f"seed-{index}"
+        for index in range(100)
+        if first_audit_packet(f"seed-{index}", exports) != packet.routing.packet_id
+    )
+    protocol = freeze_audit_protocol(store.database_path, seed)
+    assert len(protocol.eligible_packet_ids) == 5
+    assert len(protocol.selected_packet_ids) == 1
     annotations = tuple(
         annotation(packet.routing.packet_id, evidence_id, index, "split") for index in range(3)
     )
@@ -255,23 +309,14 @@ def test_panel_consensus_audit_and_reference_records_remain_separate(tmp_path) -
         resolved_at=datetime(2026, 7, 13, 13, 0, tzinfo=UTC),
     )
     assert panel.consensus_status is JudgeConsensusStatus.UNANIMOUS
-    seed = next(
-        f"seed-{index}"
-        for index in range(100)
-        if audit_bucket(f"seed-{index}", packet.routing.packet_id) >= 20
-    )
     audit = select_panel_audit(
         store.database_path,
         panel.judge_panel_resolution_id,
-        seed,
-        eligible=True,
         selected_at=datetime(2026, 7, 13, 13, 1, tzinfo=UTC),
     )
     repeated = select_panel_audit(
         store.database_path,
         panel.judge_panel_resolution_id,
-        seed,
-        eligible=True,
         selected_at=datetime(2026, 7, 13, 13, 1, tzinfo=UTC),
     )
     assert audit == repeated
@@ -336,6 +381,14 @@ def test_disputed_panel_requires_compatible_human_adjudication(tmp_path) -> None
         reviewed_at=datetime(2026, 7, 13, 14, 0, tzinfo=UTC),
     )
     import_human_adjudication(store.database_path, human)
+    invalid_schema = human.model_copy(
+        update={
+            "human_adjudication_id": "human-invalid-schema",
+            "schema_version": "other-schema",
+        }
+    )
+    with pytest.raises(EvaluationImportError, match="schema"):
+        import_human_adjudication(store.database_path, invalid_schema)
     reference = create_reference_resolution(
         store.database_path,
         panel.judge_panel_resolution_id,
@@ -349,6 +402,12 @@ def test_selected_consensus_audit_requires_human_resolution(tmp_path) -> None:
     packet = exports[1]
     assert isinstance(packet.judge_packet, BoundaryPacket)
     evidence_id = packet.judge_packet.left_user_event_id
+    seed = next(
+        f"selected-{index}"
+        for index in range(100)
+        if first_audit_packet(f"selected-{index}", exports) == packet.routing.packet_id
+    )
+    freeze_audit_protocol(store.database_path, seed)
     annotations = tuple(
         annotation(packet.routing.packet_id, evidence_id, index + 10, "no_split")
         for index in range(3)
@@ -360,16 +419,9 @@ def test_selected_consensus_audit_requires_human_resolution(tmp_path) -> None:
         packet.routing.packet_id,
         tuple(row.judge_annotation_id for row in annotations),
     )
-    seed = next(
-        f"selected-{index}"
-        for index in range(100)
-        if audit_bucket(f"selected-{index}", packet.routing.packet_id) < 20
-    )
     audit = select_panel_audit(
         store.database_path,
         panel.judge_panel_resolution_id,
-        seed,
-        eligible=True,
     )
     assert audit.selection_status is AuditSelectionStatus.SELECTED
     with pytest.raises(EvaluationImportError, match="requires human"):
@@ -406,6 +458,7 @@ def test_identity_exposed_packet_is_ineligible_for_audit(tmp_path) -> None:
     assert isinstance(packet.judge_packet, BoundaryPacket)
     assert packet.routing.identity_exposure_status is IdentityExposureStatus.IDENTITY_EXPOSED
     evidence_id = packet.judge_packet.left_user_event_id
+    freeze_audit_protocol(store.database_path, "forced-eligible-seed")
     annotations = tuple(
         annotation(packet.routing.packet_id, evidence_id, index + 20, "split") for index in range(3)
     )
@@ -419,31 +472,38 @@ def test_identity_exposed_packet_is_ineligible_for_audit(tmp_path) -> None:
     audit = select_panel_audit(
         store.database_path,
         panel.judge_panel_resolution_id,
-        "forced-eligible-seed",
-        eligible=True,
     )
     assert audit.eligibility_status == "ineligible"
     assert audit.selection_status is AuditSelectionStatus.NOT_SELECTED
+    with pytest.raises(EvaluationImportError, match="ineligible"):
+        create_reference_resolution(store.database_path, panel.judge_panel_resolution_id)
 
 
 def test_pilot_manifest_has_stratified_preseal_cases() -> None:
-    manifest = json.loads(Path("evaluation/boundary-pilot-v1.json").read_text())
+    manifest_path = Path("evaluation/boundary-pilot-v1.json")
+    manifest = json.loads(manifest_path.read_text())
     cases = manifest["cases"]
     assert 20 <= len(cases) <= 30
-    assert {row["adapter"] for row in cases} == {"claude", "codex", "pi"}
-    assert all(row["source_family_status"] in {"unknown", "ambiguous"} for row in cases)
-    assert manifest["episode_packet_generation"].startswith("blocked")
+    assert {row["source_id"].split("-")[0] for row in cases} == {"claude", "codex", "pi"}
+    assert manifest["family_status"] == "unknown_or_ambiguous_pre_pr12"
     strata = {value for row in cases for value in row["strata"]}
     assert {"active", "blocker", "incomplete", "prior_disagreement", "success"} <= strata
+    packets = load_boundary_pilot(manifest_path)
+    assert len(packets) == 24
+    assert len({packet.packet_id for packet in packets}) == 24
 
 
 def test_snapshot_prune_reports_and_removes_evaluation_dependencies(tmp_path) -> None:
     store, exports, _ = evaluation_fixture(tmp_path)
+    freeze_audit_protocol(store.database_path, "frozen-before-rebuild")
+    with duckdb.connect(str(store.database_path)) as connection:
+        rebuild_derived_schema(connection, SCHEMA_VERSION)
     snapshot = store.list_snapshots()[0]
     dependencies = store.snapshot_dependencies(snapshot.snapshot_id)
     assert dependencies.evaluation_packet_ids == tuple(
         sorted(packet.routing.packet_id for packet in exports)
     )
+    assert dependencies.audit_protocol_versions == ("annotation-protocol-v1",)
     with pytest.raises(SnapshotPruneBlocked):
         store.prune_snapshot(snapshot.snapshot_id)
 
@@ -451,6 +511,7 @@ def test_snapshot_prune_reports_and_removes_evaluation_dependencies(tmp_path) ->
 
     assert result.dependent_evaluation_packet_ids == dependencies.evaluation_packet_ids
     assert store.table_count("evaluation_packets") == 0
+    assert store.table_count("audit_protocols") == 0
 
 
 def test_evaluation_cli_exports_and_imports_without_episode_generation(tmp_path) -> None:
@@ -470,6 +531,7 @@ def test_evaluation_cli_exports_and_imports_without_episode_generation(tmp_path)
     )
     assert exported.exit_code == 0
     assert len(list(output.glob("*.judge.json"))) == len(exports)
+    assert not list(output.glob("*.routing.json"))
     packet = exports[0]
     assert isinstance(packet.judge_packet, BoundaryPacket)
     judge = annotation(

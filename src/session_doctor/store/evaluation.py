@@ -9,6 +9,7 @@ import duckdb
 
 from session_doctor.evaluation_models import (
     AuditEligibilityStatus,
+    AuditProtocol,
     AuditSelection,
     AuditSelectionStatus,
     EvaluationPacketExport,
@@ -21,7 +22,7 @@ from session_doctor.evaluation_models import (
     ReferenceResolutionStatus,
     RoutingEnvelope,
 )
-from session_doctor.evaluation_packets import canonical_json
+from session_doctor.evaluation_packets import canonical_json, digest_json
 from session_doctor.ids import stable_id
 
 from .connection import transaction, write_connection
@@ -41,7 +42,23 @@ def register_evaluation_packet(
     judge_packet = packet_export.judge_packet
     judge_json = canonical_json(judge_packet.model_dump(mode="json"))
     judge_hash = hashlib.sha256(judge_json.encode()).hexdigest()
-    if routing.packet_id != judge_packet.packet_id or routing.judge_packet_hash != judge_hash:
+    expected_packet_id = digest_json(
+        {
+            "normalization_run_id": normalization_run_id,
+            "judge_packet": judge_packet.model_copy(update={"packet_id": ""}).model_dump(
+                mode="json"
+            ),
+        }
+    )
+    if (
+        routing.packet_id != judge_packet.packet_id
+        or routing.packet_id != expected_packet_id
+        or routing.judge_packet_hash != judge_hash
+        or routing.normalization_run_id != normalization_run_id
+        or routing.schema_version != judge_packet.schema_version
+        or routing.annotation_protocol_version != judge_packet.annotation_protocol_version
+        or routing.packet_kind.value != judge_packet.packet_kind.value
+    ):
         raise EvaluationImportError("packet routing hash or identity mismatch")
     evidence_ids = sorted(packet_evidence_ids(judge_packet.model_dump(mode="json")))
     values = (
@@ -50,6 +67,7 @@ def register_evaluation_packet(
         routing.annotation_protocol_version,
         routing.packet_kind.value,
         normalization_run_id,
+        routing.snapshot_bundle_id,
         canonical_json(routing.model_dump(mode="json")),
         judge_json,
         judge_hash,
@@ -58,11 +76,24 @@ def register_evaluation_packet(
     )
     with write_connection(database_path) as connection, transaction(connection):
         normalization_exists = connection.execute(
-            "SELECT 1 FROM normalization_runs WHERE normalization_run_id = ?",
-            [normalization_run_id],
+            """
+            SELECT 1 FROM normalization_run_bundles
+            WHERE normalization_run_id = ? AND snapshot_bundle_id = ?
+            """,
+            [normalization_run_id, routing.snapshot_bundle_id],
         ).fetchone()
         if normalization_exists is None:
             raise EvaluationImportError("normalization run not found")
+        packet_exists = connection.execute(
+            "SELECT 1 FROM evaluation_packets WHERE packet_id = ?",
+            [routing.packet_id],
+        ).fetchone()
+        audit_frozen = connection.execute(
+            "SELECT 1 FROM audit_protocols WHERE annotation_protocol_version = ?",
+            [routing.annotation_protocol_version],
+        ).fetchone()
+        if packet_exists is None and audit_frozen is not None:
+            raise EvaluationImportError("cannot add packets after the audit cohort is frozen")
         insert_immutable(
             connection,
             "evaluation_packets",
@@ -73,6 +104,7 @@ def register_evaluation_packet(
                 "annotation_protocol_version",
                 "packet_kind",
                 "normalization_run_id",
+                "snapshot_bundle_id",
                 "routing_json",
                 "judge_packet_json",
                 "judge_packet_hash",
@@ -84,6 +116,12 @@ def register_evaluation_packet(
 
 
 def import_judge_annotation(database_path: Path, annotation: JudgeAnnotation) -> JudgeAnnotation:
+    annotation = annotation.model_copy(
+        update={
+            "judge_provider": canonical_identity_component(annotation.judge_provider),
+            "judge_model": canonical_identity_component(annotation.judge_model),
+        }
+    )
     with write_connection(database_path) as connection, transaction(connection):
         packet = packet_row(connection, annotation.packet_id)
         validate_protocol(annotation, packet)
@@ -149,6 +187,12 @@ def resolve_judge_panel(
         raise EvaluationImportError("panel requires one to three annotations")
     with write_connection(database_path) as connection, transaction(connection):
         packet = packet_row(connection, packet_id)
+        existing_panel = connection.execute(
+            "SELECT judge_panel_resolution_id FROM judge_panel_resolutions WHERE packet_id = ?",
+            [packet_id],
+        ).fetchone()
+        if existing_panel is not None:
+            raise EvaluationImportError("packet already has a panel resolution")
         placeholders = ", ".join("?" for _ in annotation_ids)
         rows = connection.execute(
             f"""
@@ -163,7 +207,13 @@ def resolve_judge_panel(
             raise EvaluationImportError("panel annotation not found")
         if any(row[1] != packet_id or row[2] != packet[1] for row in rows):
             raise EvaluationImportError("cross-packet or cross-protocol panel")
-        judge_identities = {(str(row[3]), str(row[4])) for row in rows}
+        judge_identities = {
+            (
+                canonical_identity_component(str(row[3])),
+                canonical_identity_component(str(row[4])),
+            )
+            for row in rows
+        }
         if len(judge_identities) != len(rows):
             raise EvaluationImportError("panel judges must be distinct")
         answers = {str(row[5]) for row in rows}
@@ -177,8 +227,6 @@ def resolve_judge_panel(
         unanimous_answer = next(iter(answers)) if status is JudgeConsensusStatus.UNANIMOUS else None
         resolution = JudgePanelResolution(
             judge_panel_resolution_id=stable_id("judge-panel", packet_id, *annotation_ids),
-            schema_version=str(packet[0]),
-            annotation_protocol_version=str(packet[1]),
             packet_id=packet_id,
             judge_annotation_ids=list(annotation_ids),
             consensus_status=status,
@@ -195,28 +243,85 @@ def resolve_judge_panel(
     return resolution
 
 
+def freeze_audit_protocol(
+    database_path: Path,
+    selection_seed_id: str,
+    *,
+    frozen_at: datetime | None = None,
+) -> AuditProtocol:
+    with write_connection(database_path) as connection, transaction(connection):
+        if (
+            connection.execute("SELECT 1 FROM judge_panel_resolutions LIMIT 1").fetchone()
+            is not None
+        ):
+            raise EvaluationImportError("audit protocol must be frozen before panel evaluation")
+        rows = connection.execute(
+            "SELECT packet_id, routing_json FROM evaluation_packets "
+            "WHERE annotation_protocol_version = ? ORDER BY packet_id",
+            ["annotation-protocol-v1"],
+        ).fetchall()
+        eligible_packet_ids = sorted(
+            str(row[0])
+            for row in rows
+            if RoutingEnvelope.model_validate_json(str(row[1])).identity_exposure_status.value
+            == "blind_eligible"
+        )
+        ranked = sorted(
+            eligible_packet_ids,
+            key=lambda packet_id: (
+                hashlib.sha256(f"{selection_seed_id}\0{packet_id}".encode()).hexdigest(),
+                packet_id,
+            ),
+        )
+        selected_count = round(len(ranked) * 0.2)
+        protocol = AuditProtocol(
+            selection_seed_id=selection_seed_id,
+            eligible_packet_ids=eligible_packet_ids,
+            selected_packet_ids=sorted(ranked[:selected_count]),
+            frozen_at=frozen_at or datetime.now(UTC),
+        )
+        insert_immutable_model(
+            connection,
+            "audit_protocols",
+            "annotation_protocol_version",
+            protocol,
+            json_fields={
+                "eligible_packet_ids": "eligible_packet_ids_json",
+                "selected_packet_ids": "selected_packet_ids_json",
+            },
+        )
+    return protocol
+
+
 def select_panel_audit(
     database_path: Path,
     judge_panel_resolution_id: str,
-    selection_seed_id: str,
     *,
-    eligible: bool,
     selected_at: datetime | None = None,
 ) -> AuditSelection:
     with write_connection(database_path) as connection, transaction(connection):
         panel = panel_row(connection, judge_panel_resolution_id)
         if panel[3] != JudgeConsensusStatus.UNANIMOUS.value:
             raise EvaluationImportError("only unanimous panels receive audit selection")
-        packet = packet_row(connection, str(panel[2]))
-        routing = RoutingEnvelope.model_validate_json(str(packet[3]))
-        actual_eligible = eligible and routing.identity_exposure_status.value == "blind_eligible"
-        is_selected = actual_eligible and audit_bucket(selection_seed_id, str(panel[2])) < 20
+        protocol_row = connection.execute(
+            """
+            SELECT selection_seed_id, eligible_packet_ids_json,
+                selected_packet_ids_json
+            FROM audit_protocols WHERE annotation_protocol_version = ?
+            """,
+            [str(panel[1])],
+        ).fetchone()
+        if protocol_row is None:
+            raise EvaluationImportError("audit protocol must be frozen before panel evaluation")
+        selection_seed_id = str(protocol_row[0])
+        eligible_packet_ids = set(parse_string_list(protocol_row[1]))
+        selected_packet_ids = set(parse_string_list(protocol_row[2]))
+        actual_eligible = str(panel[2]) in eligible_packet_ids
+        is_selected = str(panel[2]) in selected_packet_ids
         selection = AuditSelection(
             audit_selection_id=stable_id(
                 "audit-selection", judge_panel_resolution_id, selection_seed_id
             ),
-            schema_version=str(panel[0]),
-            annotation_protocol_version=str(panel[1]),
             packet_id=str(panel[2]),
             judge_panel_resolution_id=judge_panel_resolution_id,
             eligibility_status=(
@@ -251,9 +356,16 @@ def import_human_adjudication(
         panel = panel_row(connection, adjudication.judge_panel_resolution_id)
         if (
             adjudication.packet_id != panel[2]
+            or adjudication.schema_version != panel[0]
             or adjudication.annotation_protocol_version != panel[1]
         ):
-            raise EvaluationImportError("cross-packet or cross-protocol adjudication")
+            raise EvaluationImportError("cross-packet, schema, or protocol adjudication")
+        existing_human = connection.execute(
+            "SELECT 1 FROM human_adjudications WHERE judge_panel_resolution_id = ?",
+            [adjudication.judge_panel_resolution_id],
+        ).fetchone()
+        if existing_human is not None:
+            raise EvaluationImportError("panel already has a human adjudication")
         packet = packet_row(connection, adjudication.packet_id)
         if adjudication.answer not in set(parse_string_list(packet[5])):
             raise EvaluationImportError("human answer is outside packet rubric")
@@ -278,6 +390,14 @@ def create_reference_resolution(
 ) -> ReferenceResolution:
     with write_connection(database_path) as connection, transaction(connection):
         panel = panel_row(connection, judge_panel_resolution_id)
+        if (
+            connection.execute(
+                "SELECT 1 FROM reference_resolutions WHERE source_judge_panel_resolution_id = ?",
+                [judge_panel_resolution_id],
+            ).fetchone()
+            is not None
+        ):
+            raise EvaluationImportError("panel already has a reference resolution")
         audit = connection.execute(
             "SELECT * FROM audit_selections WHERE judge_panel_resolution_id = ?",
             [judge_panel_resolution_id],
@@ -294,6 +414,8 @@ def create_reference_resolution(
         if status == JudgeConsensusStatus.UNANIMOUS.value:
             if audit is None:
                 raise EvaluationImportError("unanimous panel requires audit selection")
+            if audit[5] != AuditEligibilityStatus.ELIGIBLE.value:
+                raise EvaluationImportError("ineligible panel cannot become a reference")
             if audit[6] == AuditSelectionStatus.NOT_SELECTED.value and human is None:
                 resolution_status = ReferenceResolutionStatus.JUDGE_CONSENSUS
                 answer = str(panel[4])
@@ -316,8 +438,6 @@ def create_reference_resolution(
                 audit[0] if audit else None,
                 human[0] if human else None,
             ),
-            schema_version=str(panel[0]),
-            annotation_protocol_version=str(panel[1]),
             packet_id=str(panel[2]),
             resolution_status=resolution_status,
             answer=answer,
@@ -401,6 +521,8 @@ def validate_protocol(annotation: JudgeAnnotation, packet: tuple) -> None:
 
 
 def judge_is_excluded(provider: str, model: str, excluded_identities: list[str]) -> bool:
+    canonical_provider = canonical_identity_component(provider)
+    canonical_model = canonical_identity_component(model)
     for identity in excluded_identities:
         try:
             parsed = json.loads(identity)
@@ -408,9 +530,28 @@ def judge_is_excluded(provider: str, model: str, excluded_identities: list[str])
             continue
         if not isinstance(parsed, dict):
             continue
-        if parsed.get("model") == model and parsed.get("provider") in {provider, None}:
+        target_model = parsed.get("model")
+        target_provider = parsed.get("provider")
+        if (
+            isinstance(target_model, str)
+            and canonical_identity_component(target_model) == canonical_model
+            and (
+                target_provider is None
+                or (
+                    isinstance(target_provider, str)
+                    and canonical_identity_component(target_provider) == canonical_provider
+                )
+            )
+        ):
             return True
     return False
+
+
+def canonical_identity_component(value: str) -> str:
+    canonical = " ".join(value.split()).casefold()
+    if not canonical:
+        raise EvaluationImportError("judge identity components cannot be empty")
+    return canonical
 
 
 def packet_evidence_ids(value: object) -> set[str]:

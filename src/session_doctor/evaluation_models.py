@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import Field, model_validator
 
@@ -57,10 +58,12 @@ class ReferenceResolutionStatus(StrEnum):
 
 
 class RoutingEnvelope(SessionDoctorModel):
-    schema_version: str = EVALUATION_SCHEMA_VERSION
-    annotation_protocol_version: str = ANNOTATION_PROTOCOL_VERSION
+    schema_version: Literal["evaluation-schema-v1"] = EVALUATION_SCHEMA_VERSION
+    annotation_protocol_version: Literal["annotation-protocol-v1"] = ANNOTATION_PROTOCOL_VERSION
     packet_id: str
     packet_kind: PacketKind
+    normalization_run_id: str
+    snapshot_bundle_id: str
     source_family_id: str | None = None
     source_family_status: SourceFamilyStatus = SourceFamilyStatus.UNKNOWN
     family_policy_version: str | None = None
@@ -94,10 +97,10 @@ class PacketEvent(SessionDoctorModel):
 
 
 class BoundaryPacket(SessionDoctorModel):
-    schema_version: str = EVALUATION_SCHEMA_VERSION
-    annotation_protocol_version: str = ANNOTATION_PROTOCOL_VERSION
+    schema_version: Literal["evaluation-schema-v1"] = EVALUATION_SCHEMA_VERSION
+    annotation_protocol_version: Literal["annotation-protocol-v1"] = ANNOTATION_PROTOCOL_VERSION
     packet_id: str
-    packet_kind: PacketKind = PacketKind.BOUNDARY
+    packet_kind: Literal[PacketKind.BOUNDARY] = PacketKind.BOUNDARY
     left_user_event_id: str
     right_user_event_id: str
     adjacent_user_turns: list[PacketEvent]
@@ -106,12 +109,18 @@ class BoundaryPacket(SessionDoctorModel):
     anonymized_capability_support: list[dict[str, str]] = Field(default_factory=list)
     allowed_answers: list[str] = Field(default_factory=lambda: ["ambiguous", "no_split", "split"])
 
+    @model_validator(mode="after")
+    def validate_boundary_rubric(self) -> BoundaryPacket:
+        if self.allowed_answers != ["ambiguous", "no_split", "split"]:
+            raise ValueError("boundary packet answers are fixed by protocol")
+        return self
+
 
 class EpisodePacket(SessionDoctorModel):
-    schema_version: str = EVALUATION_SCHEMA_VERSION
-    annotation_protocol_version: str = ANNOTATION_PROTOCOL_VERSION
+    schema_version: Literal["evaluation-schema-v1"] = EVALUATION_SCHEMA_VERSION
+    annotation_protocol_version: Literal["annotation-protocol-v1"] = ANNOTATION_PROTOCOL_VERSION
     packet_id: str
-    packet_kind: PacketKind = PacketKind.EPISODE
+    packet_kind: Literal[PacketKind.EPISODE] = PacketKind.EPISODE
     episode_anchor_ids: list[str]
     annotation_task: str
     normalized_episode_events: list[PacketEvent]
@@ -129,8 +138,8 @@ class EvaluationPacketExport(SessionDoctorModel):
 
 class JudgeAnnotation(SessionDoctorModel):
     judge_annotation_id: str
-    schema_version: str = EVALUATION_SCHEMA_VERSION
-    annotation_protocol_version: str = ANNOTATION_PROTOCOL_VERSION
+    schema_version: Literal["evaluation-schema-v1"] = EVALUATION_SCHEMA_VERSION
+    annotation_protocol_version: Literal["annotation-protocol-v1"] = ANNOTATION_PROTOCOL_VERSION
     packet_id: str
     judge_model: str
     judge_provider: str
@@ -143,8 +152,8 @@ class JudgeAnnotation(SessionDoctorModel):
 
 class JudgePanelResolution(SessionDoctorModel):
     judge_panel_resolution_id: str
-    schema_version: str = EVALUATION_SCHEMA_VERSION
-    annotation_protocol_version: str = ANNOTATION_PROTOCOL_VERSION
+    schema_version: Literal["evaluation-schema-v1"] = EVALUATION_SCHEMA_VERSION
+    annotation_protocol_version: Literal["annotation-protocol-v1"] = ANNOTATION_PROTOCOL_VERSION
     packet_id: str
     judge_annotation_ids: list[str]
     consensus_status: JudgeConsensusStatus
@@ -154,8 +163,8 @@ class JudgePanelResolution(SessionDoctorModel):
 
 class AuditSelection(SessionDoctorModel):
     audit_selection_id: str
-    schema_version: str = EVALUATION_SCHEMA_VERSION
-    annotation_protocol_version: str = ANNOTATION_PROTOCOL_VERSION
+    schema_version: Literal["evaluation-schema-v1"] = EVALUATION_SCHEMA_VERSION
+    annotation_protocol_version: Literal["annotation-protocol-v1"] = ANNOTATION_PROTOCOL_VERSION
     packet_id: str
     judge_panel_resolution_id: str
     eligibility_status: AuditEligibilityStatus
@@ -165,10 +174,18 @@ class AuditSelection(SessionDoctorModel):
     selected_at: datetime
 
 
+class AuditProtocol(SessionDoctorModel):
+    annotation_protocol_version: Literal["annotation-protocol-v1"] = ANNOTATION_PROTOCOL_VERSION
+    selection_seed_id: str
+    eligible_packet_ids: list[str]
+    selected_packet_ids: list[str]
+    frozen_at: datetime
+
+
 class HumanAdjudication(SessionDoctorModel):
     human_adjudication_id: str
-    schema_version: str = EVALUATION_SCHEMA_VERSION
-    annotation_protocol_version: str = ANNOTATION_PROTOCOL_VERSION
+    schema_version: Literal["evaluation-schema-v1"] = EVALUATION_SCHEMA_VERSION
+    annotation_protocol_version: Literal["annotation-protocol-v1"] = ANNOTATION_PROTOCOL_VERSION
     packet_id: str
     judge_panel_resolution_id: str
     audit_selection_id: str | None = None
@@ -182,8 +199,8 @@ class HumanAdjudication(SessionDoctorModel):
 
 class ReferenceResolution(SessionDoctorModel):
     reference_resolution_id: str
-    schema_version: str = EVALUATION_SCHEMA_VERSION
-    annotation_protocol_version: str = ANNOTATION_PROTOCOL_VERSION
+    schema_version: Literal["evaluation-schema-v1"] = EVALUATION_SCHEMA_VERSION
+    annotation_protocol_version: Literal["annotation-protocol-v1"] = ANNOTATION_PROTOCOL_VERSION
     packet_id: str
     resolution_status: ReferenceResolutionStatus
     answer: str

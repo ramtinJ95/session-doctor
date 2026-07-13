@@ -14,6 +14,7 @@ from .duckdb import (
 from .evaluation import (
     EvaluationImportError,
     create_reference_resolution,
+    freeze_audit_protocol,
     import_human_adjudication,
     import_judge_annotation,
     register_evaluation_packet,
@@ -91,6 +92,7 @@ __all__ = [
     "LifecycleObservation",
     "EvaluationImportError",
     "create_reference_resolution",
+    "freeze_audit_protocol",
     "import_human_adjudication",
     "import_judge_annotation",
     "register_evaluation_packet",

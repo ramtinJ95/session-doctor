@@ -25,6 +25,7 @@ DURABLE_TABLE_NAMES = (
     "judge_annotations",
     "judge_panel_resolutions",
     "audit_selections",
+    "audit_protocols",
     "human_adjudications",
     "reference_resolutions",
 )
@@ -354,6 +355,7 @@ CREATE_TABLE_STATEMENTS = (
         annotation_protocol_version VARCHAR NOT NULL,
         packet_kind VARCHAR NOT NULL,
         normalization_run_id VARCHAR NOT NULL,
+        snapshot_bundle_id VARCHAR NOT NULL,
         routing_json VARCHAR NOT NULL,
         judge_packet_json VARCHAR NOT NULL,
         judge_packet_hash VARCHAR NOT NULL,
@@ -386,7 +388,8 @@ CREATE_TABLE_STATEMENTS = (
         judge_annotation_ids_json VARCHAR NOT NULL,
         consensus_status VARCHAR NOT NULL,
         unanimous_answer VARCHAR,
-        resolved_at TIMESTAMP NOT NULL
+        resolved_at TIMESTAMP NOT NULL,
+        UNIQUE (packet_id)
     )
     """,
     """
@@ -404,6 +407,15 @@ CREATE_TABLE_STATEMENTS = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS audit_protocols (
+        annotation_protocol_version VARCHAR PRIMARY KEY,
+        selection_seed_id VARCHAR NOT NULL,
+        eligible_packet_ids_json VARCHAR NOT NULL,
+        selected_packet_ids_json VARCHAR NOT NULL,
+        frozen_at TIMESTAMP NOT NULL
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS human_adjudications (
         human_adjudication_id VARCHAR PRIMARY KEY,
         schema_version VARCHAR NOT NULL,
@@ -416,7 +428,8 @@ CREATE_TABLE_STATEMENTS = (
         answer VARCHAR NOT NULL,
         evidence_ids_json VARCHAR NOT NULL,
         rationale VARCHAR NOT NULL,
-        reviewed_at TIMESTAMP NOT NULL
+        reviewed_at TIMESTAMP NOT NULL,
+        UNIQUE (judge_panel_resolution_id)
     )
     """,
     """
@@ -430,7 +443,8 @@ CREATE_TABLE_STATEMENTS = (
         source_judge_panel_resolution_id VARCHAR NOT NULL,
         source_audit_selection_id VARCHAR,
         source_human_adjudication_id VARCHAR,
-        resolved_at TIMESTAMP NOT NULL
+        resolved_at TIMESTAMP NOT NULL,
+        UNIQUE (source_judge_panel_resolution_id)
     )
     """,
     """
