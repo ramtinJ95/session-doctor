@@ -79,6 +79,7 @@ from .html import (
 )
 from .ingest_workflow import IngestSummary, ingest_sources
 from .integration_assets import IntegrationAssetError, session_doctor_skill_directory
+from .normalization_workflow import normalize_snapshot
 from .report_payload import build_session_report
 from .report_renderers import render_session_report, render_session_report_markdown
 from .schemas import AnalysisRun, SessionClassification, SessionFeature
@@ -86,6 +87,7 @@ from .store import (
     TABLE_NAMES,
     DuckDBStore,
     LoadedBundleMember,
+    NormalizationConflictError,
     SnapshotPruneBlocked,
     SnapshotSummary,
 )
@@ -101,6 +103,7 @@ sessions_app = typer.Typer(help="Inspect ingested sessions.")
 projects_app = typer.Typer(help="Inspect observed project path hints.")
 integrations_app = typer.Typer(help="Locate optional agent integration assets.")
 snapshots_app = typer.Typer(help="Inspect and prune exact captured source history.")
+normalizations_app = typer.Typer(help="Replay and inspect versioned normalization.")
 
 __all__ = [
     "ANALYSIS_SUMMARY_FEATURES",
@@ -259,6 +262,81 @@ def snapshots_list(
         )
 
 
+@normalizations_app.command("replay")
+def normalization_replay(
+    snapshot_id: str,
+    db: Annotated[Path | None, typer.Option("--db", help="DuckDB path to modify.")] = None,
+) -> None:
+    """Explicitly add the current parser output for one historical snapshot."""
+    database_path = database_path_from_option(db)
+    require_valid_database_path(database_path)
+    require_current_database_schema(database_path)
+    store = DuckDBStore(database_path)
+    summary = store.snapshot_summary(snapshot_id)
+    if summary is None:
+        console.print(f"[red]Snapshot not found:[/red] {snapshot_id}")
+        raise typer.Exit(1)
+    adapter = adapter_for_ingest(summary.agent_name)
+    try:
+        run = normalize_snapshot(adapter, store, snapshot_id)
+    except (ValueError, RecoverableSourceError, NormalizationConflictError) as exc:
+        console.print(f"[red]Normalization failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    typer.echo(
+        json.dumps(
+            {
+                "normalization_run_id": run.normalization_run_id,
+                "snapshot_bundle_id": run.snapshot_bundle_id,
+                "adapter_name": run.adapter_name,
+                "adapter_version": run.adapter_version,
+                "normalization_version": run.normalization_version,
+                "configuration_hash": run.configuration_hash,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+
+@normalizations_app.command("status")
+def normalization_status(
+    snapshot_id: str,
+    db: Annotated[Path | None, typer.Option("--db", help="DuckDB path to inspect.")] = None,
+) -> None:
+    """Report current, stale, or missing parser coverage for one snapshot."""
+    database_path = database_path_from_option(db)
+    require_valid_database_path(database_path)
+    require_current_database_schema(database_path)
+    store = DuckDBStore(database_path)
+    summary = store.snapshot_summary(snapshot_id)
+    if summary is None:
+        console.print(f"[red]Snapshot not found:[/red] {snapshot_id}")
+        raise typer.Exit(1)
+    if summary.snapshot_bundle_id is None:
+        status_payload = {
+            "snapshot_id": snapshot_id,
+            "snapshot_bundle_id": None,
+            "status": "missing",
+            "current_normalization_run_id": None,
+            "available_normalization_run_ids": [],
+        }
+    else:
+        adapter = adapter_for_ingest(summary.agent_name)
+        coverage = store.normalization_coverage(
+            summary.snapshot_bundle_id,
+            adapter_name=adapter.name.value,
+            adapter_version=adapter.version,
+        )
+        status_payload = {
+            "snapshot_id": snapshot_id,
+            "snapshot_bundle_id": coverage.snapshot_bundle_id,
+            "status": coverage.status,
+            "current_normalization_run_id": coverage.current_normalization_run_id,
+            "available_normalization_run_ids": coverage.available_normalization_run_ids,
+        }
+    typer.echo(json.dumps(status_payload, indent=2, sort_keys=True))
+
+
 @snapshots_app.command("show")
 def snapshots_show(
     snapshot_id: str,
@@ -386,6 +464,7 @@ def snapshots_prune(
                         "sources": dependencies.source_ids,
                         "sessions": dependencies.session_ids,
                         "analysis_runs": dependencies.analysis_run_ids,
+                        "normalization_runs": dependencies.normalization_run_ids,
                         "inbound_source_references": dependencies.inbound_source_ids,
                         "inbound_session_references": dependencies.inbound_session_ids,
                         "downstream_lifecycle_bundles": (
@@ -1006,6 +1085,7 @@ app.add_typer(sessions_app, name="sessions")
 app.add_typer(projects_app, name="projects")
 app.add_typer(integrations_app, name="integrations")
 app.add_typer(snapshots_app, name="snapshots")
+app.add_typer(normalizations_app, name="normalizations")
 
 
 def render_ingest_summary(summary: IngestSummary, database_path: Path) -> None:

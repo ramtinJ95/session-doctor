@@ -6,7 +6,7 @@ import duckdb
 
 from session_doctor.ids import stable_id
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 BASE_DURABLE_TABLE_NAMES = (
     "source_blobs",
@@ -24,6 +24,9 @@ DURABLE_TABLE_NAMES = (
 )
 
 DERIVED_TABLE_NAMES = (
+    "normalization_runs",
+    "normalization_run_bundles",
+    "normalized_entities",
     "session_sources",
     "sessions",
     "raw_events",
@@ -277,6 +280,40 @@ def database_schema_version(
 
 
 CREATE_TABLE_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS normalization_runs (
+        normalization_run_id VARCHAR PRIMARY KEY,
+        bundle_content_id VARCHAR NOT NULL,
+        adapter_name VARCHAR NOT NULL,
+        adapter_version VARCHAR NOT NULL,
+        normalization_version VARCHAR NOT NULL,
+        configuration_hash VARCHAR NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+        UNIQUE (
+            bundle_content_id, adapter_name, adapter_version,
+            normalization_version, configuration_hash
+        )
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS normalization_run_bundles (
+        normalization_run_id VARCHAR NOT NULL,
+        snapshot_bundle_id VARCHAR NOT NULL,
+        linked_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+        PRIMARY KEY (normalization_run_id, snapshot_bundle_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS normalized_entities (
+        normalization_run_id VARCHAR NOT NULL,
+        entity_kind VARCHAR NOT NULL,
+        entity_id VARCHAR NOT NULL,
+        entity_order INTEGER NOT NULL CHECK (entity_order >= 0),
+        payload_json VARCHAR NOT NULL,
+        PRIMARY KEY (normalization_run_id, entity_kind, entity_id),
+        UNIQUE (normalization_run_id, entity_kind, entity_order)
+    )
+    """,
     """
     CREATE TABLE IF NOT EXISTS source_blobs (
         blob_id VARCHAR PRIMARY KEY,

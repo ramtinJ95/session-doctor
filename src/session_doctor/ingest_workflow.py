@@ -185,6 +185,12 @@ def ingest_sources(
             captured_bundle.snapshot_bundle_id,
             terminal_observed=terminal_observed,
         )
+        store.persist_normalization(
+            captured_bundle.snapshot_bundle_id,
+            prepared_source,
+            bundle,
+            adapter_version=adapter.version,
+        )
         store.insert_parsed_bundle(
             captured_parse_source,
             bundle,

@@ -13,6 +13,14 @@ from .duckdb import (
 )
 from .lifecycle import LifecycleObservation
 from .migrations import DURABLE_TABLE_NAMES, SCHEMA_VERSION, TABLE_NAMES, SchemaMismatchError
+from .normalization_runs import (
+    NORMALIZATION_CONFIGURATION_HASH,
+    NORMALIZATION_VERSION,
+    NormalizationConflictError,
+    NormalizationCoverage,
+    NormalizationRun,
+    StoredNormalization,
+)
 from .snapshot_history import (
     PruneDependencies,
     PruneResult,
@@ -68,5 +76,11 @@ __all__ = [
     "TrendStatus",
     "load_diagnostic_snapshot",
     "LifecycleObservation",
+    "NORMALIZATION_CONFIGURATION_HASH",
+    "NORMALIZATION_VERSION",
+    "NormalizationConflictError",
+    "NormalizationCoverage",
+    "NormalizationRun",
+    "StoredNormalization",
     "LoadedBundleMember",
 ]
