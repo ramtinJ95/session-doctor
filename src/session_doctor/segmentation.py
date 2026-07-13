@@ -18,7 +18,7 @@ from session_doctor.schemas import (
 )
 from session_doctor.store.lifecycle import FINALIZED_LIFECYCLE_STATES, LifecycleObservation
 
-SEGMENTATION_VERSION = "segmentation-v1"
+SEGMENTATION_VERSION = "segmentation-v2"
 
 EXPLICIT_NEW_TASK = re.compile(
     r"^\s*(?:new|separate|unrelated)\s+(?:task|request|question)\s*[:\-]|"
@@ -27,7 +27,10 @@ EXPLICIT_NEW_TASK = re.compile(
 )
 CORRECTION_OR_CONTINUATION = re.compile(
     r"^\s*(?:(?:actually|correction|to clarify|i mean|please continue|continue|"
-    r"review (?:that|the)|try again|fix (?:that|it))\b|no\s*[,—-](?=\s|$))",
+    r"resume (?:the )?work|review (?:that|the|this)|check (?:the )?result|"
+    r"validate (?:the|that|this) change|confirm (?:the )?(?:final )?validation|"
+    r"(?:finish|address) (?:the )?remaining work|record (?:the )?outcome|"
+    r"try again|fix (?:that|it))\b|no\s*[,—-](?=\s|$))",
     re.IGNORECASE,
 )
 WORD = re.compile(r"[^\W_]+", re.UNICODE)

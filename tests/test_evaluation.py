@@ -31,6 +31,7 @@ from session_doctor.evaluation_packets import (
     export_boundary_packets,
     export_boundary_pilot,
     load_boundary_pilot,
+    load_segmentation_calibration,
 )
 from session_doctor.ids import stable_id
 from session_doctor.schemas import (
@@ -647,6 +648,66 @@ def test_pilot_manifest_has_stratified_preseal_cases() -> None:
     )
 
 
+def test_segmentation_calibration_freezes_references_and_episode_inputs() -> None:
+    calibration = load_segmentation_calibration()
+    assert calibration["segmentation_version"] == "segmentation-v2"
+    assert calibration["claim_status"] == "development_only_identity_unverifiable"
+    assert calibration["task_specific_packet_ids"] == []
+    assert calibration["metrics"] == {
+        "audited_consensus_error_count": 1,
+        "audited_unanimous_count": 5,
+        "audited_unanimous_rate": "5/23",
+        "candidate": {
+            "ambiguity_coverage": "9/24",
+            "exact_agreement": "15/24",
+            "no_split_precision": "15/15",
+            "no_split_recall": "15/22",
+            "prediction_counts": {"ambiguous": 9, "no_split": 15, "split": 0},
+            "split_precision": "unavailable_no_predictions",
+            "split_recall": "0/2",
+        },
+        "disputed_panel_count": 1,
+        "judge_count_per_packet": 3,
+        "packet_count": 24,
+        "reference_answer_counts": {"ambiguous": 0, "no_split": 22, "split": 2},
+        "unanimous_panel_count": 23,
+    }
+    references = calibration["boundary_references"]
+    assert isinstance(references, list)
+    assert len({row["boundary_reference_id"] for row in references}) == 24
+    assert sum(row["audit_selection"] == "selected" for row in references) == 5
+    assert sum(row["human_review"] is not None for row in references) == 6
+    assert {row["answer"] for row in references} == {"no_split", "split"}
+    assert {
+        (annotation["judge_provider"], annotation["judge_model"])
+        for row in references
+        for annotation in row["judge_annotations"]
+    } == {
+        ("anthropic", "claude-fable-5"),
+        ("openai", "gpt-5.4"),
+        ("openai-codex", "gpt-5.6-sol"),
+    }
+
+    source_document = json.loads(
+        Path("src/session_doctor/evaluation_data/boundary-pilot-sources-v1.json").read_text()
+    )
+    expected_user_events = {
+        source["source_id"]: [turn["event_id"] for turn in source["user_turns"]]
+        for source in source_document["sources"]
+    }
+    episode_inputs = calibration["episode_evidence_inputs"]
+    assert isinstance(episode_inputs, list)
+    assert len({row["episode_evidence_input_id"] for row in episode_inputs}) == 5
+    for source_id, expected in expected_user_events.items():
+        actual = [
+            event_id
+            for row in episode_inputs
+            if row["source_id"] == source_id
+            for event_id in row["user_event_ids"]
+        ]
+        assert actual == expected
+
+
 def test_snapshot_prune_reports_and_removes_evaluation_dependencies(tmp_path) -> None:
     store, exports, _ = evaluation_fixture(tmp_path)
     freeze_audit_protocol(
@@ -790,6 +851,13 @@ def test_evaluation_cli_exports_and_imports_without_episode_generation(tmp_path)
     assert len(pilot_protocol.cohort_packet_ids) == 24
     assert not pilot_protocol.eligible_packet_ids
     assert not pilot_protocol.selected_packet_ids
-    unavailable = runner.invoke(app, ["evaluation", "export-episodes"])
-    assert unavailable.exit_code == 1
-    assert "unavailable" in unavailable.stdout
+    for arguments in (
+        [],
+        ["--help"],
+        ["legacy-episode-id"],
+        ["--task", "relation", "--format", "json"],
+    ):
+        unavailable = runner.invoke(app, ["evaluation", "export-episodes", *arguments])
+        assert unavailable.exit_code == 1
+        assert "unavailable" in unavailable.stdout
+        assert "owning task rubric" in unavailable.stdout

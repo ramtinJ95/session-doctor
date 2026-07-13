@@ -344,12 +344,19 @@ def evaluation_export_boundaries(
     typer.echo(f"Exported {len(exports)} boundary packets: {output}")
 
 
-@evaluation_app.command("export-episodes")
-def evaluation_export_episodes() -> None:
-    """Reject episode export until adjudicated boundaries are frozen after PR 8."""
+@evaluation_app.command(
+    "export-episodes",
+    context_settings={
+        "allow_extra_args": True,
+        "ignore_unknown_options": True,
+        "help_option_names": [],
+    },
+)
+def evaluation_export_episodes(_context: typer.Context) -> None:
+    """Reject task-specific export until its owning rubric is versioned."""
     console.print(
-        "[red]Episode packet generation is unavailable until boundary references "
-        "are frozen after PR 8.[/red]"
+        "[red]Episode packet generation is unavailable until the owning task rubric "
+        "and allowed-answer set are versioned.[/red]"
     )
     raise typer.Exit(1)
 

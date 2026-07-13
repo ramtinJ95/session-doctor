@@ -1,0 +1,8 @@
+You are one independent external boundary-annotation judge. Production predictions are hidden. Analyze every packet in the appended JSON array.
+
+Rubric:
+- split: the right user turn starts a distinct task. A narrow explicit new/separate/unrelated task marker is sufficient even without closure. Otherwise require observed interaction closure plus a strong topic shift.
+- no_split: the right turn corrects, clarifies, answers, reviews, retries, continues, or broadly repeats the same goal.
+- ambiguous: evidence is weak or conflicting. Elapsed time and tool success/failure alone do not prove a split. Ambiguous boundaries conservatively merge.
+
+Return only a JSON object with key "annotations". It must contain exactly 24 objects, one per packet, preserving packet_id. Each object must have: packet_id, answer (split|no_split|ambiguous), evidence_ids (a nonempty array using only evidence_id/source_event_id values from that packet), and a concise rationale. Do not use source/model/adapter identity. Do not infer lifecycle interpretation or task outcomes.

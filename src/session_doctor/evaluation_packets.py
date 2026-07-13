@@ -9,7 +9,7 @@ import tempfile
 from fractions import Fraction
 from importlib.resources import files
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from session_doctor.evaluation_models import (
     ANNOTATION_PROTOCOL_VERSION,
@@ -420,6 +420,320 @@ def boundary_pilot_corpus_bytes() -> bytes:
     ):
         raise ValueError("checked boundary pilot contract is invalid")
     return (canonical_json({"manifest": manifest, "sources": sources}) + "\n").encode()
+
+
+def load_segmentation_calibration() -> dict[str, Any]:
+    from session_doctor.segmentation import (
+        CORRECTION_OR_CONTINUATION,
+        EXPLICIT_NEW_TASK,
+        broad_goal_similarity,
+    )
+
+    data_root = files("session_doctor.evaluation_data")
+    document = json.loads(data_root.joinpath("segmentation-calibration-v1.json").read_text())
+    required_versions = {
+        "schema_version": "segmentation-calibration-v1",
+        "annotation_protocol_version": ANNOTATION_PROTOCOL_VERSION,
+        "boundary_reference_protocol_version": "boundary-reference-v1",
+        "episode_evidence_input_version": "episode-evidence-input-v1",
+        "segmentation_version": "segmentation-v2",
+        "evaluation_corpus_id": "boundary-pilot-v1",
+    }
+    if any(document.get(key) != value for key, value in required_versions.items()):
+        raise ValueError("segmentation calibration versions are invalid")
+    corpus_bytes = boundary_pilot_corpus_bytes()
+    if document.get("evaluation_corpus_sha256") != hashlib.sha256(corpus_bytes).hexdigest():
+        raise ValueError("segmentation calibration corpus hash is invalid")
+    if document.get("task_specific_packet_ids") != []:
+        raise ValueError("segmentation calibration cannot assign task-specific packet IDs")
+
+    corpus = json.loads(corpus_bytes)
+    exports = export_boundary_pilot(corpus_bytes, "calibration-validation-bundle")
+    packets = {
+        row.routing.packet_id: row.judge_packet
+        for row in exports
+        if isinstance(row.judge_packet, BoundaryPacket)
+    }
+    if len(packets) != len(exports):
+        raise ValueError("segmentation calibration contains a non-boundary packet")
+    cases = {
+        row.routing.packet_id: case
+        for case, row in zip(corpus["manifest"]["cases"], exports, strict=True)
+    }
+    prompt_bytes = data_root.joinpath("boundary-calibration-prompt-v1.txt").read_bytes()
+    if document.get("judge_prompt_sha256") != hashlib.sha256(prompt_bytes).hexdigest():
+        raise ValueError("segmentation calibration judge prompt hash is invalid")
+    ordered_packets = [packets[packet_id].model_dump(mode="json") for packet_id in sorted(packets)]
+    judge_input = (
+        prompt_bytes
+        + b"\nPackets:\n"
+        + (
+            json.dumps(ordered_packets, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+        ).encode()
+    )
+    if document.get("judge_input_sha256") != hashlib.sha256(judge_input).hexdigest():
+        raise ValueError("segmentation calibration judge input hash is invalid")
+    references = document.get("boundary_references")
+    if not isinstance(references, list) or len(references) != len(packets):
+        raise ValueError("segmentation calibration boundary references are incomplete")
+    reference_packet_ids: set[str] = set()
+    reference_ids: set[str] = set()
+    for reference in references:
+        if not isinstance(reference, dict):
+            raise ValueError("segmentation calibration boundary reference is invalid")
+        packet_id = reference.get("packet_id")
+        answer = reference.get("answer")
+        packet = packets.get(packet_id) if isinstance(packet_id, str) else None
+        if not isinstance(packet, BoundaryPacket) or answer not in packet.allowed_answers:
+            raise ValueError("segmentation calibration reference packet or answer is invalid")
+        case = cases[packet_id]
+        if (
+            reference.get("pilot_case_id") != case["case_id"]
+            or reference.get("source_id") != case["source_id"]
+            or reference.get("source_region") != case["region"]
+        ):
+            raise ValueError("segmentation calibration reference source is invalid")
+        expected_reference_id = digest_json(
+            {
+                "protocol": "boundary-reference-v1",
+                "packet_id": packet_id,
+                "answer": answer,
+            }
+        )
+        reference_id = reference.get("boundary_reference_id")
+        if reference_id != expected_reference_id:
+            raise ValueError("segmentation calibration boundary reference ID is invalid")
+        if (
+            reference.get("left_user_event_id") != packet.left_user_event_id
+            or reference.get("right_user_event_id") != packet.right_user_event_id
+        ):
+            raise ValueError("segmentation calibration boundary anchors are invalid")
+        annotations = reference.get("judge_annotations")
+        if not isinstance(annotations, list) or len(annotations) != 3:
+            raise ValueError("segmentation calibration requires three judges per packet")
+        judge_identities = {
+            (annotation.get("judge_provider"), annotation.get("judge_model"))
+            for annotation in annotations
+            if isinstance(annotation, dict)
+        }
+        if len(judge_identities) != 3:
+            raise ValueError("segmentation calibration panel judges must be distinct")
+        citable_ids = {
+            value
+            for event in (
+                packet.adjacent_user_turns
+                + packet.intervening_normalized_events
+                + packet.bounded_context_events
+            )
+            for value in (event.evidence_id, event.source_event_id)
+            if value is not None
+        }
+        for annotation in annotations:
+            if not isinstance(annotation, dict):
+                raise ValueError("segmentation calibration judge annotation is invalid")
+            evidence_ids = annotation.get("evidence_ids")
+            if (
+                annotation.get("answer") not in packet.allowed_answers
+                or not isinstance(evidence_ids, list)
+                or not evidence_ids
+                or not set(evidence_ids) <= citable_ids
+            ):
+                raise ValueError("segmentation calibration judge evidence is invalid")
+        answers = {annotation["answer"] for annotation in annotations}
+        panel_status = "unanimous" if len(answers) == 1 else "disputed"
+        panel_answer = next(iter(answers)) if panel_status == "unanimous" else None
+        if (
+            reference.get("panel_status") != panel_status
+            or reference.get("panel_answer") != panel_answer
+        ):
+            raise ValueError("segmentation calibration panel resolution is invalid")
+        reference_packet_ids.add(packet_id)
+        reference_ids.add(expected_reference_id)
+    if reference_packet_ids != set(packets) or len(reference_ids) != len(references):
+        raise ValueError("segmentation calibration references are duplicated or missing")
+
+    unanimous = sorted(
+        reference["packet_id"]
+        for reference in references
+        if reference["panel_status"] == "unanimous"
+    )
+    seed = document.get("audit_selection_seed")
+    if not isinstance(seed, str):
+        raise ValueError("segmentation calibration audit seed is invalid")
+    selected = set(
+        sorted(
+            unanimous,
+            key=lambda packet_id: (
+                hashlib.sha256(f"{seed}\0{packet_id}".encode()).hexdigest(),
+                packet_id,
+            ),
+        )[: round(len(unanimous) * 0.2)]
+    )
+    candidate_rows: list[tuple[str, str]] = []
+    for reference in references:
+        packet_id = reference["packet_id"]
+        expected_selection = "selected" if packet_id in selected else "not_selected"
+        human_review = reference.get("human_review")
+        panel_status = reference["panel_status"]
+        if reference.get("audit_selection") != expected_selection:
+            raise ValueError("segmentation calibration audit selection is invalid")
+        if packet_id in selected:
+            expected_review_kind = "consensus_audit"
+        elif panel_status == "disputed":
+            expected_review_kind = "panel_dispute"
+        else:
+            expected_review_kind = None
+        if expected_review_kind is None:
+            if human_review is not None:
+                raise ValueError("segmentation calibration has an unexpected human review")
+            resolved_answer = reference["panel_answer"]
+            resolution_status = "judge_consensus"
+        else:
+            if (
+                not isinstance(human_review, dict)
+                or human_review.get("review_kind") != expected_review_kind
+                or human_review.get("answer") not in packets[packet_id].allowed_answers
+            ):
+                raise ValueError("segmentation calibration human review is invalid")
+            resolved_answer = human_review["answer"]
+            resolution_status = "human_resolved"
+        if (
+            reference.get("answer") != resolved_answer
+            or reference.get("resolution_status") != resolution_status
+        ):
+            raise ValueError("segmentation calibration reference resolution is invalid")
+        packet = packets[packet_id]
+        left_text = packet.adjacent_user_turns[0].text or ""
+        right_text = packet.adjacent_user_turns[1].text or ""
+        similarity = broad_goal_similarity(left_text, right_text)
+        if EXPLICIT_NEW_TASK.search(right_text):
+            candidate_decision = "split"
+        elif CORRECTION_OR_CONTINUATION.search(right_text) or (
+            similarity is not None and similarity >= 0.62
+        ):
+            candidate_decision = "no_split"
+        else:
+            candidate_decision = "ambiguous"
+        if reference.get("candidate_decision") != candidate_decision:
+            raise ValueError("segmentation calibration candidate decision is stale")
+        candidate_rows.append((candidate_decision, resolved_answer))
+
+    predicted_no_split = sum(candidate == "no_split" for candidate, _ in candidate_rows)
+    true_no_split = sum(answer == "no_split" for _, answer in candidate_rows)
+    matched_no_split = sum(
+        candidate == answer == "no_split" for candidate, answer in candidate_rows
+    )
+    true_split = sum(answer == "split" for _, answer in candidate_rows)
+    expected_candidate_metrics = {
+        "exact_agreement": (
+            f"{sum(candidate == answer for candidate, answer in candidate_rows)}/"
+            f"{len(candidate_rows)}"
+        ),
+        "prediction_counts": {
+            answer: sum(candidate == answer for candidate, _ in candidate_rows)
+            for answer in ("split", "no_split", "ambiguous")
+        },
+        "no_split_precision": f"{matched_no_split}/{predicted_no_split}",
+        "no_split_recall": f"{matched_no_split}/{true_no_split}",
+        "split_precision": "unavailable_no_predictions",
+        "split_recall": (
+            f"{sum(candidate == answer == 'split' for candidate, answer in candidate_rows)}/"
+            f"{true_split}"
+        ),
+        "ambiguity_coverage": (
+            f"{sum(candidate == 'ambiguous' for candidate, _ in candidate_rows)}/"
+            f"{len(candidate_rows)}"
+        ),
+    }
+    audited_consensus_errors = sum(
+        reference["human_review"] is not None
+        and reference["panel_status"] == "unanimous"
+        and reference["human_review"]["answer"] != reference["panel_answer"]
+        for reference in references
+    )
+    expected_metrics = {
+        "packet_count": len(references),
+        "judge_count_per_packet": 3,
+        "unanimous_panel_count": len(unanimous),
+        "disputed_panel_count": len(references) - len(unanimous),
+        "audited_unanimous_count": len(selected),
+        "audited_unanimous_rate": f"{len(selected)}/{len(unanimous)}",
+        "audited_consensus_error_count": audited_consensus_errors,
+        "reference_answer_counts": {
+            answer: sum(reference["answer"] == answer for reference in references)
+            for answer in ("split", "no_split", "ambiguous")
+        },
+        "candidate": expected_candidate_metrics,
+    }
+    if document.get("metrics") != expected_metrics:
+        raise ValueError("segmentation calibration metrics are stale")
+
+    episode_inputs = document.get("episode_evidence_inputs")
+    if not isinstance(episode_inputs, list) or not episode_inputs:
+        raise ValueError("segmentation calibration episode inputs are unavailable")
+    input_ids: set[str] = set()
+    for episode_input in episode_inputs:
+        if not isinstance(episode_input, dict):
+            raise ValueError("segmentation calibration episode input is invalid")
+        semantic_input = {
+            key: episode_input.get(key)
+            for key in (
+                "segmentation_version",
+                "source_id",
+                "user_event_ids",
+                "intervening_event_ids",
+                "boundary_reference_ids",
+            )
+        }
+        input_id = episode_input.get("episode_evidence_input_id")
+        boundary_ids = semantic_input["boundary_reference_ids"]
+        if (
+            input_id != digest_json(semantic_input)
+            or not isinstance(boundary_ids, list)
+            or not set(boundary_ids) <= reference_ids
+        ):
+            raise ValueError("segmentation calibration episode input identity is invalid")
+        input_ids.add(str(input_id))
+    if len(input_ids) != len(episode_inputs):
+        raise ValueError("segmentation calibration episode inputs are duplicated")
+
+    references_by_case = {reference["pilot_case_id"]: reference for reference in references}
+    expected_inputs = []
+    source_rows = {source["source_id"]: source for source in corpus["sources"]["sources"]}
+    for source_id in sorted(source_rows):
+        source = source_rows[source_id]
+        source_cases = sorted(
+            (case for case in corpus["manifest"]["cases"] if case["source_id"] == source_id),
+            key=lambda case: case["region"],
+        )
+        split_after = {
+            case["region"]
+            for case in source_cases
+            if references_by_case[case["case_id"]]["answer"] == "split"
+        }
+        start = 0
+        for end in [region + 1 for region in sorted(split_after)] + [len(source["user_turns"])]:
+            semantic_input = {
+                "segmentation_version": "segmentation-v2",
+                "source_id": source_id,
+                "user_event_ids": [turn["event_id"] for turn in source["user_turns"][start:end]],
+                "intervening_event_ids": [
+                    source["intervening_events"][index]["event_id"]
+                    for index in range(start, max(start, end - 1))
+                ],
+                "boundary_reference_ids": [
+                    references_by_case[case["case_id"]]["boundary_reference_id"]
+                    for case in source_cases
+                    if start <= case["region"] < end - 1
+                ],
+            }
+            expected_inputs.append(
+                {"episode_evidence_input_id": digest_json(semantic_input), **semantic_input}
+            )
+            start = end
+    if episode_inputs != expected_inputs:
+        raise ValueError("segmentation calibration episode inputs are not reference-derived")
+    return document
 
 
 def load_boundary_pilot(manifest_path: Path) -> tuple[BoundaryPacket, ...]:
