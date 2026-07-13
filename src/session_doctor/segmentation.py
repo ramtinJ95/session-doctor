@@ -106,16 +106,17 @@ def segment_session(
             if boundary.left_user_anchor_id not in anchors:
                 continue
             if boundary.reason is BoundaryReason.EXPLICIT_NEW_TASK:
-                observations.append(
-                    EpisodeObservation(
-                        observation_id=stable_id(
-                            "episode-observation", episode_id, boundary.boundary_id
-                        ),
-                        episode_id=episode_id,
-                        observation_kind="interrupted_unknown_by_explicit_replacement",
-                        evidence_anchor_ids=boundary.evidence_anchor_ids,
+                if len(boundary.evidence_anchor_ids) == 2:
+                    observations.append(
+                        EpisodeObservation(
+                            observation_id=stable_id(
+                                "episode-observation", episode_id, boundary.boundary_id
+                            ),
+                            episode_id=episode_id,
+                            observation_kind="interrupted_unknown_by_explicit_replacement",
+                            evidence_anchor_ids=boundary.evidence_anchor_ids,
+                        )
                     )
-                )
             elif boundary.decision is BoundaryDecision.AMBIGUOUS:
                 observations.append(
                     EpisodeObservation(
@@ -204,27 +205,29 @@ def closure_evidence_between(
     if phase not in {"final_answer", "final"} and not bool(last.metadata.get("turn_closed")):
         return None
     raw_order = {event.event_id: event.record_index for event in bundle.raw_events}
-    last_index = raw_order.get(last.source_event_id or "")
+    left_index = raw_order.get(left.source_event_id or "")
     right_index = raw_order.get(right.source_event_id or "")
-    if last_index is not None and right_index is not None:
-        calls = [
-            call
-            for call in bundle.tool_calls
-            if last_index < raw_order.get(call.source_event_id or "", right_index) < right_index
-        ]
-        result_call_ids = {
-            result.tool_call_id
-            for result in bundle.tool_results
-            if result.tool_call_id is not None
-            and last_index < raw_order.get(result.source_event_id or "", right_index) < right_index
-        }
-        if any(call.tool_call_id not in result_call_ids for call in calls):
+    result_call_ids = {
+        result.tool_call_id for result in bundle.tool_results if result.tool_call_id is not None
+    }
+    for call in bundle.tool_calls:
+        call_index = raw_order.get(call.source_event_id or "")
+        if call_index is None:
+            if call.tool_call_id not in result_call_ids:
+                return None
+            continue
+        if left_index is not None and right_index is not None:
+            if left_index < call_index < right_index and call.tool_call_id not in result_call_ids:
+                return None
+        elif call.tool_call_id not in result_call_ids:
             return None
-        if any(
-            command.ended_at is None
-            for command in bundle.command_runs
-            if last_index < raw_order.get(command.source_event_id or "", right_index) < right_index
-        ):
+    for command in bundle.command_runs:
+        if command.ended_at is not None:
+            continue
+        command_index = raw_order.get(command.source_event_id or "")
+        if command_index is None:
+            return None
+        if left_index is None or right_index is None or left_index < command_index < right_index:
             return None
     return message_anchor(last)
 

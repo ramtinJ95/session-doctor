@@ -726,6 +726,11 @@ UNAVAILABLE_REBUILD_MESSAGE = (
     "{command} is unavailable during the deterministic analysis v2 rebuild; "
     "see docs/deterministic-analysis-v2-plan.md."
 )
+UNAVAILABLE_COMMAND_CONTEXT = {
+    "allow_extra_args": True,
+    "ignore_unknown_options": True,
+    "help_option_names": [],
+}
 
 
 def unavailable_during_v2_rebuild(command: str) -> NoReturn:
@@ -733,21 +738,19 @@ def unavailable_during_v2_rebuild(command: str) -> NoReturn:
     raise typer.Exit(1)
 
 
-@app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@app.command(context_settings=UNAVAILABLE_COMMAND_CONTEXT)
 def summary(_context: typer.Context) -> None:
     """Fail explicitly while the v2 summary projection is rebuilt."""
     unavailable_during_v2_rebuild("summary")
 
 
-@app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@app.command(context_settings=UNAVAILABLE_COMMAND_CONTEXT)
 def trends(_context: typer.Context) -> None:
     """Fail explicitly while the v2 trends projection is rebuilt."""
     unavailable_during_v2_rebuild("trends")
 
 
-@projects_app.command(
-    "list", context_settings={"allow_extra_args": True, "ignore_unknown_options": True}
-)
+@projects_app.command("list", context_settings=UNAVAILABLE_COMMAND_CONTEXT)
 def projects_list(_context: typer.Context) -> None:
     """Fail explicitly while the v2 project projection is rebuilt."""
     unavailable_during_v2_rebuild("projects list")
@@ -764,13 +767,13 @@ def integration_path() -> None:
     typer.echo(skill_directory)
 
 
-@app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@app.command(context_settings=UNAVAILABLE_COMMAND_CONTEXT)
 def report(_context: typer.Context) -> None:
     """Fail explicitly while the v2 report projection is rebuilt."""
     unavailable_during_v2_rebuild("report")
 
 
-@app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@app.command(context_settings=UNAVAILABLE_COMMAND_CONTEXT)
 def graph(_context: typer.Context) -> None:
     """Fail explicitly while the v2 graph projection is rebuilt."""
     unavailable_during_v2_rebuild("graph")
