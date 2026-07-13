@@ -194,15 +194,17 @@ normalization run. Record index is authoritative inside each source; duplicate
 indexes are invalid, and timestamps never reorder records or create
 cross-source edges. Native parent links create causal edges only within their
 source; duplicate native IDs and unresolved parents remain explicit instead of
-guessing. Adapter declarations keep capability support separate from observed
+guessing, and self/forward references cannot become causal edges. Adapter
+declarations keep capability support separate from observed
 instrumentation, so absent evidence is unavailable rather than zero. Terminal
 instrumentation cites inspectable raw-event IDs.
 
 Project identity records native repository metadata, a VCS root observed and
 stored at ingestion, stored CWD, or unknown in that precedence order. Bundle
 content identity includes the stored ingestion observation. Model identity is
-one model, mixed models, or unknown from every observed provider/model pair and
-adapter model transition, not only the final session model. Every
+one model, mixed models, or unknown from every structured provider/model pair
+and adapter model transition, including unknown-provider evidence, not only the
+final session model. Every
 usage row declares cumulative, incremental, or aggregation-unavailable
 semantics; mixed row semantics make aggregate usage unavailable.
 
