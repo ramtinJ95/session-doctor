@@ -8,6 +8,7 @@ import duckdb
 import pytest
 
 from session_doctor.adapters import ParsedSessionBundle
+from session_doctor.ingest_workflow import topology_inputs_changed
 from session_doctor.schemas import AgentName, Session, SessionSource
 from session_doctor.store import BundleMemberCapture, DuckDBStore, SnapshotPruneBlocked
 
@@ -200,6 +201,28 @@ def test_missing_member_identity_changes_bundle_content(tmp_path) -> None:
         content_ids.append(bundle.bundle_content_id)
 
     assert content_ids[0] != content_ids[1]
+
+
+def test_topology_selection_detects_changes_to_any_input(tmp_path) -> None:
+    selected_parent = tmp_path / "parent.jsonl"
+    competing_parent = tmp_path / "competing.jsonl"
+    selected_parent.write_bytes(b"selected")
+    competing_parent.write_bytes(b"competing")
+    member_source = source().model_copy(
+        update={
+            "metadata": {
+                "capture_topology_input_sha256": {
+                    str(selected_parent): hashlib.sha256(b"selected").hexdigest(),
+                    str(competing_parent): hashlib.sha256(b"competing").hexdigest(),
+                }
+            }
+        }
+    )
+    members = ((member_source, "related_transcript"),)
+
+    assert topology_inputs_changed(members) is False
+    competing_parent.write_bytes(b"changed")
+    assert topology_inputs_changed(members) is True
 
 
 def test_incomplete_capture_interrupts_settling_across_identity_fallback(tmp_path) -> None:

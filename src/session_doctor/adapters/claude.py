@@ -211,6 +211,7 @@ class ClaudeCodeAdapter(BaseAdapter):
         candidates: list[Path] = []
         evidence_sources = [(source_path, source_bytes)]
         expected_hashes: dict[Path, str] = {}
+        topology_input_hashes: dict[str, str | None] | None = None
         if source.source_kind is SourceKind.ROOT_SESSION and session_dir.is_dir():
             transcripts = sorted((session_dir / "subagents").glob("*.jsonl"))
             candidates.extend(transcripts)
@@ -228,6 +229,9 @@ class ClaudeCodeAdapter(BaseAdapter):
             topology_paths = [root_path]
             topology_paths.extend(sorted((session_dir / "subagents").glob("*.jsonl")))
             topology_paths.extend(sorted((session_dir / "subagents").glob("*.meta.json")))
+            expected_metadata_path = source_path.with_suffix(".meta.json")
+            if expected_metadata_path not in topology_paths:
+                topology_paths.append(expected_metadata_path)
             topology_sources = [
                 SessionSource(
                     source_id=source_id_for_path(self.name, path),
@@ -245,6 +249,14 @@ class ClaudeCodeAdapter(BaseAdapter):
                     )
                 except OSError:
                     continue
+            topology_input_hashes = {
+                str(path): (
+                    hashlib.sha256(topology_bytes[path]).hexdigest()
+                    if path in topology_bytes
+                    else None
+                )
+                for path in topology_paths
+            }
             enrich_claude_sources(topology_sources, topology_bytes)
             current = next(
                 (
@@ -289,16 +301,17 @@ class ClaudeCodeAdapter(BaseAdapter):
             if path == source_path:
                 continue
             source_kind = classify_claude_path(path)
+            member_metadata: dict[str, object] = {}
+            if path in expected_hashes:
+                member_metadata["capture_expected_sha256"] = expected_hashes[path]
+            if topology_input_hashes is not None:
+                member_metadata["capture_topology_input_sha256"] = topology_input_hashes
             member_source = SessionSource(
                 source_id=source_id_for_path(self.name, path),
                 agent_name=self.name,
                 source_path=str(path),
                 source_kind=source_kind,
-                metadata=(
-                    {"capture_expected_sha256": expected_hashes[path]}
-                    if path in expected_hashes
-                    else {}
-                ),
+                metadata=member_metadata,
             )
             role = {
                 SourceKind.ROOT_SESSION: "related_transcript",
