@@ -178,6 +178,28 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
         else []
     )
     analysis_run_ids = tuple(str(row[0]) for row in analysis_rows)
+    semantic_analysis_rows = (
+        connection.execute(
+            """
+            SELECT a.analysis_identity
+            FROM semantic_analysis_runs AS a
+            JOIN lifecycle_observations AS l USING (lifecycle_observation_id)
+            WHERE l.snapshot_bundle_id IN (SELECT unnest(?))
+            ORDER BY a.analysis_identity
+            """,
+            [list((*bundle_ids, *downstream_lifecycle_bundle_ids))],
+        ).fetchall()
+        if normalization_run_ids
+        else []
+    )
+    analysis_run_ids = tuple(
+        sorted(
+            {
+                *analysis_run_ids,
+                *(str(row[0]) for row in semantic_analysis_rows),
+            }
+        )
+    )
     derived_row_counts: dict[str, int] = {
         "session_sources": len(source_ids),
         "sessions": len(session_ids),
@@ -194,6 +216,8 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
     derived_row_counts["normalized_entities"] = (
         int(normalized_entity_count[0]) if normalized_entity_count else 0
     )
+    derived_row_counts["normalization_semantics"] = len(normalization_run_ids)
+    derived_row_counts["semantic_analysis_runs"] = len(semantic_analysis_rows)
     for table_name in ("raw_events", "parse_warnings"):
         if not source_ids:
             derived_row_counts[table_name] = 0
@@ -460,6 +484,17 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
         ).fetchall()
 
         connection.execute(
+            """
+            DELETE FROM semantic_analysis_runs
+            WHERE lifecycle_observation_id IN (
+                SELECT lifecycle_observation_id FROM lifecycle_observations
+                WHERE snapshot_bundle_id = ?
+            )
+            """,
+            [bundle_id],
+        )
+
+        connection.execute(
             "DELETE FROM normalization_run_bundles WHERE snapshot_bundle_id = ?",
             [bundle_id],
         )
@@ -472,6 +507,14 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
                 continue
             connection.execute(
                 "DELETE FROM normalized_entities WHERE normalization_run_id = ?",
+                [normalization_run_id],
+            )
+            connection.execute(
+                "DELETE FROM semantic_analysis_runs WHERE normalization_run_id = ?",
+                [normalization_run_id],
+            )
+            connection.execute(
+                "DELETE FROM normalization_semantics WHERE normalization_run_id = ?",
                 [normalization_run_id],
             )
             connection.execute(
@@ -501,6 +544,16 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
             [previous_lineage_bundle_id, bundle_id],
         )
         for downstream_bundle_id, downstream_captured_at in downstream_settled_rows:
+            connection.execute(
+                """
+                DELETE FROM semantic_analysis_runs
+                WHERE lifecycle_observation_id IN (
+                    SELECT lifecycle_observation_id FROM lifecycle_observations
+                    WHERE snapshot_bundle_id = ?
+                )
+                """,
+                [downstream_bundle_id],
+            )
             connection.execute(
                 "DELETE FROM lifecycle_observations WHERE snapshot_bundle_id = ?",
                 [downstream_bundle_id],

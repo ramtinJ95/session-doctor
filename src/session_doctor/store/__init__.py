@@ -21,6 +21,10 @@ from .normalization_runs import (
     NormalizationRun,
     StoredNormalization,
 )
+from .semantic_runs import (
+    SemanticAnalysisConflictError,
+    SemanticAnalysisRun,
+)
 from .snapshot_history import (
     PruneDependencies,
     PruneResult,
@@ -82,5 +86,7 @@ __all__ = [
     "NormalizationCoverage",
     "NormalizationRun",
     "StoredNormalization",
+    "SemanticAnalysisConflictError",
+    "SemanticAnalysisRun",
     "LoadedBundleMember",
 ]

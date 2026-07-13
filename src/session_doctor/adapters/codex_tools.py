@@ -5,7 +5,7 @@ from typing import Any
 
 from session_doctor.ids import stable_id
 from session_doctor.privacy import hash_text, text_length
-from session_doctor.schemas import ModelUsage, RawEvent, ToolCall, ToolResult
+from session_doctor.schemas import ModelUsage, RawEvent, ToolCall, ToolResult, UsageSemantics
 
 from .common import dict_value, int_value, string_value
 
@@ -153,6 +153,9 @@ def model_usage_from_token_count(
         output_tokens=int_value(usage.get("output_tokens")),
         cache_read_tokens=int_value(usage.get("cached_input_tokens")),
         total_tokens=int_value(usage.get("total_tokens")),
+        aggregation_semantics=(
+            UsageSemantics.INCREMENTAL if last_usage else UsageSemantics.CUMULATIVE
+        ),
         metadata={
             "payload_type": string_value(payload.get("type")),
             "model_context_window": info.get("model_context_window"),

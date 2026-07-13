@@ -237,6 +237,7 @@ def create_single_source_bundle(
             stored_source.native_session_id,
             stored_source.parent_source_id,
             metadata_json(stored_source.metadata),
+            (capture_evidence or {}).get("observed_vcs_root"),
         )
         snapshot_bundle_id = stable_id(
             "snapshot-bundle",
@@ -465,8 +466,10 @@ def add_bundle_members(
                 m.source_id, m.source_path, coalesce(m.logical_source_id, ''),
                 coalesce(s.snapshot_content_id, ''), coalesce(s.source_kind, ''),
                 coalesce(s.discovered_at, ''), coalesce(s.native_session_id, ''),
-                coalesce(s.parent_source_id, ''), coalesce(s.source_metadata_json, '')
+                coalesce(s.parent_source_id, ''), coalesce(s.source_metadata_json, ''),
+                coalesce(json_extract_string(c.evidence_json, '$.observed_vcs_root'), '')
             FROM bundle_member_capture_metadata AS m
+            JOIN bundle_capture_metadata AS c USING (snapshot_bundle_id)
             LEFT JOIN source_snapshots AS s ON s.snapshot_id = m.snapshot_id
             WHERE m.snapshot_bundle_id = ?
             ORDER BY m.capture_order

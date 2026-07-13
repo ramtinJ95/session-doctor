@@ -116,6 +116,7 @@ def record_lifecycle_observation(
             "capture_sequence": int(capture_sequence),
             "bundle_content_id": str(bundle_content_id),
             "capture_status": str(capture_status),
+            "terminal_observed": terminal_observed,
             "previous_snapshot_bundle_id": (
                 str(previous_bundle_id) if previous_bundle_id is not None else None
             ),

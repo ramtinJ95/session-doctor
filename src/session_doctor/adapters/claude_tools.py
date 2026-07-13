@@ -5,7 +5,7 @@ from typing import Any
 
 from session_doctor.ids import stable_id
 from session_doctor.privacy import hash_text
-from session_doctor.schemas import ModelUsage, RawEvent, ToolCall, ToolResult
+from session_doctor.schemas import ModelUsage, RawEvent, ToolCall, ToolResult, UsageSemantics
 
 from .common import bool_value, content_blocks, dict_value, int_value, string_value
 
@@ -159,6 +159,7 @@ def model_usage_from_record(
         cache_read_tokens=cache_read_tokens,
         cache_write_tokens=cache_write_tokens,
         total_tokens=total_tokens,
+        aggregation_semantics=UsageSemantics.INCREMENTAL,
         metadata={
             "unmapped_usage_keys": sorted(set(usage) - mapped_keys),
             "service_tier": string_value(usage.get("service_tier")),

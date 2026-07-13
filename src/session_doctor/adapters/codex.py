@@ -5,9 +5,16 @@ from pathlib import Path
 from typing import Any
 
 from session_doctor.ids import source_id_for_path
-from session_doctor.schemas import AgentName, NormalizedRole, RawEvent, SessionSource, SourceKind
+from session_doctor.schemas import (
+    AgentName,
+    CapabilitySupport,
+    NormalizedRole,
+    RawEvent,
+    SessionSource,
+    SourceKind,
+)
 
-from .base import BaseAdapter, ParsedSessionBundle
+from .base import BaseAdapter, ParsedSessionBundle, adapter_capability
 from .codex_commands import (
     command_output_parts,
     command_run_from_event_msg,
@@ -53,6 +60,14 @@ CODEX_EXPECTED_RESPONSE_ITEM_TYPES = {"agent_message"}
 class CodexAdapter(BaseAdapter):
     name = AgentName.CODEX
     display_name = "Codex"
+    capabilities = (
+        adapter_capability("native_causal_links", CapabilitySupport.SUPPORTED, "native"),
+        adapter_capability("terminal_evidence", CapabilitySupport.SUPPORTED, "native"),
+        adapter_capability("delegation_topology", CapabilitySupport.UNKNOWN, "unavailable"),
+        adapter_capability("model_usage", CapabilitySupport.SUPPORTED, "native"),
+        adapter_capability("native_project_metadata", CapabilitySupport.UNKNOWN, "unavailable"),
+        adapter_capability("native_cost", CapabilitySupport.UNSUPPORTED, "unavailable"),
+    )
 
     def default_roots(self) -> tuple[Path, ...]:
         return (Path.home() / ".codex" / "sessions",)

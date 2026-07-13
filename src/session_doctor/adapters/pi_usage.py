@@ -4,7 +4,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from session_doctor.ids import stable_id
-from session_doctor.schemas import ModelUsage, RawEvent
+from session_doctor.schemas import ModelUsage, RawEvent, UsageSemantics
 
 from .common import dict_value, int_value, string_value
 
@@ -32,6 +32,7 @@ def model_usage_from_message(
         cache_write_tokens=int_value(usage.get("cacheWrite")),
         total_tokens=int_value(usage.get("totalTokens")),
         cost=cost,
+        aggregation_semantics=UsageSemantics.INCREMENTAL,
         metadata={
             "cost": usage.get("cost"),
             "stop_reason": string_value(message_payload.get("stopReason")),

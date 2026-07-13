@@ -6,8 +6,11 @@ from pathlib import Path
 from session_doctor.adapters import ParsedSessionBundle
 from session_doctor.diagnostic_models import DiagnosticSnapshot
 from session_doctor.schemas import (
+    AdapterCapabilityDeclaration,
     AnalysisRun,
     MessageFeature,
+    SemanticAnalysisComponents,
+    SemanticFoundation,
     SessionClassification,
     SessionFeature,
     SessionSource,
@@ -35,6 +38,7 @@ from .normalization_runs import (
     NormalizationRun,
     StoredNormalization,
     load_normalization,
+    load_semantic_foundation,
     normalization_coverage,
     persist_normalization,
 )
@@ -60,6 +64,11 @@ from .row_mappers import (
     session_rows,
     tool_call_rows,
     tool_result_rows,
+)
+from .semantic_runs import (
+    SemanticAnalysisRun,
+    list_semantic_analysis_runs,
+    record_semantic_analysis_run,
 )
 from .snapshot_history import (
     PruneDependencies,
@@ -162,6 +171,7 @@ class DuckDBStore:
         captured_bundle: CapturedBundle,
         *,
         adapter_version: str = "0.1.0",
+        capability_declarations: tuple[AdapterCapabilityDeclaration, ...] = (),
     ) -> None:
         write_parsed_bundle(
             self.database_path,
@@ -170,6 +180,7 @@ class DuckDBStore:
             captured_source,
             captured_bundle,
             adapter_version=adapter_version,
+            capability_declarations=capability_declarations,
         )
 
     def insert_untracked_parsed_bundle(
@@ -281,6 +292,7 @@ class DuckDBStore:
         adapter_version: str,
         normalization_version: str = NORMALIZATION_VERSION,
         configuration_hash: str = NORMALIZATION_CONFIGURATION_HASH,
+        capability_declarations: tuple[AdapterCapabilityDeclaration, ...] = (),
     ) -> NormalizationRun:
         return persist_normalization(
             self.database_path,
@@ -290,6 +302,7 @@ class DuckDBStore:
             adapter_version=adapter_version,
             normalization_version=normalization_version,
             configuration_hash=configuration_hash,
+            capability_declarations=capability_declarations,
         )
 
     def normalization_coverage(
@@ -312,6 +325,28 @@ class DuckDBStore:
 
     def load_normalization(self, normalization_run_id: str) -> StoredNormalization | None:
         return load_normalization(self.database_path, normalization_run_id)
+
+    def load_semantic_foundation(self, normalization_run_id: str) -> SemanticFoundation | None:
+        return load_semantic_foundation(self.database_path, normalization_run_id)
+
+    def record_semantic_analysis_run(
+        self,
+        components: SemanticAnalysisComponents,
+        *,
+        started_at: datetime | None = None,
+        completed_at: datetime | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> SemanticAnalysisRun:
+        return record_semantic_analysis_run(
+            self.database_path,
+            components,
+            started_at=started_at,
+            completed_at=completed_at,
+            metadata=metadata,
+        )
+
+    def list_semantic_analysis_runs(self) -> tuple[SemanticAnalysisRun, ...]:
+        return list_semantic_analysis_runs(self.database_path)
 
     def replace_analysis_rows(
         self,

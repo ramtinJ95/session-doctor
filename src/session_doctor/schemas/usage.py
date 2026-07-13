@@ -5,6 +5,7 @@ from decimal import Decimal
 from pydantic import Field
 
 from .common import Metadata, OptionalDatetime, SessionDoctorModel
+from .semantics import UsageSemantics
 
 
 class ModelUsage(SessionDoctorModel):
@@ -20,4 +21,5 @@ class ModelUsage(SessionDoctorModel):
     cache_write_tokens: int | None = None
     total_tokens: int | None = None
     cost: Decimal | None = None
+    aggregation_semantics: UsageSemantics = UsageSemantics.AGGREGATION_UNAVAILABLE
     metadata: Metadata = Field(default_factory=dict)
