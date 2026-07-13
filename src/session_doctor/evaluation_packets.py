@@ -79,12 +79,8 @@ def boundary_packet(
     targets, redaction_terms = routing_identities(stored, foundation)
     packet = BoundaryPacket(
         packet_id="",
-        left_user_event_id=opaque_evidence_id(
-            packet_seed, left.source_event_id or left.evidence_id
-        ),
-        right_user_event_id=opaque_evidence_id(
-            packet_seed, right.source_event_id or right.evidence_id
-        ),
+        left_user_event_id=opaque_source_event_id(packet_seed, left),
+        right_user_event_id=opaque_source_event_id(packet_seed, right),
         adjacent_user_turns=[
             blind_event(left, redaction_terms, packet_seed),
             blind_event(right, redaction_terms, packet_seed),
@@ -135,12 +131,13 @@ def boundary_packet(
 def packet_events(stored: StoredNormalization) -> list[PacketEvent]:
     bundle = stored.bundle
     record_indexes = {event.event_id: event.record_index for event in bundle.raw_events}
-    rows: list[tuple[int, int, str, PacketEvent]] = []
+    rows: list[tuple[int, int, int, str, PacketEvent]] = []
 
     def add(
         evidence_id: str,
         entity_kind: str,
         source_event_id: str | None,
+        entity_rank: int,
         entity_order: int,
         *,
         role: str | None = None,
@@ -152,6 +149,7 @@ def packet_events(stored: StoredNormalization) -> list[PacketEvent]:
         rows.append(
             (
                 record_indexes.get(source_event_id or "", 2**31 - 1),
+                entity_rank,
                 entity_order,
                 evidence_id,
                 PacketEvent(
@@ -172,6 +170,7 @@ def packet_events(stored: StoredNormalization) -> list[PacketEvent]:
             message.message_id,
             "message",
             message.source_event_id,
+            0,
             index,
             role=message.role.value,
             text=message.text,
@@ -184,6 +183,7 @@ def packet_events(stored: StoredNormalization) -> list[PacketEvent]:
             call.tool_call_id,
             "tool_call",
             call.source_event_id,
+            1,
             index,
             structure={"name": call.name},
         )
@@ -192,6 +192,7 @@ def packet_events(stored: StoredNormalization) -> list[PacketEvent]:
             result.tool_result_id,
             "tool_result",
             result.source_event_id,
+            2,
             index,
             structure={"is_error": result.is_error, "output_length": result.output_length},
         )
@@ -200,6 +201,7 @@ def packet_events(stored: StoredNormalization) -> list[PacketEvent]:
             command.command_run_id,
             "command_run",
             command.source_event_id,
+            3,
             index,
             structure={"exit_code": command.exit_code, "output_length": command.output_length},
         )
@@ -208,10 +210,11 @@ def packet_events(stored: StoredNormalization) -> list[PacketEvent]:
             activity.file_activity_id,
             "file_activity",
             activity.source_event_id,
+            4,
             index,
             structure={"operation": activity.operation},
         )
-    return [row[3] for row in sorted(rows, key=lambda row: row[:3])]
+    return [row[4] for row in sorted(rows, key=lambda row: row[:4])]
 
 
 def routing_identities(
@@ -253,7 +256,7 @@ def blind_event(
         update={
             "evidence_id": opaque_evidence_id(packet_seed, event.evidence_id),
             "source_event_id": (
-                opaque_evidence_id(packet_seed, event.source_event_id)
+                opaque_source_event_id(packet_seed, event)
                 if event.source_event_id is not None
                 else None
             ),
@@ -267,6 +270,13 @@ def blind_event(
 
 def opaque_evidence_id(packet_seed: str, evidence_id: str) -> str:
     return "ev_" + hashlib.sha256(f"{packet_seed}\0{evidence_id}".encode()).hexdigest()[:24]
+
+
+def opaque_source_event_id(packet_seed: str, event: PacketEvent) -> str:
+    return opaque_evidence_id(
+        packet_seed,
+        f"source:{event.source_event_id or event.evidence_id}:{event.evidence_id}",
+    )
 
 
 def redact_value(value: object, terms: tuple[str, ...]) -> object:
@@ -378,7 +388,18 @@ def load_boundary_pilot_bytes(corpus_bytes: bytes) -> tuple[BoundaryPacket, ...]
     corpus = json.loads(corpus_bytes)
     manifest = corpus["manifest"]
     source_document = corpus["sources"]
-    sources = {str(row["source_id"]): row for row in source_document["sources"]}
+    source_rows = source_document["sources"]
+    source_ids = [str(row["source_id"]) for row in source_rows]
+    case_ids = [str(row["case_id"]) for row in manifest["cases"]]
+    if len(source_ids) != len(set(source_ids)) or len(case_ids) != len(set(case_ids)):
+        raise ValueError("pilot source and case identities must be unique")
+    for source in source_rows:
+        event_ids = [
+            str(row["event_id"]) for row in source["user_turns"] + source["intervening_events"]
+        ]
+        if len(event_ids) != len(set(event_ids)):
+            raise ValueError("pilot source event identities must be unique")
+    sources = {str(row["source_id"]): row for row in source_rows}
     packets: list[BoundaryPacket] = []
     seen_regions: set[tuple[str, int]] = set()
     for case in manifest["cases"]:
@@ -399,6 +420,7 @@ def load_boundary_pilot_bytes(corpus_bytes: bytes) -> tuple[BoundaryPacket, ...]
             or region >= len(intervening_events)
         ):
             raise ValueError("pilot region does not resolve to adjacent user turns")
+        validate_pilot_strata(case, source, region)
         left = turns[region]
         right = turns[region + 1]
         packet_seed = digest_json(
@@ -414,25 +436,38 @@ def load_boundary_pilot_bytes(corpus_bytes: bytes) -> tuple[BoundaryPacket, ...]
             pilot_event(packet_seed, right),
         ]
         intervening = intervening_events[region]
-        intervening_id = opaque_evidence_id(packet_seed, str(intervening["event_id"]))
+        length_stratum = next(
+            (value for value in case["strata"] if value in {"short", "medium", "long"}),
+            "short",
+        )
+        context_events: list[PacketEvent] = []
+        if length_stratum == "medium":
+            for turn_index in (region - 1, region + 2):
+                if 0 <= turn_index < len(turns):
+                    context_events.append(pilot_event(packet_seed, turns[turn_index]))
+            for event_index in (region - 1, region + 1):
+                if 0 <= event_index < len(intervening_events):
+                    context_events.append(
+                        pilot_normalized_event(packet_seed, intervening_events[event_index])
+                    )
+        elif length_stratum == "long":
+            context_events.extend(
+                pilot_event(packet_seed, turn)
+                for index, turn in enumerate(turns)
+                if index not in {region, region + 1}
+            )
+            context_events.extend(
+                pilot_normalized_event(packet_seed, event)
+                for index, event in enumerate(intervening_events)
+                if index != region
+            )
         packet = BoundaryPacket(
             packet_id="",
             left_user_event_id=adjacent[0].evidence_id,
             right_user_event_id=adjacent[1].evidence_id,
             adjacent_user_turns=adjacent,
-            intervening_normalized_events=[
-                PacketEvent(
-                    evidence_id=intervening_id,
-                    source_event_id=intervening_id,
-                    entity_kind=str(intervening["entity_kind"]),
-                    role=(str(intervening["role"]) if "role" in intervening else None),
-                    text=(str(intervening["text"]) if "text" in intervening else None),
-                    structure={
-                        str(key): value for key, value in intervening.get("structure", {}).items()
-                    },
-                )
-            ],
-            bounded_context_events=[],
+            intervening_normalized_events=[pilot_normalized_event(packet_seed, intervening)],
+            bounded_context_events=context_events,
         )
         packet_id = digest_json(
             {
@@ -456,19 +491,10 @@ def export_boundary_pilot(
     manifest = corpus["manifest"]
     source_document = corpus["sources"]
     corpus_content_id = digest_json({"manifest": manifest, "sources": source_document})
-    sources = {str(row["source_id"]): row for row in source_document["sources"]}
     packets = load_boundary_pilot_bytes(corpus_bytes)
     exports = []
-    for case, packet in zip(manifest["cases"], packets, strict=True):
-        source = sources[str(case["source_id"])]
-        targets = [
-            canonical_json(
-                {
-                    "model": str(source["target_model"]),
-                    "provider": str(source["target_provider"]),
-                }
-            )
-        ]
+    for packet in packets:
+        targets: list[str] = []
         unsigned_packet = packet.model_copy(update={"packet_id": ""})
         packet_id = digest_json(
             {
@@ -511,3 +537,55 @@ def pilot_event(packet_seed: str, turn: dict[str, object]) -> PacketEvent:
         text_hash=hashlib.sha256(text.encode()).hexdigest(),
         text_length=len(text),
     )
+
+
+def pilot_normalized_event(packet_seed: str, event: dict) -> PacketEvent:
+    event_id = opaque_evidence_id(packet_seed, str(event["event_id"]))
+    text = str(event["text"]) if "text" in event else None
+    return PacketEvent(
+        evidence_id=event_id,
+        source_event_id=event_id,
+        entity_kind=str(event["entity_kind"]),
+        role=str(event["role"]) if "role" in event else None,
+        text=text,
+        text_hash=hashlib.sha256(text.encode()).hexdigest() if text is not None else None,
+        text_length=len(text) if text is not None else None,
+        structure={str(key): value for key, value in event.get("structure", {}).items()},
+    )
+
+
+def validate_pilot_strata(case: dict, source: dict, region: int) -> None:
+    strata = set(case["strata"])
+    if source.get("adapter") not in strata:
+        raise ValueError("pilot adapter stratum does not match its source")
+    metadata_rows = source.get("region_metadata")
+    if not isinstance(metadata_rows, list) or len(metadata_rows) != len(
+        source["intervening_events"]
+    ):
+        raise ValueError("pilot source region metadata is incomplete")
+    metadata = metadata_rows[region]
+    expected_capture = (
+        "snapshot_incomplete"
+        if "incomplete" in strata
+        else "possibly_active"
+        if "active" in strata
+        else None
+    )
+    if expected_capture is not None and metadata.get("capture_state") != expected_capture:
+        raise ValueError("pilot capture-state stratum lacks source provenance")
+    if "prior_disagreement" in strata and metadata.get("prior_annotation_status") != "disputed":
+        raise ValueError("pilot disagreement stratum lacks source provenance")
+    if "task_switch" in strata and metadata.get("task_transition") != "explicit":
+        raise ValueError("pilot task-switch stratum lacks source provenance")
+    structure = source["intervening_events"][region].get("structure", {})
+    if "success" in strata and structure.get("exit_code") != 0:
+        raise ValueError("pilot success stratum lacks successful source evidence")
+    if ("blocker" in strata or "tool_error" in strata) and structure.get("exit_code") != 1:
+        raise ValueError("pilot error stratum lacks failing source evidence")
+    if "delegation" in strata and structure.get("tool_name") != "delegate":
+        raise ValueError("pilot delegation stratum lacks source evidence")
+    if (
+        "compaction" in strata
+        and source["intervening_events"][region].get("entity_kind") != "normalized_compaction"
+    ):
+        raise ValueError("pilot compaction stratum lacks source evidence")

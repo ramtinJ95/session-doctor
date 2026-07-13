@@ -413,6 +413,14 @@ manifest. `evaluation export-pilot` durably captures the exact combined corpus,
 registers its 24 packets with direct snapshot-bundle provenance, and exports
 judge-only files. The command accepts no corpus override: registration verifies
 the captured bytes against the pinned checked manifest and source document.
+Because this checked synthetic development corpus has no genuine authoring-model
+provenance, its routing marks target identity unverifiable; its annotations may
+inform workflow debugging but cannot enter blinded audits or final references.
+Short, medium, and long cases export increasing amounts of real bounded source
+context; success, blocker, delegation, compaction, and task-transition strata
+are validated against source events. Active/incomplete capture state and prior
+annotation disagreement remain private selection provenance rather than leaked
+judge cues.
 Normal production packets retain normalization-run plus
 snapshot-bundle provenance and reconstruct private target identities from the
 stored semantic foundation before regenerating and atomically registering the
