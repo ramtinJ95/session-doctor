@@ -5,6 +5,9 @@ artifact, payload, and CLI contracts may change incompatibly during dogfooding.
 
 ## Unreleased
 
+- calibrate and freeze provisional `segmentation-v2` with three-judge panels,
+  maintainer audit, synthetic regressions, boundary references, and deterministic
+  episode-evidence inputs without making a checkpoint or final quality claim
 - replace v1 scores and classifications with deterministic event-anchored task
   episode segmentation, and make unfinished downstream projections explicit
 - add deterministic blinded boundary packet export, offline judge import,

@@ -65,6 +65,8 @@ session-doctor evaluation import-judge --input ANNOTATION_JSON
 
 Session Doctor does not call an LLM provider. Judge annotations are produced
 outside the production analyzer and imported as immutable records.
+Task-specific episode packet export remains unavailable until its owning rubric
+and allowed-answer set are versioned.
 
 ## Temporarily Unavailable Commands
 
