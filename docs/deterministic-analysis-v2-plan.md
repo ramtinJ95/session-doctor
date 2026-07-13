@@ -230,6 +230,8 @@ snapshot_bundles
   bundle_content_id
   agent_name
   native_session_identity
+  native_bundle_capture_sequence
+  previous_snapshot_bundle_id
   captured_at
 
 snapshot_bundle_members
@@ -334,12 +336,14 @@ Lifecycle precedence is:
    times spanning the settling interval -> `settled_unknown`;
 4. otherwise -> `possibly_active`.
 
-For sources without terminal markers, one capture produces a
-`possibly_active` lifecycle observation. A later ingestion observing the same
-content hash after the explicit settling interval creates a new
-`settled_unknown` lifecycle observation for the later bundle. Prior snapshots,
-lifecycle observations, and analyses remain unchanged. Ingestion never waits
-and re-reads implicitly.
+For sources without terminal markers, one complete capture produces a
+`possibly_active` lifecycle observation. Only the next complete capture in that
+native bundle's monotonic capture sequence can settle it, and only when both
+captures have the same `bundle_content_id` and span the settling interval. Any
+intervening differing/incomplete capture prevents settlement. The qualifying
+capture creates a new `settled_unknown` lifecycle observation for the later
+bundle. Prior snapshots, lifecycle observations, and analyses remain unchanged.
+Ingestion never waits and re-reads implicitly.
 
 The latest active snapshot is still analyzed descriptively. Result state,
 efficiency totals, and unresolved-ending conclusions remain provisional and do
@@ -873,6 +877,9 @@ Tests:
 
 - Claude-style multi-file bundle replay;
 - active first capture and settled later identical capture;
+- tied/regressing capture timestamps still follow native bundle capture
+  sequence;
+- A-B-A and complete-incomplete-complete captures do not settle;
 - no implicit ingest waiting;
 - historical snapshot selection;
 - prune block, force dependency report, and checkpoint path.
@@ -958,6 +965,8 @@ Tests:
 - boundary and episode capabilities are task-minimized and anonymized;
 - panel consensus, audit selection, human adjudication, and final reference
   resolution remain separate immutable records.
+- cross-packet, cross-protocol, cross-panel, status-incompatible, and
+  answer-inconsistent adjudication/reference imports are rejected.
 
 Gate:
 

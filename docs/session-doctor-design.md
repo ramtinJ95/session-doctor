@@ -483,6 +483,21 @@ and no audit record. A reference resolution may cite only panel, audit, and
 human records satisfying these co-reference rules. Imports reject cross-packet,
 cross-protocol, cross-panel, or status-incompatible links.
 
+Final provenance matrix:
+
+- `judge_consensus` requires one unanimous panel, no human adjudication, and
+  either no audit selection or a not-selected audit record; its answer equals
+  the unanimous panel answer;
+- `human_resolved` requires at least one human adjudication for a disputed or
+  insufficient panel, or one consensus-audit adjudication tied to a selected
+  audit; its answer equals the accepted human answer under the protocol;
+- `ambiguous` requires human adjudication for the disputed, insufficient, or
+  selected-audit path and records no forced answer outside the packet's allowed
+  ambiguous value;
+- a selected consensus audit cannot produce final `judge_consensus` without a
+  completed human adjudication; confirmed consensus resolves as
+  `human_resolved` while preserving the original unanimous panel answer.
+
 ## Versioning And Determinism
 
 Every schema change increments the relevant schema version. Raw capture history
