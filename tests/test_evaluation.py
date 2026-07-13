@@ -243,6 +243,26 @@ def test_boundary_packet_export_is_deterministic_blinded_and_preseal(tmp_path) -
         export_boundary_packets(stored, exposed_foundation)[0].routing.identity_exposure_status
         is IdentityExposureStatus.IDENTITY_EXPOSED
     )
+    cross_source_events = [
+        event.model_copy(
+            update={
+                "source_id": "source-z" if index < 2 else "source-a",
+                "record_index": (1 - index) if index < 2 else index - 2,
+            }
+        )
+        for index, event in enumerate(stored.bundle.raw_events)
+    ]
+    cross_source_stored = replace(
+        stored,
+        bundle=stored.bundle.model_copy(update={"raw_events": cross_source_events}),
+    )
+    cross_source_packet = export_boundary_packets(cross_source_stored, foundation)[0].judge_packet
+    assert isinstance(cross_source_packet, BoundaryPacket)
+    assert [event.text for event in cross_source_packet.adjacent_user_turns] == [
+        "Ask [identity_redacted] [identity_redacted] via [identity_redacted]",
+        "message 2",
+    ]
+
     messages_without_source = list(stored.bundle.messages)
     messages_without_source[2] = messages_without_source[2].model_copy(
         update={"source_event_id": None}

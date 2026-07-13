@@ -21,7 +21,7 @@ from session_doctor.evaluation_models import (
     PacketKind,
     RoutingEnvelope,
 )
-from session_doctor.schemas import Message, NormalizedRole, SemanticFoundation
+from session_doctor.schemas import NormalizedRole, SemanticFoundation
 
 if TYPE_CHECKING:
     from session_doctor.store.normalization_runs import StoredNormalization
@@ -135,7 +135,15 @@ def boundary_packet(
 def packet_events(stored: StoredNormalization) -> list[PacketEvent]:
     bundle = stored.bundle
     record_indexes = {event.event_id: event.record_index for event in bundle.raw_events}
-    message_order = normalized_message_order(bundle.messages, record_indexes)
+    message_order = {
+        message.source_event_id: Fraction(index)
+        for index, message in enumerate(bundle.messages)
+        if message.source_event_id in record_indexes
+    }
+
+    def anchored_order(source_event_id: str | None) -> Fraction | None:
+        return message_order.get(source_event_id) if source_event_id is not None else None
+
     rows: list[tuple[Fraction, int, int, str, PacketEvent]] = []
 
     def add(
@@ -144,7 +152,7 @@ def packet_events(stored: StoredNormalization) -> list[PacketEvent]:
         source_event_id: str | None,
         entity_rank: int,
         entity_order: int,
-        fallback_order: Fraction | None = None,
+        normalized_order: Fraction | None = None,
         *,
         role: str | None = None,
         text: str | None = None,
@@ -155,10 +163,10 @@ def packet_events(stored: StoredNormalization) -> list[PacketEvent]:
         resolved_source_event_id = source_event_id if source_event_id in record_indexes else None
         rows.append(
             (
-                Fraction(record_indexes[resolved_source_event_id])
+                normalized_order
+                if normalized_order is not None
+                else Fraction(record_indexes[resolved_source_event_id])
                 if resolved_source_event_id is not None
-                else fallback_order
-                if fallback_order is not None
                 else Fraction(2**31 - 1),
                 entity_rank,
                 entity_order,
@@ -183,7 +191,7 @@ def packet_events(stored: StoredNormalization) -> list[PacketEvent]:
             message.source_event_id,
             0,
             index,
-            fallback_order=message_order[message.message_id],
+            normalized_order=Fraction(index),
             role=message.role.value,
             text=message.text,
             text_hash=message.text_hash,
@@ -197,6 +205,7 @@ def packet_events(stored: StoredNormalization) -> list[PacketEvent]:
             call.source_event_id,
             1,
             index,
+            normalized_order=anchored_order(call.source_event_id),
             structure={"name": call.name},
         )
     for index, result in enumerate(bundle.tool_results):
@@ -206,6 +215,7 @@ def packet_events(stored: StoredNormalization) -> list[PacketEvent]:
             result.source_event_id,
             2,
             index,
+            normalized_order=anchored_order(result.source_event_id),
             structure={"is_error": result.is_error, "output_length": result.output_length},
         )
     for index, command in enumerate(bundle.command_runs):
@@ -215,6 +225,7 @@ def packet_events(stored: StoredNormalization) -> list[PacketEvent]:
             command.source_event_id,
             3,
             index,
+            normalized_order=anchored_order(command.source_event_id),
             structure={"exit_code": command.exit_code, "output_length": command.output_length},
         )
     for index, activity in enumerate(bundle.file_activities):
@@ -224,41 +235,10 @@ def packet_events(stored: StoredNormalization) -> list[PacketEvent]:
             activity.source_event_id,
             4,
             index,
+            normalized_order=anchored_order(activity.source_event_id),
             structure={"operation": activity.operation},
         )
     return [row[4] for row in sorted(rows, key=lambda row: row[:4])]
-
-
-def normalized_message_order(
-    messages: list[Message],
-    record_indexes: dict[str, int],
-) -> dict[str, Fraction]:
-    resolved = {
-        index: record_indexes[message.source_event_id]
-        for index, message in enumerate(messages)
-        if message.source_event_id in record_indexes
-    }
-    order: dict[str, Fraction] = {}
-    for index, message in enumerate(messages):
-        if index in resolved:
-            order[message.message_id] = Fraction(resolved[index])
-            continue
-        previous = max((row for row in resolved if row < index), default=None)
-        following = min((row for row in resolved if row > index), default=None)
-        if previous is not None and following is not None:
-            span_count = following - previous
-            offset = index - previous
-            order[message.message_id] = Fraction(resolved[previous]) + Fraction(
-                (resolved[following] - resolved[previous]) * offset,
-                span_count,
-            )
-        elif previous is not None:
-            order[message.message_id] = Fraction(resolved[previous] + index - previous)
-        elif following is not None:
-            order[message.message_id] = Fraction(resolved[following] - (following - index))
-        else:
-            order[message.message_id] = Fraction(index)
-    return order
 
 
 def routing_identities(
