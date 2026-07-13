@@ -300,7 +300,7 @@ AuditSelectionStatus
   not_selected | selected
 
 HumanReviewKind
-  judge_disagreement | consensus_audit
+  panel_dispute | panel_insufficient | consensus_audit
 
 ReferenceResolutionStatus
   judge_consensus | human_resolved | ambiguous
@@ -428,6 +428,7 @@ AuditSelection
   schema_version
   annotation_protocol_version
   packet_id
+  judge_panel_resolution_id
   selection_status
   selection_seed_id
   selection_reason
@@ -438,6 +439,8 @@ HumanAdjudication
   schema_version
   annotation_protocol_version
   packet_id
+  judge_panel_resolution_id
+  audit_selection_id
   review_kind
   reviewer_identity
   answer
@@ -453,13 +456,16 @@ ReferenceResolution
   resolution_status
   answer
   source_judge_panel_resolution_id
+  source_audit_selection_id
   source_human_adjudication_ids
   resolved_at
 ```
 
-An audit never overwrites the unanimous panel record. Its human adjudication
-and the final reference resolution preserve whether consensus was confirmed,
-reversed, or left ambiguous.
+`audit_selection_id` is required on a consensus-audit adjudication and null for
+panel-dispute/panel-insufficient review. `source_audit_selection_id` follows the
+same rule for a final resolution. An audit never overwrites the unanimous panel
+record. Its human adjudication and the final reference resolution preserve
+whether consensus was confirmed, reversed, or left ambiguous.
 
 ## Versioning And Determinism
 
