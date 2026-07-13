@@ -306,6 +306,9 @@ JudgeConsensusStatus
 AuditSelectionStatus
   not_selected | selected
 
+AuditEligibilityStatus
+  eligible | ineligible
+
 HumanReviewKind
   panel_dispute | panel_insufficient | consensus_audit
 
@@ -436,6 +439,7 @@ AuditSelection
   annotation_protocol_version
   packet_id
   judge_panel_resolution_id
+  eligibility_status
   selection_status
   selection_seed_id
   selection_reason
@@ -464,15 +468,18 @@ ReferenceResolution
   answer
   source_judge_panel_resolution_id
   source_audit_selection_id
-  source_human_adjudication_ids
+  source_human_adjudication_id
   resolved_at
 ```
 
-`audit_selection_id` is required on a consensus-audit adjudication and null for
-panel-dispute/panel-insufficient review. `source_audit_selection_id` follows the
-same rule for a final resolution. An audit never overwrites the unanimous panel
-record. Its human adjudication and the final reference resolution preserve
-whether consensus was confirmed, reversed, or left ambiguous.
+Every unanimous panel receives one audit-selection record. Ineligible panels
+must be `not_selected`; eligible pilot panels are deterministically `selected`
+or `not_selected` by the frozen sample. `audit_selection_id` is required on a
+consensus-audit adjudication and null for panel-dispute/panel-insufficient
+review. `source_audit_selection_id` is required on every resolution from a
+unanimous panel. An audit never overwrites the panel record. Its human
+adjudication and final resolution preserve whether consensus was confirmed,
+reversed, or left ambiguous.
 
 All referenced records must share `packet_id` and
 `annotation_protocol_version` with their referenced panel. An audit selection
@@ -485,15 +492,15 @@ cross-protocol, cross-panel, or status-incompatible links.
 
 Final provenance matrix:
 
-- `judge_consensus` requires one unanimous panel, no human adjudication, and
-  either no audit selection or a not-selected audit record; its answer equals
-  the unanimous panel answer;
-- `human_resolved` requires at least one human adjudication for a disputed or
-  insufficient panel, or one consensus-audit adjudication tied to a selected
-  audit; its answer equals the accepted human answer under the protocol;
+- `judge_consensus` requires one unanimous panel, no human adjudication, and an
+  explicit not-selected audit record; its answer equals the unanimous panel
+  answer;
+- `human_resolved` requires exactly one cited human adjudication for a disputed
+  or insufficient panel, or one consensus-audit adjudication tied to a selected
+  audit; its answer equals that cited adjudication's answer;
 - `ambiguous` requires human adjudication for the disputed, insufficient, or
-  selected-audit path and records no forced answer outside the packet's allowed
-  ambiguous value;
+  selected-audit path, cites exactly that adjudication, and records its allowed
+  ambiguous answer;
 - a selected consensus audit cannot produce final `judge_consensus` without a
   completed human adjudication; confirmed consensus resolves as
   `human_resolved` while preserving the original unanimous panel answer.
