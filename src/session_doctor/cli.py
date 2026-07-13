@@ -534,6 +534,7 @@ def snapshots_prune(
                         "analysis_runs": dependencies.analysis_run_ids,
                         "normalization_runs": dependencies.normalization_run_ids,
                         "evaluation_packets": dependencies.evaluation_packet_ids,
+                        "audit_protocols": dependencies.audit_protocol_versions,
                         "inbound_source_references": dependencies.inbound_source_ids,
                         "inbound_session_references": dependencies.inbound_session_ids,
                         "downstream_lifecycle_bundles": (

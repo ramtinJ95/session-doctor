@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -39,6 +40,7 @@ class PruneResult:
     dependent_analysis_run_ids: tuple[str, ...]
     dependent_normalization_run_ids: tuple[str, ...]
     dependent_evaluation_packet_ids: tuple[str, ...]
+    dependent_audit_protocol_versions: tuple[str, ...]
     inbound_source_ids: tuple[str, ...]
     inbound_session_ids: tuple[str, ...]
     downstream_lifecycle_bundle_ids: tuple[str, ...]
@@ -55,6 +57,7 @@ class PruneDependencies:
     analysis_run_ids: tuple[str, ...]
     normalization_run_ids: tuple[str, ...]
     evaluation_packet_ids: tuple[str, ...]
+    audit_protocol_versions: tuple[str, ...]
     inbound_source_ids: tuple[str, ...]
     inbound_session_ids: tuple[str, ...]
     downstream_lifecycle_bundle_ids: tuple[str, ...]
@@ -106,6 +109,7 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
             analysis_run_ids=(),
             normalization_run_ids=(),
             evaluation_packet_ids=(),
+            audit_protocol_versions=(),
             inbound_source_ids=(),
             inbound_session_ids=(),
             downstream_lifecycle_bundle_ids=(),
@@ -123,24 +127,25 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
         [list(bundle_ids)],
     ).fetchall()
     normalization_run_ids = tuple(str(row[0]) for row in normalization_rows)
-    evaluation_packet_rows = (
-        connection.execute(
-            """
-            SELECT p.packet_id FROM evaluation_packets AS p
-            WHERE p.normalization_run_id IN (SELECT unnest(?))
-              AND NOT EXISTS (
-                  SELECT 1 FROM normalization_run_bundles AS links
-                  WHERE links.normalization_run_id = p.normalization_run_id
-                    AND links.snapshot_bundle_id NOT IN (SELECT unnest(?))
-              )
-            ORDER BY p.packet_id
-            """,
-            [list(normalization_run_ids), list(bundle_ids)],
-        ).fetchall()
-        if normalization_run_ids
-        else []
-    )
+    evaluation_packet_rows = connection.execute(
+        "SELECT packet_id FROM evaluation_packets "
+        "WHERE snapshot_bundle_id IN (SELECT unnest(?)) ORDER BY packet_id",
+        [list(bundle_ids)],
+    ).fetchall()
     evaluation_packet_ids = tuple(str(row[0]) for row in evaluation_packet_rows)
+    audit_protocol_versions: tuple[str, ...] = ()
+    if evaluation_packet_ids:
+        packet_id_set = set(evaluation_packet_ids)
+        matching_protocols = []
+        for protocol_version, eligible_json, selected_json in connection.execute(
+            "SELECT annotation_protocol_version, eligible_packet_ids_json, "
+            "selected_packet_ids_json FROM audit_protocols "
+            "ORDER BY annotation_protocol_version"
+        ).fetchall():
+            referenced = set(json.loads(str(eligible_json))) | set(json.loads(str(selected_json)))
+            if referenced & packet_id_set:
+                matching_protocols.append(str(protocol_version))
+        audit_protocol_versions = tuple(matching_protocols)
     source_rows = connection.execute(
         """
             SELECT source_id FROM session_sources
@@ -255,6 +260,7 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
             else None
         )
         derived_row_counts[table_name] = int(count_row[0]) if count_row else 0
+    derived_row_counts["audit_protocols"] = len(audit_protocol_versions)
     for table_name in ("raw_events", "parse_warnings"):
         if not source_ids:
             derived_row_counts[table_name] = 0
@@ -291,6 +297,7 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
         analysis_run_ids=analysis_run_ids,
         normalization_run_ids=normalization_run_ids,
         evaluation_packet_ids=evaluation_packet_ids,
+        audit_protocol_versions=audit_protocol_versions,
         inbound_source_ids=inbound_source_ids,
         inbound_session_ids=inbound_session_ids,
         downstream_lifecycle_bundle_ids=downstream_lifecycle_bundle_ids,
@@ -399,6 +406,7 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
             dependencies.source_ids
             or dependencies.normalization_run_ids
             or dependencies.evaluation_packet_ids
+            or dependencies.audit_protocol_versions
             or dependencies.inbound_source_ids
             or dependencies.inbound_session_ids
             or dependencies.downstream_lifecycle_bundle_ids
@@ -533,6 +541,12 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
             [bundle_id],
         )
         if dependencies.evaluation_packet_ids:
+            if dependencies.audit_protocol_versions:
+                connection.execute(
+                    "DELETE FROM audit_protocols "
+                    "WHERE annotation_protocol_version IN (SELECT unnest(?))",
+                    [list(dependencies.audit_protocol_versions)],
+                )
             for table_name in (
                 "reference_resolutions",
                 "human_adjudications",
@@ -715,6 +729,7 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
         dependent_analysis_run_ids=dependencies.analysis_run_ids,
         dependent_normalization_run_ids=dependencies.normalization_run_ids,
         dependent_evaluation_packet_ids=dependencies.evaluation_packet_ids,
+        dependent_audit_protocol_versions=dependencies.audit_protocol_versions,
         inbound_source_ids=dependencies.inbound_source_ids,
         inbound_session_ids=dependencies.inbound_session_ids,
         downstream_lifecycle_bundle_ids=dependencies.downstream_lifecycle_bundle_ids,

@@ -1,0 +1,53 @@
+{
+  "schema_version": "boundary-pilot-sources-v1",
+  "sources": [
+    {
+      "source_id": "codex-pilot",
+      "adapter": "codex",
+      "user_turns": [
+        {"event_id": "codex-u0", "text": "Inspect the failing test."},
+        {"event_id": "codex-u1", "text": "Now fix the parser failure."},
+        {"event_id": "codex-u2", "text": "Continue after the tool error."},
+        {"event_id": "codex-u3", "text": "Run the focused checks."},
+        {"event_id": "codex-u4", "text": "Switch to the schema task."},
+        {"event_id": "codex-u5", "text": "The session is still active."},
+        {"event_id": "codex-u6", "text": "Review the prior disagreement."},
+        {"event_id": "codex-u7", "text": "Validate the successful change."},
+        {"event_id": "codex-u8", "text": "Finish with the remaining blocker."}
+      ],
+      "intervening_structures": ["success", "blocker", "tool_error", "success", "task_switch", "active", "prior_disagreement", "blocker"]
+    },
+    {
+      "source_id": "claude-pilot",
+      "adapter": "claude",
+      "user_turns": [
+        {"event_id": "claude-u0", "text": "Read the implementation."},
+        {"event_id": "claude-u1", "text": "Investigate the failed command."},
+        {"event_id": "claude-u2", "text": "Resume the delegated work."},
+        {"event_id": "claude-u3", "text": "Check the successful result."},
+        {"event_id": "claude-u4", "text": "Start the next independent goal."},
+        {"event_id": "claude-u5", "text": "This capture may be incomplete."},
+        {"event_id": "claude-u6", "text": "Resolve the ambiguous boundary."},
+        {"event_id": "claude-u7", "text": "Confirm the final validation."},
+        {"event_id": "claude-u8", "text": "Address the last blocker."}
+      ],
+      "intervening_structures": ["success", "blocker", "delegation", "success", "task_switch", "incomplete", "prior_disagreement", "blocker"]
+    },
+    {
+      "source_id": "pi-pilot",
+      "adapter": "pi",
+      "user_turns": [
+        {"event_id": "pi-u0", "text": "Inspect the repository state."},
+        {"event_id": "pi-u1", "text": "Fix the blocked operation."},
+        {"event_id": "pi-u2", "text": "Continue after compaction."},
+        {"event_id": "pi-u3", "text": "Run the passing tests."},
+        {"event_id": "pi-u4", "text": "Move to the documentation goal."},
+        {"event_id": "pi-u5", "text": "Keep this active case provisional."},
+        {"event_id": "pi-u6", "text": "Adjudicate the disputed split."},
+        {"event_id": "pi-u7", "text": "Record the successful outcome."},
+        {"event_id": "pi-u8", "text": "Report the unresolved blocker."}
+      ],
+      "intervening_structures": ["success", "blocker", "compaction", "success", "task_switch", "active", "prior_disagreement", "blocker"]
+    }
+  ]
+}

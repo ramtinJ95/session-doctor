@@ -57,7 +57,7 @@ def boundary_packet(
 ) -> EvaluationPacketExport:
     left = events[left_position]
     right = events[right_position]
-    packet_id = digest_json(
+    packet_seed = digest_json(
         {
             "kind": PacketKind.BOUNDARY,
             "normalization_run_id": stored.run.normalization_run_id,
@@ -69,19 +69,23 @@ def boundary_packet(
     )
     targets, redaction_terms = routing_identities(stored, foundation)
     packet = BoundaryPacket(
-        packet_id=packet_id,
-        left_user_event_id=left.source_event_id or left.evidence_id,
-        right_user_event_id=right.source_event_id or right.evidence_id,
+        packet_id="",
+        left_user_event_id=opaque_evidence_id(
+            packet_seed, left.source_event_id or left.evidence_id
+        ),
+        right_user_event_id=opaque_evidence_id(
+            packet_seed, right.source_event_id or right.evidence_id
+        ),
         adjacent_user_turns=[
-            blind_event(left, redaction_terms),
-            blind_event(right, redaction_terms),
+            blind_event(left, redaction_terms, packet_seed),
+            blind_event(right, redaction_terms, packet_seed),
         ],
         intervening_normalized_events=[
-            blind_event(event, redaction_terms)
+            blind_event(event, redaction_terms, packet_seed)
             for event in events[left_position + 1 : right_position]
         ],
         bounded_context_events=[
-            blind_event(events[index], redaction_terms)
+            blind_event(events[index], redaction_terms, packet_seed)
             for index in (left_position - 1, right_position + 1)
             if 0 <= index < len(events)
         ],
@@ -95,11 +99,20 @@ def boundary_packet(
             if row.capability in BOUNDARY_CAPABILITIES
         ],
     )
+    packet_id = digest_json(
+        {
+            "normalization_run_id": stored.run.normalization_run_id,
+            "judge_packet": packet.model_dump(mode="json"),
+        }
+    )
+    packet = packet.model_copy(update={"packet_id": packet_id})
     judge_json = canonical_json(packet.model_dump(mode="json"))
     exposure = identity_exposure_status(judge_json, targets)
     routing = RoutingEnvelope(
         packet_id=packet_id,
         packet_kind=PacketKind.BOUNDARY,
+        normalization_run_id=stored.run.normalization_run_id,
+        snapshot_bundle_id=stored.run.snapshot_bundle_id,
         target_model_identities=targets,
         excluded_judge_identities=targets,
         identity_exposure_status=exposure,
@@ -214,13 +227,35 @@ def routing_identities(
     )
 
 
-def blind_event(event: PacketEvent, redaction_terms: tuple[str, ...]) -> PacketEvent:
+def blind_event(
+    event: PacketEvent,
+    redaction_terms: tuple[str, ...],
+    packet_seed: str,
+) -> PacketEvent:
     text = event.text
     if text is not None:
         for term in redaction_terms:
             text = replace_case_insensitive(text, term, "[identity_redacted]")
     structure = redact_value(event.structure, redaction_terms)
-    return event.model_copy(update={"text": text, "structure": structure})
+    redacted_hash = hashlib.sha256(text.encode()).hexdigest() if text is not None else None
+    return event.model_copy(
+        update={
+            "evidence_id": opaque_evidence_id(packet_seed, event.evidence_id),
+            "source_event_id": (
+                opaque_evidence_id(packet_seed, event.source_event_id)
+                if event.source_event_id is not None
+                else None
+            ),
+            "text": text,
+            "text_hash": redacted_hash,
+            "text_length": len(text) if text is not None else None,
+            "structure": structure,
+        }
+    )
+
+
+def opaque_evidence_id(packet_seed: str, evidence_id: str) -> str:
+    return "ev_" + hashlib.sha256(f"{packet_seed}\0{evidence_id}".encode()).hexdigest()[:24]
 
 
 def redact_value(value: object, terms: tuple[str, ...]) -> object:
@@ -283,9 +318,6 @@ def write_packet_exports(
     try:
         for packet_export in exports:
             packet_id = packet_export.routing.packet_id
-            (temporary / f"{packet_id}.routing.json").write_text(
-                canonical_json(packet_export.routing.model_dump(mode="json")) + "\n"
-            )
             (temporary / f"{packet_id}.judge.json").write_text(
                 canonical_json(packet_export.judge_packet.model_dump(mode="json")) + "\n"
             )
@@ -306,3 +338,80 @@ def canonical_json(value: object) -> str:
 
 def digest_json(value: object) -> str:
     return hashlib.sha256(canonical_json(value).encode()).hexdigest()
+
+
+def load_boundary_pilot(manifest_path: Path) -> tuple[BoundaryPacket, ...]:
+    manifest = json.loads(manifest_path.read_text())
+    source_path = manifest_path.parent / str(manifest["source_corpus"])
+    source_document = json.loads(source_path.read_text())
+    sources = {str(row["source_id"]): row for row in source_document["sources"]}
+    packets: list[BoundaryPacket] = []
+    seen_regions: set[tuple[str, int]] = set()
+    for case in manifest["cases"]:
+        source_id = str(case["source_id"])
+        region = int(case["region"])
+        key = (source_id, region)
+        if key in seen_regions:
+            raise ValueError("pilot contains a duplicate boundary region")
+        seen_regions.add(key)
+        source = sources.get(source_id)
+        if source is None:
+            raise ValueError("pilot source is missing")
+        turns = source["user_turns"]
+        structures = source["intervening_structures"]
+        if len(structures) != len(turns) - 1 or region < 0 or region >= len(structures):
+            raise ValueError("pilot region does not resolve to adjacent user turns")
+        left = turns[region]
+        right = turns[region + 1]
+        packet_seed = digest_json(
+            {
+                "manifest_version": manifest["manifest_version"],
+                "case_id": case["case_id"],
+                "source_id": source_id,
+                "region": region,
+            }
+        )
+        adjacent = [
+            pilot_event(packet_seed, left),
+            pilot_event(packet_seed, right),
+        ]
+        intervening_id = opaque_evidence_id(packet_seed, f"{source_id}-between-{region}")
+        packet = BoundaryPacket(
+            packet_id="",
+            left_user_event_id=adjacent[0].evidence_id,
+            right_user_event_id=adjacent[1].evidence_id,
+            adjacent_user_turns=adjacent,
+            intervening_normalized_events=[
+                PacketEvent(
+                    evidence_id=intervening_id,
+                    entity_kind="pilot_intervening_structure",
+                    structure={"classification": structures[region]},
+                )
+            ],
+            bounded_context_events=[],
+        )
+        packet_id = digest_json(
+            {
+                "pilot_case_id": case["case_id"],
+                "judge_packet": packet.model_dump(mode="json"),
+            }
+        )
+        packets.append(packet.model_copy(update={"packet_id": packet_id}))
+    if len({packet.packet_id for packet in packets}) != len(packets):
+        raise ValueError("pilot packet identities are not unique")
+    return tuple(packets)
+
+
+def pilot_event(packet_seed: str, turn: dict[str, object]) -> PacketEvent:
+    event_id = str(turn["event_id"])
+    text = str(turn["text"])
+    opaque_id = opaque_evidence_id(packet_seed, event_id)
+    return PacketEvent(
+        evidence_id=opaque_id,
+        source_event_id=opaque_id,
+        entity_kind="normalized_message",
+        role="user",
+        text=text,
+        text_hash=hashlib.sha256(text.encode()).hexdigest(),
+        text_length=len(text),
+    )

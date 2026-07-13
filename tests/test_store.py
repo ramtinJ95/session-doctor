@@ -70,6 +70,7 @@ def test_store_initialize_creates_expected_tables(tmp_path) -> None:
         "judge_annotations",
         "judge_panel_resolutions",
         "audit_selections",
+        "audit_protocols",
         "human_adjudications",
         "reference_resolutions",
     }

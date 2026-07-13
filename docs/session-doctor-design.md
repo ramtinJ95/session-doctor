@@ -397,10 +397,14 @@ The checked-in `evaluation/boundary-pilot-v1.json` preregisters 24 stratified
 development regions across adapters, lengths, successes, blockers,
 active/incomplete cases, and prior ambiguity. Family identity remains unknown
 or ambiguous before PR 12, so this pilot makes no checkpoint or final-test
-claim.
+claim. `evaluation/boundary-pilot-sources-v1.json` supplies the ordered source
+turns and intervening structures; the loader rejects missing, duplicate, or
+non-adjacent regions and derives 24 unique packet identities.
 
-Evaluation uses two documents: a private routing envelope and a judge-visible
-packet. Both carry independent schema and annotation-protocol versions.
+Evaluation uses two documents: a private routing envelope retained in DuckDB
+and a judge-visible packet written to the export directory. Routing envelopes
+must never be written beside judge packets. Both carry independent schema and
+annotation-protocol versions.
 
 ### Routing Envelope
 
@@ -409,6 +413,8 @@ schema_version
 annotation_protocol_version
 packet_id
 packet_kind
+normalization_run_id
+snapshot_bundle_id
 source_family_id
 source_family_status
 family_policy_version
@@ -554,8 +560,10 @@ review. `source_audit_selection_id` is required on every resolution from a
 unanimous panel. An audit never overwrites the panel record. Its human
 adjudication and final resolution preserve whether consensus was confirmed,
 reversed, or left ambiguous.
+Ineligible panels cannot become final references; they remain available only
+as diagnostic annotations outside blinded quality claims.
 
-All referenced records must share `packet_id` and
+All referenced records must share `schema_version`, `packet_id`, and
 `annotation_protocol_version` with their referenced panel. An audit selection
 may reference only a unanimous panel. A consensus-audit human adjudication must
 reference a `selected` audit record for that same panel; dispute and insufficient
@@ -566,9 +574,9 @@ cross-protocol, cross-panel, or status-incompatible links.
 
 Final provenance matrix:
 
-- `judge_consensus` requires one unanimous panel, no human adjudication, and an
-  explicit not-selected audit record; its answer equals the unanimous panel
-  answer;
+- `judge_consensus` requires one eligible unanimous panel, no human
+  adjudication, and an explicit not-selected audit record; its answer equals
+  the unanimous panel answer;
 - `human_resolved` requires exactly one cited human adjudication for a disputed
   or insufficient panel, or one consensus-audit adjudication tied to a selected
   audit; its answer equals that cited adjudication's answer;
