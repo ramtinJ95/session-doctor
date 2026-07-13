@@ -25,8 +25,10 @@ from session_doctor.evaluation_models import (
     ReferenceResolutionStatus,
 )
 from session_doctor.evaluation_packets import (
+    boundary_pilot_corpus_bytes,
     canonical_json,
     export_boundary_packets,
+    export_boundary_pilot,
     load_boundary_pilot,
 )
 from session_doctor.ids import stable_id
@@ -40,6 +42,8 @@ from session_doctor.schemas import (
     RawEvent,
     Session,
     SessionSource,
+    ToolCall,
+    ToolResult,
 )
 from session_doctor.store import (
     DuckDBStore,
@@ -116,6 +120,23 @@ def evaluation_fixture(
         session=session,
         raw_events=events,
         messages=messages,
+        tool_calls=[
+            ToolCall(
+                tool_call_id="tool-call-1",
+                session_id=session.session_id,
+                source_event_id=events[1].event_id,
+                name="shell",
+            )
+        ],
+        tool_results=[
+            ToolResult(
+                tool_result_id="tool-result-1",
+                session_id=session.session_id,
+                source_event_id=events[1].event_id,
+                tool_call_id="tool-call-1",
+                is_error=False,
+            )
+        ],
     )
     store.insert_parsed_bundle(
         source,
@@ -187,6 +208,11 @@ def test_boundary_packet_export_is_deterministic_blinded_and_preseal(tmp_path) -
     assert first.judge_packet.left_user_event_id.startswith("ev_")
     assert "event-0" not in judge_json
     assert first.judge_packet.right_user_event_id.startswith("ev_")
+    assert [event.entity_kind for event in first.judge_packet.intervening_normalized_events] == [
+        "message",
+        "tool_call",
+        "tool_result",
+    ]
     redacted_text = "Ask [identity_redacted] [identity_redacted] via [identity_redacted]"
     assert (
         first.judge_packet.adjacent_user_turns[0].text_hash
@@ -225,6 +251,15 @@ def test_judge_import_rejects_hallucinated_evidence_and_target_judge(tmp_path) -
     evidence_id = packet.judge_packet.left_user_event_id
     valid = annotation(packet.routing.packet_id, evidence_id, 1, "split")
     assert import_judge_annotation(store.database_path, valid) == valid
+    intervening_source_id = packet.judge_packet.intervening_normalized_events[0].source_event_id
+    assert intervening_source_id is not None
+    source_citation = annotation(
+        packet.routing.packet_id,
+        intervening_source_id,
+        8,
+        "split",
+    )
+    assert import_judge_annotation(store.database_path, source_citation) == source_citation
 
     invalid_evidence = valid.model_copy(
         update={
@@ -521,6 +556,30 @@ def test_pilot_manifest_has_stratified_preseal_cases() -> None:
     packets = load_boundary_pilot(manifest_path)
     assert len(packets) == 24
     assert len({packet.packet_id for packet in packets}) == 24
+    for case, packet in zip(cases, packets, strict=True):
+        event_count = (
+            len(packet.adjacent_user_turns)
+            + len(packet.intervening_normalized_events)
+            + len(packet.bounded_context_events)
+        )
+        if "short" in case["strata"]:
+            assert event_count == 3
+        if "medium" in case["strata"]:
+            assert event_count >= 7
+        if "long" in case["strata"]:
+            assert event_count >= 17
+        if "task_switch" in case["strata"]:
+            packet_text = " ".join(
+                event.text or ""
+                for event in packet.adjacent_user_turns + packet.bounded_context_events
+            )
+            assert "schema" in packet_text or "documentation" in packet_text
+            assert any(term in packet_text for term in ("checks", "tests", "implementation"))
+    pilot_exports = export_boundary_pilot(boundary_pilot_corpus_bytes(), "pilot-bundle-test")
+    assert all(
+        row.routing.identity_exposure_status is IdentityExposureStatus.TARGET_IDENTITY_UNVERIFIABLE
+        for row in pilot_exports
+    )
 
 
 def test_snapshot_prune_reports_and_removes_evaluation_dependencies(tmp_path) -> None:
@@ -627,7 +686,17 @@ def test_evaluation_cli_exports_and_imports_without_episode_generation(tmp_path)
     )
     assert pilot_exported.exit_code == 0
     assert len(list(pilot_output.glob("*.judge.json"))) == 24
-    bundle_count = store.table_count("snapshot_bundles")
+    capture_counts = {
+        table: store.table_count(table)
+        for table in ("source_blobs", "source_snapshots", "snapshot_bundles")
+    }
+    with duckdb.connect(str(store.database_path)) as connection:
+        original_pilot_row = connection.execute(
+            "SELECT DISTINCT snapshot_bundle_id FROM evaluation_packets "
+            "WHERE evaluation_corpus_id = 'boundary-pilot-v1'"
+        ).fetchone()
+        assert original_pilot_row is not None
+        original_pilot_bundle = original_pilot_row[0]
     repeated_pilot = runner.invoke(
         app,
         [
@@ -640,14 +709,22 @@ def test_evaluation_cli_exports_and_imports_without_episode_generation(tmp_path)
         ],
     )
     assert repeated_pilot.exit_code == 0
-    assert store.table_count("snapshot_bundles") == bundle_count
+    assert {table: store.table_count(table) for table in capture_counts} == capture_counts
+    with duckdb.connect(str(store.database_path)) as connection:
+        repeated_pilot_row = connection.execute(
+            "SELECT DISTINCT snapshot_bundle_id FROM evaluation_packets "
+            "WHERE evaluation_corpus_id = 'boundary-pilot-v1'"
+        ).fetchone()
+        assert repeated_pilot_row is not None
+        assert repeated_pilot_row[0] == original_pilot_bundle
     pilot_protocol = freeze_audit_protocol(
         store.database_path,
         "boundary-pilot-v1",
         "pilot-seed-v1",
     )
     assert len(pilot_protocol.cohort_packet_ids) == 24
-    assert len(pilot_protocol.selected_packet_ids) == 5
+    assert not pilot_protocol.eligible_packet_ids
+    assert not pilot_protocol.selected_packet_ids
     unavailable = runner.invoke(app, ["evaluation", "export-episodes"])
     assert unavailable.exit_code == 1
     assert "unavailable" in unavailable.stdout

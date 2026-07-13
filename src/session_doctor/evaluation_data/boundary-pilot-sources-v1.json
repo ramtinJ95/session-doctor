@@ -4,8 +4,6 @@
     {
       "source_id": "codex-pilot",
       "adapter": "codex",
-      "target_provider": "openai",
-      "target_model": "codex-pilot-model",
       "user_turns": [
         {"event_id": "codex-u0", "text": "Inspect the failing test."},
         {"event_id": "codex-u1", "text": "Run the parser command."},
@@ -18,21 +16,23 @@
         {"event_id": "codex-u8", "text": "Finish the remaining work."}
       ],
       "intervening_events": [
-        {"event_id":"codex-a0","entity_kind":"normalized_message","role":"assistant","text":"I inspected the requested files."},
-        {"event_id":"codex-t1","entity_kind":"normalized_tool_call","structure":{"tool_name":"shell"}},
+        {"event_id":"codex-r0","entity_kind":"normalized_tool_result","structure":{"exit_code":0}},
+        {"event_id":"codex-r1","entity_kind":"normalized_tool_result","structure":{"exit_code":1}},
         {"event_id":"codex-r2","entity_kind":"normalized_tool_result","structure":{"status":"error","exit_code":1}},
         {"event_id":"codex-r3","entity_kind":"normalized_tool_result","structure":{"status":"success","exit_code":0}},
         {"event_id":"codex-a4","entity_kind":"normalized_message","role":"assistant","text":"I will inspect the schema next."},
         {"event_id":"codex-t5","entity_kind":"normalized_tool_call","structure":{"tool_name":"read"}},
         {"event_id":"codex-t6","entity_kind":"normalized_tool_call","structure":{"tool_name":"search"}},
         {"event_id":"codex-r7","entity_kind":"normalized_tool_result","structure":{"status":"error","exit_code":1}}
+      ],
+      "region_metadata": [
+        {}, {}, {}, {}, {"task_transition":"explicit"}, {"capture_state":"possibly_active"},
+        {"prior_annotation_status":"disputed"}, {}
       ]
     },
     {
       "source_id": "claude-pilot",
       "adapter": "claude",
-      "target_provider": "anthropic",
-      "target_model": "claude-pilot-model",
       "user_turns": [
         {"event_id": "claude-u0", "text": "Read the implementation."},
         {"event_id": "claude-u1", "text": "Investigate the command output."},
@@ -45,21 +45,23 @@
         {"event_id": "claude-u8", "text": "Address the remaining work."}
       ],
       "intervening_events": [
-        {"event_id":"claude-a0","entity_kind":"normalized_message","role":"assistant","text":"I inspected the requested files."},
-        {"event_id":"claude-t1","entity_kind":"normalized_tool_call","structure":{"tool_name":"shell"}},
+        {"event_id":"claude-r0","entity_kind":"normalized_tool_result","structure":{"exit_code":0}},
+        {"event_id":"claude-r1","entity_kind":"normalized_tool_result","structure":{"exit_code":1}},
         {"event_id":"claude-t2","entity_kind":"normalized_tool_call","structure":{"tool_name":"delegate"}},
         {"event_id":"claude-r3","entity_kind":"normalized_tool_result","structure":{"status":"success","exit_code":0}},
         {"event_id":"claude-a4","entity_kind":"normalized_message","role":"assistant","text":"I will inspect the schema next."},
         {"event_id":"claude-t5","entity_kind":"normalized_tool_call","structure":{"tool_name":"read"}},
         {"event_id":"claude-t6","entity_kind":"normalized_tool_call","structure":{"tool_name":"search"}},
         {"event_id":"claude-r7","entity_kind":"normalized_tool_result","structure":{"status":"error","exit_code":1}}
+      ],
+      "region_metadata": [
+        {}, {}, {}, {}, {"task_transition":"explicit"}, {"capture_state":"snapshot_incomplete"},
+        {"prior_annotation_status":"disputed"}, {}
       ]
     },
     {
       "source_id": "pi-pilot",
       "adapter": "pi",
-      "target_provider": "openai",
-      "target_model": "pi-pilot-model",
       "user_turns": [
         {"event_id": "pi-u0", "text": "Inspect the repository state."},
         {"event_id": "pi-u1", "text": "Run the requested operation."},
@@ -72,14 +74,18 @@
         {"event_id": "pi-u8", "text": "Report the remaining work."}
       ],
       "intervening_events": [
-        {"event_id":"pi-a0","entity_kind":"normalized_message","role":"assistant","text":"I inspected the requested files."},
-        {"event_id":"pi-t1","entity_kind":"normalized_tool_call","structure":{"tool_name":"shell"}},
+        {"event_id":"pi-r0","entity_kind":"normalized_tool_result","structure":{"exit_code":0}},
+        {"event_id":"pi-r1","entity_kind":"normalized_tool_result","structure":{"exit_code":1}},
         {"event_id":"pi-c2","entity_kind":"normalized_compaction","structure":{"status":"observed"}},
         {"event_id":"pi-r3","entity_kind":"normalized_tool_result","structure":{"status":"success","exit_code":0}},
         {"event_id":"pi-a4","entity_kind":"normalized_message","role":"assistant","text":"I will inspect the schema next."},
         {"event_id":"pi-t5","entity_kind":"normalized_tool_call","structure":{"tool_name":"read"}},
         {"event_id":"pi-t6","entity_kind":"normalized_tool_call","structure":{"tool_name":"search"}},
         {"event_id":"pi-r7","entity_kind":"normalized_tool_result","structure":{"status":"error","exit_code":1}}
+      ],
+      "region_metadata": [
+        {}, {}, {}, {}, {"task_transition":"explicit"}, {"capture_state":"possibly_active"},
+        {"prior_annotation_status":"disputed"}, {}
       ]
     }
   ]

@@ -748,6 +748,7 @@ def packet_evidence_ids(value: object) -> set[str]:
         for key, row in value.items():
             if key in {
                 "evidence_id",
+                "source_event_id",
                 "left_user_event_id",
                 "right_user_event_id",
             } and isinstance(row, str):
