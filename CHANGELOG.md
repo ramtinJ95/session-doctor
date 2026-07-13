@@ -5,6 +5,8 @@ artifact, payload, and CLI contracts may change incompatibly during dogfooding.
 
 ## Unreleased
 
+- add immutable, run-keyed normalization history with explicit replay and
+  current/stale/missing parser coverage
 - retain compressed exact source snapshots, multi-file Claude bundle manifests,
   immutable lifecycle observations, replay, and explicit dependency-aware prune
 - add schema-version-2 exact-session sequence projections and separate daily
