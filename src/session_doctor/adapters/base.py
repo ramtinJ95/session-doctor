@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import Field
@@ -35,6 +36,13 @@ class ParsedSessionBundle(SessionDoctorModel):
     parse_warnings: list[ParseWarning] = Field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class CapturedAdapterMember:
+    source: SessionSource
+    member_role: str
+    source_bytes: bytes
+
+
 class BaseAdapter(ABC):
     name: AgentName
     display_name: str
@@ -67,6 +75,21 @@ class BaseAdapter(ABC):
         return self.parse_source(source, source_bytes)
 
     def source_for_captured_parse(self, source: SessionSource) -> SessionSource:
+        return source
+
+    def terminal_observed(self, source: SessionSource, source_bytes: bytes) -> bool:
+        return False
+
+    def bundle_member_sources(
+        self, source: SessionSource, source_bytes: bytes
+    ) -> tuple[tuple[SessionSource, str], ...]:
+        return ()
+
+    def prepare_captured_source(
+        self,
+        source: SessionSource,
+        members: tuple[CapturedAdapterMember, ...],
+    ) -> SessionSource:
         return source
 
     def source_for_path(self, path: Path) -> SessionSource:

@@ -24,9 +24,16 @@ class TranscriptFacts:
     read_status: str = "ok"
 
 
-def enrich_claude_sources(sources: list[SessionSource]) -> None:
+def enrich_claude_sources(
+    sources: list[SessionSource],
+    source_bytes_by_path: dict[Path, bytes] | None = None,
+) -> None:
+    captured_bytes = {path.resolve(): value for path, value in (source_bytes_by_path or {}).items()}
     transcripts = {
-        Path(source.source_path).resolve(): transcript_facts(source)
+        Path(source.source_path).resolve(): transcript_facts(
+            source,
+            captured_bytes.get(Path(source.source_path).resolve()),
+        )
         for source in sources
         if source.source_kind in {SourceKind.ROOT_SESSION, SourceKind.SUBSESSION}
     }
@@ -44,27 +51,31 @@ def enrich_claude_sources(sources: list[SessionSource]) -> None:
     for facts in transcripts.values():
         add_transcript_metadata(facts)
         if facts.source.source_kind is SourceKind.SUBSESSION:
-            enrich_subagent(facts, transcripts, metadata_paths)
+            enrich_subagent(facts, transcripts, metadata_paths, captured_bytes)
 
     add_nesting_depths(transcripts)
-    add_orphan_counts(transcripts, metadata_paths, tool_result_paths)
+    add_orphan_counts(transcripts, metadata_paths, tool_result_paths, captured_bytes)
 
 
-def transcript_facts(source: SessionSource) -> TranscriptFacts:
+def transcript_facts(source: SessionSource, source_bytes: bytes | None = None) -> TranscriptFacts:
     facts = TranscriptFacts(source=source)
     path = Path(source.source_path)
     try:
-        with path.open(encoding="utf-8") as handle:
-            for line in handle:
-                try:
-                    record = json.loads(line)
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    facts.read_status = "partial"
-                    continue
-                if not isinstance(record, dict):
-                    facts.read_status = "partial"
-                    continue
-                collect_record_facts(facts, record)
+        lines = (
+            source_bytes.decode("utf-8").splitlines()
+            if source_bytes is not None
+            else path.read_text(encoding="utf-8").splitlines()
+        )
+        for line in lines:
+            try:
+                record = json.loads(line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                facts.read_status = "partial"
+                continue
+            if not isinstance(record, dict):
+                facts.read_status = "partial"
+                continue
+            collect_record_facts(facts, record)
     except (OSError, UnicodeDecodeError):
         facts.read_status = "unreadable"
     return facts
@@ -113,10 +124,15 @@ def enrich_subagent(
     facts: TranscriptFacts,
     transcripts: dict[Path, TranscriptFacts],
     metadata_paths: set[Path],
+    source_bytes_by_path: dict[Path, bytes],
 ) -> None:
     source_path = Path(facts.source.source_path).resolve()
     metadata_path = source_path.with_suffix(".meta.json")
-    sidecar = read_subagent_metadata(metadata_path, metadata_path in metadata_paths)
+    sidecar = read_subagent_metadata(
+        metadata_path,
+        metadata_path in metadata_paths,
+        source_bytes_by_path.get(metadata_path),
+    )
     metadata_agent_id = string_value(sidecar.get("agent_id"))
     if metadata_agent_id is not None and facts.agent_ids:
         sidecar["identity_status"] = (
@@ -170,11 +186,19 @@ def enrich_subagent(
     facts.source.metadata["claude_parent_session_id"] = session_id_for_facts(parent)
 
 
-def read_subagent_metadata(path: Path, discovered: bool) -> dict[str, Any]:
+def read_subagent_metadata(
+    path: Path,
+    discovered: bool,
+    source_bytes: bytes | None = None,
+) -> dict[str, Any]:
     if not discovered:
         return {"status": "missing", "present": False}
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(
+            source_bytes.decode("utf-8")
+            if source_bytes is not None
+            else path.read_text(encoding="utf-8")
+        )
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return {"status": "malformed", "present": True}
     if not isinstance(payload, dict):
@@ -304,6 +328,7 @@ def add_orphan_counts(
     transcripts: dict[Path, TranscriptFacts],
     metadata_paths: set[Path],
     tool_result_paths: set[Path],
+    source_bytes_by_path: dict[Path, bytes],
 ) -> None:
     transcript_paths = set(transcripts)
     orphan_metadata = {
@@ -322,7 +347,8 @@ def add_orphan_counts(
     malformed_orphan_metadata = {
         path
         for path in orphan_metadata
-        if read_subagent_metadata(path, True)["status"] == "malformed"
+        if read_subagent_metadata(path, True, source_bytes_by_path.get(path))["status"]
+        == "malformed"
     }
 
     for path, facts in transcripts.items():

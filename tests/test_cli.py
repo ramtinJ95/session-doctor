@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from inspect import signature
 from pathlib import Path
-from shutil import copyfile
+from shutil import copyfile, copytree, rmtree
 from typing import Any, cast
 
 import duckdb
@@ -12,13 +12,19 @@ import pytest
 from typer.testing import CliRunner
 
 from session_doctor import __version__
-from session_doctor.adapters import BaseAdapter, ParsedSessionBundle, SourceReadError
+from session_doctor.adapters import (
+    BaseAdapter,
+    ClaudeCodeAdapter,
+    ParsedSessionBundle,
+    SourceReadError,
+)
+from session_doctor.adapters.base import CapturedAdapterMember
 from session_doctor.analysis import ANALYZER_VERSION
 from session_doctor.analysis_workflow import SessionAnalysisError
 from session_doctor.cli import app
 from session_doctor.ids import source_id_for_path
 from session_doctor.schemas import AgentName, AnalysisRun, Session, SessionSource
-from session_doctor.store import SCHEMA_VERSION, DuckDBStore
+from session_doctor.store import SCHEMA_VERSION, DuckDBStore, SnapshotPruneBlocked
 
 runner = CliRunner()
 CODEX_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "codex"
@@ -257,6 +263,64 @@ def test_ingest_codex_fixture_writes_database_and_prints_summary(tmp_path) -> No
     assert store.load_snapshot_bytes(str(snapshot_row[0])) == fixture_path.read_bytes()
 
 
+def test_snapshots_cli_lists_replays_and_prunes_exact_history(tmp_path) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    fixture_path = CODEX_FIXTURE_DIR / "basic-session.jsonl"
+    ingest_result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "codex",
+            "--source",
+            str(fixture_path),
+            "--db",
+            str(database_path),
+        ],
+    )
+    assert ingest_result.exit_code == 0
+
+    list_result = runner.invoke(
+        app,
+        ["snapshots", "list", "--db", str(database_path), "--format", "json"],
+    )
+    assert list_result.exit_code == 0
+    rows = json.loads(list_result.stdout)
+    assert len(rows) == 1
+    snapshot_id = rows[0]["snapshot_id"]
+    assert rows[0]["is_latest"] is True
+    assert rows[0]["lifecycle_state"] in {"terminal_observed", "possibly_active"}
+
+    replay_path = tmp_path / "replayed.jsonl"
+    replay_result = runner.invoke(
+        app,
+        [
+            "snapshots",
+            "replay",
+            snapshot_id,
+            "--db",
+            str(database_path),
+            "--output",
+            str(replay_path),
+        ],
+    )
+    assert replay_result.exit_code == 0
+    assert replay_path.read_bytes() == fixture_path.read_bytes()
+
+    blocked = runner.invoke(
+        app,
+        ["snapshots", "prune", snapshot_id, "--db", str(database_path)],
+    )
+    assert blocked.exit_code == 1
+    assert "prune blocked" in blocked.stdout
+    forced = runner.invoke(
+        app,
+        ["snapshots", "prune", snapshot_id, "--db", str(database_path), "--force"],
+    )
+    assert forced.exit_code == 0
+    assert DuckDBStore(database_path).table_count("source_snapshots") == 0
+
+
 def test_ingest_resolves_source_path_before_deriving_ids(tmp_path) -> None:
     with runner.isolated_filesystem(temp_dir=tmp_path):
         fixture_path = CODEX_FIXTURE_DIR / "basic-session.jsonl"
@@ -345,7 +409,7 @@ def test_ingest_claude_root_fixture_writes_and_replaces_normalized_rows(tmp_path
     assert store.table_count("command_runs") == 1
     assert store.table_count("file_activities") == 3
     assert store.table_count("model_usage") == 2
-    assert store.table_count("parse_warnings") == 4
+    assert store.table_count("parse_warnings") == 3
 
 
 def test_ingest_claude_directory_selects_root_and_subagent_sessions(
@@ -489,8 +553,8 @@ def test_ingest_claude_topology_replaces_and_analyzes_all_sessions(tmp_path) -> 
         session_links = connection.execute(
             "SELECT is_sidechain, parent_session_id FROM sessions ORDER BY session_id"
         ).fetchall()
-    assert sum(parent_source_id is not None for _, parent_source_id in source_links) == 0
-    assert sum(parent_session_id is not None for _, parent_session_id in session_links) == 0
+    assert sum(parent_source_id is not None for _, parent_source_id in source_links) == 2
+    assert sum(parent_session_id is not None for _, parent_session_id in session_links) == 2
     assert sum(bool(is_sidechain) for is_sidechain, _ in session_links) == 2
 
     summaries = store.list_session_summaries()
@@ -518,6 +582,95 @@ def test_ingest_claude_topology_replaces_and_analyzes_all_sessions(tmp_path) -> 
         "sessions": 3,
         "unanalyzed_sessions": 0,
     }
+
+
+def test_claude_multifile_bundle_replays_without_live_files(tmp_path) -> None:
+    source_root = tmp_path / "topology"
+    copytree(CLAUDE_TOPOLOGY_FIXTURE_DIR, source_root)
+    database_path = tmp_path / "session-doctor.duckdb"
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "claude",
+            "--source",
+            str(source_root),
+            "--db",
+            str(database_path),
+        ],
+    )
+    assert result.exit_code == 0
+    store = DuckDBStore(database_path)
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        bundle_rows = [
+            (str(row[0]), str(row[1]))
+            for row in connection.execute(
+                """
+                SELECT snapshot_bundle_id, source_kind FROM session_sources
+                WHERE source_kind IN ('root_session', 'subsession')
+                ORDER BY source_path
+                """
+            ).fetchall()
+        ]
+        duplicate_capture_count = connection.execute(
+            """
+            SELECT count(*) FROM (
+                SELECT source_path FROM source_snapshots
+                GROUP BY source_path HAVING count(*) > 1
+            )
+            """
+        ).fetchone()
+    assert duplicate_capture_count == (0,)
+    rmtree(source_root)
+
+    adapter = ClaudeCodeAdapter()
+    replayed_parent_ids: list[str | None] = []
+    sidecar_correlated = False
+    for bundle_id, source_kind in bundle_rows:
+        loaded = store.load_bundle_members(bundle_id)
+        assert loaded[0].member_role == "primary"
+        assert [member.capture_order for member in loaded] == list(range(len(loaded)))
+        assert all(
+            member.source_bytes is not None
+            or member.member_capture_status in {"missing", "unreadable"}
+            for member in loaded
+        )
+        primary = loaded[0]
+        assert primary.source is not None
+        assert primary.source_bytes is not None
+        context = tuple(
+            CapturedAdapterMember(member.source, member.member_role, member.source_bytes)
+            for member in loaded
+            if member.source is not None and member.source_bytes is not None
+        )
+        prepared = adapter.prepare_captured_source(primary.source, context)
+        replayed = adapter.parse_source(prepared, primary.source_bytes)
+        assert replayed.session is not None
+        if source_kind == "subsession":
+            replayed_parent_ids.append(replayed.session.parent_session_id)
+        sidecar_correlated = sidecar_correlated or any(
+            result.metadata.get("sidecar_correlated") is True for result in replayed.tool_results
+        )
+    assert all(parent_id is not None for parent_id in replayed_parent_ids)
+    assert sidecar_correlated
+
+    root_snapshot = next(
+        member.source
+        for bundle_id, source_kind in bundle_rows
+        if source_kind == "root_session"
+        for member in store.load_bundle_members(bundle_id)
+        if member.member_role == "primary"
+    )
+    assert root_snapshot is not None
+    root_summary = next(
+        row for row in store.list_snapshots() if row.source_id == root_snapshot.source_id
+    )
+    with pytest.raises(SnapshotPruneBlocked):
+        store.prune_snapshot(root_summary.snapshot_id)
+    prune_result = store.prune_snapshot(root_summary.snapshot_id, force=True)
+    assert len(prune_result.dependent_source_ids) == 3
+    assert store.table_count("source_snapshots") == 0
 
 
 def test_ingest_single_file_fails_immediately_on_recoverable_source_error(

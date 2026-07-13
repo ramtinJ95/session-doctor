@@ -24,6 +24,7 @@ class CapturedSource:
     snapshot_content_id: str
     capture_sequence: int
     captured_at: datetime
+    native_modified_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,31 @@ class CapturedBundle:
     native_session_identity: str
     capture_sequence: int
     native_identity_status: str
+    capture_status: str
+
+
+@dataclass(frozen=True)
+class BundleMemberCapture:
+    source_id: str
+    source_path: str
+    member_role: str
+    member_capture_status: str
+    capture_order: int
+    capture_started_at: datetime
+    capture_completed_at: datetime
+    captured_source: CapturedSource | None = None
+    native_modified_before: datetime | None = None
+    native_modified_after: datetime | None = None
+    evidence: dict[str, object] | None = None
+
+
+@dataclass(frozen=True)
+class LoadedBundleMember:
+    source: SessionSource | None
+    member_role: str
+    member_capture_status: str
+    capture_order: int
+    source_bytes: bytes | None
 
 
 class SnapshotSourceMismatchError(RuntimeError):
@@ -45,6 +71,7 @@ def capture_source(
     source_bytes: bytes,
     *,
     native_modified_at: datetime | None = None,
+    captured_at: datetime | None = None,
 ) -> CapturedSource:
     content_hash = hashlib.sha256(source_bytes).hexdigest()
     blob_id = stable_id("source-blob", "sha256", content_hash)
@@ -55,7 +82,7 @@ def capture_source(
         source.source_id,
     )
     snapshot_content_id = stable_id("snapshot-content", logical_source_id, blob_id)
-    captured_at = datetime.now(UTC)
+    captured_at = captured_at or datetime.now(UTC)
     with write_connection(database_path) as connection, transaction(connection):
         connection.execute(
             """
@@ -143,6 +170,7 @@ def capture_source(
         snapshot_content_id=snapshot_content_id,
         capture_sequence=capture_sequence,
         captured_at=captured_at,
+        native_modified_at=native_modified_at,
     )
 
 
@@ -153,6 +181,9 @@ def create_single_source_bundle(
     *,
     native_session_identity: str,
     native_identity_status: str = "observed",
+    capture_status: str = "complete",
+    capture_completed_at: datetime | None = None,
+    capture_evidence: dict[str, object] | None = None,
 ) -> CapturedBundle:
     stored_source = load_snapshot_source(database_path, captured_source.snapshot_id)
     if stored_source is None or not source_descriptors_match(stored_source, source):
@@ -224,6 +255,65 @@ def create_single_source_bundle(
                 stored_captured_at,
             ],
         )
+        completed_at = capture_completed_at or datetime.now(UTC)
+        lineage_id = stable_id(
+            "bundle-lineage",
+            stored_source.agent_name.value,
+            native_session_identity,
+            captured_source.logical_source_id,
+        )
+        previous_lineage = connection.execute(
+            """
+            SELECT snapshot_bundle_id, lineage_capture_sequence
+            FROM bundle_capture_metadata
+            WHERE lineage_id = ?
+            ORDER BY lineage_capture_sequence DESC
+            LIMIT 1
+            """,
+            [lineage_id],
+        ).fetchone()
+        lineage_sequence = int(previous_lineage[1]) + 1 if previous_lineage else 1
+        previous_lineage_bundle_id = str(previous_lineage[0]) if previous_lineage else None
+        connection.execute(
+            """
+            INSERT INTO bundle_capture_metadata (
+                snapshot_bundle_id, lineage_id, lineage_capture_sequence,
+                previous_lineage_bundle_id, capture_started_at,
+                capture_completed_at, capture_status, evidence_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                snapshot_bundle_id,
+                lineage_id,
+                lineage_sequence,
+                previous_lineage_bundle_id,
+                stored_captured_at,
+                completed_at,
+                capture_status,
+                metadata_json(capture_evidence or {}),
+            ],
+        )
+        connection.execute(
+            """
+            INSERT INTO bundle_member_capture_metadata (
+                snapshot_bundle_id, capture_order, logical_source_id, snapshot_id,
+                source_id, source_path, member_role, member_capture_status,
+                capture_started_at, capture_completed_at,
+                native_modified_before, native_modified_after, evidence_json
+            ) VALUES (?, 0, ?, ?, ?, ?, 'primary', 'captured', ?, ?, ?, ?, '{}')
+            """,
+            [
+                snapshot_bundle_id,
+                captured_source.logical_source_id,
+                captured_source.snapshot_id,
+                stored_source.source_id,
+                stored_source.source_path,
+                stored_captured_at,
+                completed_at,
+                captured_source.native_modified_at,
+                captured_source.native_modified_at,
+            ],
+        )
         connection.execute(
             """
             INSERT INTO snapshot_bundle_members (
@@ -243,6 +333,7 @@ def create_single_source_bundle(
         native_session_identity=native_session_identity,
         capture_sequence=bundle_sequence,
         native_identity_status=native_identity_status,
+        capture_status=capture_status,
     )
 
 
@@ -270,6 +361,102 @@ def load_snapshot_bytes(database_path: Path, snapshot_id: str) -> bytes | None:
     return source_bytes
 
 
+def add_bundle_members(
+    database_path: Path,
+    captured_bundle: CapturedBundle,
+    members: tuple[BundleMemberCapture, ...],
+) -> CapturedBundle:
+    if not members:
+        return captured_bundle
+    with write_connection(database_path) as connection, transaction(connection):
+        for member in members:
+            captured = member.captured_source
+            if captured is not None:
+                connection.execute(
+                    """
+                    INSERT INTO snapshot_bundle_members (
+                        snapshot_bundle_id, logical_source_id, snapshot_id,
+                        capture_order, member_role, member_capture_status
+                    ) VALUES (?, ?, ?, ?, ?, 'captured')
+                    """,
+                    [
+                        captured_bundle.snapshot_bundle_id,
+                        captured.logical_source_id,
+                        captured.snapshot_id,
+                        member.capture_order,
+                        member.member_role,
+                    ],
+                )
+            connection.execute(
+                """
+                INSERT INTO bundle_member_capture_metadata (
+                    snapshot_bundle_id, capture_order, logical_source_id, snapshot_id,
+                    source_id, source_path, member_role, member_capture_status,
+                    capture_started_at, capture_completed_at,
+                    native_modified_before, native_modified_after, evidence_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    captured_bundle.snapshot_bundle_id,
+                    member.capture_order,
+                    captured.logical_source_id if captured else None,
+                    captured.snapshot_id if captured else None,
+                    member.source_id,
+                    member.source_path,
+                    member.member_role,
+                    member.member_capture_status,
+                    member.capture_started_at,
+                    member.capture_completed_at,
+                    member.native_modified_before,
+                    member.native_modified_after,
+                    metadata_json(member.evidence or {}),
+                ],
+            )
+        identity_rows = connection.execute(
+            """
+            SELECT m.capture_order, m.member_role, m.member_capture_status,
+                coalesce(s.snapshot_content_id, '')
+            FROM bundle_member_capture_metadata AS m
+            LEFT JOIN source_snapshots AS s ON s.snapshot_id = m.snapshot_id
+            WHERE m.snapshot_bundle_id = ?
+            ORDER BY m.capture_order
+            """,
+            [captured_bundle.snapshot_bundle_id],
+        ).fetchall()
+        bundle_content_id = stable_id(
+            "bundle-content-v2",
+            captured_bundle.native_session_identity,
+            *(part for row in identity_rows for part in row),
+        )
+        status_rows = {str(row[2]) for row in identity_rows}
+        if "changed_during_capture" in status_rows:
+            capture_status = "skewed"
+        elif status_rows - {"captured"}:
+            capture_status = "incomplete"
+        else:
+            capture_status = captured_bundle.capture_status
+        connection.execute(
+            "UPDATE snapshot_bundles SET bundle_content_id = ? WHERE snapshot_bundle_id = ?",
+            [bundle_content_id, captured_bundle.snapshot_bundle_id],
+        )
+        connection.execute(
+            """
+            UPDATE bundle_capture_metadata
+            SET capture_status = ?, capture_completed_at = ?
+            WHERE snapshot_bundle_id = ?
+            """,
+            [capture_status, datetime.now(UTC), captured_bundle.snapshot_bundle_id],
+        )
+    return CapturedBundle(
+        snapshot_bundle_id=captured_bundle.snapshot_bundle_id,
+        bundle_content_id=bundle_content_id,
+        native_session_identity=captured_bundle.native_session_identity,
+        capture_sequence=captured_bundle.capture_sequence,
+        native_identity_status=captured_bundle.native_identity_status,
+        capture_status=capture_status,
+    )
+
+
 def load_snapshot_source(database_path: Path, snapshot_id: str) -> SessionSource | None:
     with read_connection(database_path) as connection:
         row = connection.execute(
@@ -295,6 +482,35 @@ def load_snapshot_source(database_path: Path, snapshot_id: str) -> SessionSource
             "metadata": parse_metadata(row[7]),
         }
     )
+
+
+def load_bundle_members(
+    database_path: Path, snapshot_bundle_id: str
+) -> tuple[LoadedBundleMember, ...]:
+    with read_connection(database_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT capture_order, member_role, member_capture_status, snapshot_id
+            FROM bundle_member_capture_metadata
+            WHERE snapshot_bundle_id = ?
+            ORDER BY capture_order
+            """,
+            [snapshot_bundle_id],
+        ).fetchall()
+    members: list[LoadedBundleMember] = []
+    for capture_order, member_role, status, snapshot_id in rows:
+        source = load_snapshot_source(database_path, str(snapshot_id)) if snapshot_id else None
+        source_bytes = load_snapshot_bytes(database_path, str(snapshot_id)) if snapshot_id else None
+        members.append(
+            LoadedBundleMember(
+                source=source,
+                member_role=str(member_role),
+                member_capture_status=str(status),
+                capture_order=int(capture_order),
+                source_bytes=source_bytes,
+            )
+        )
+    return tuple(members)
 
 
 def source_descriptors_match(left: SessionSource, right: SessionSource) -> bool:

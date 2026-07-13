@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Annotated
 
@@ -79,7 +81,7 @@ from .integration_assets import IntegrationAssetError, session_doctor_skill_dire
 from .report_payload import build_session_report
 from .report_renderers import render_session_report, render_session_report_markdown
 from .schemas import AnalysisRun, SessionClassification, SessionFeature
-from .store import TABLE_NAMES, DuckDBStore
+from .store import TABLE_NAMES, DuckDBStore, SnapshotPruneBlocked, SnapshotSummary
 from .summary_payload import summary_payload
 from .trend_payload import project_payload, trend_payload
 
@@ -91,6 +93,7 @@ db_app = typer.Typer(help="Manage the local DuckDB store.")
 sessions_app = typer.Typer(help="Inspect ingested sessions.")
 projects_app = typer.Typer(help="Inspect observed project path hints.")
 integrations_app = typer.Typer(help="Locate optional agent integration assets.")
+snapshots_app = typer.Typer(help="Inspect and prune exact captured source history.")
 
 __all__ = [
     "ANALYSIS_SUMMARY_FEATURES",
@@ -215,6 +218,132 @@ def database_info(
     database_path = database_path_from_option(db)
     require_valid_database_path(database_path)
     render_database_info(database_info_for_path(database_path), console)
+
+
+@snapshots_app.command("list")
+def snapshots_list(
+    db: Annotated[Path | None, typer.Option("--db", help="DuckDB path to inspect.")] = None,
+    agent: Annotated[str | None, typer.Option("--agent")] = None,
+    status: Annotated[str | None, typer.Option("--status")] = None,
+    output_format: Annotated[str, typer.Option("--format", help="terminal or json")] = "terminal",
+) -> None:
+    """List latest and historical exact source snapshots."""
+    if output_format not in {"terminal", "json"}:
+        raise typer.BadParameter("format must be terminal or json", param_hint="--format")
+    database_path = database_path_from_option(db)
+    require_valid_database_path(database_path)
+    require_current_database_schema(database_path)
+    try:
+        rows = DuckDBStore(database_path).list_snapshots(
+            agent_name=agent_name_from_option(agent),
+            lifecycle_state=status,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--status") from exc
+    payload = [snapshot_summary_payload(row) for row in rows]
+    if output_format == "json":
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True, default=str))
+        return
+    for row in payload:
+        latest = " latest" if row["is_latest"] else ""
+        typer.echo(
+            f"{row['snapshot_id']} {row['agent_name']} {row['lifecycle_state']}"
+            f"{latest} {row['source_path']}"
+        )
+
+
+@snapshots_app.command("show")
+def snapshots_show(
+    snapshot_id: str,
+    db: Annotated[Path | None, typer.Option("--db", help="DuckDB path to inspect.")] = None,
+) -> None:
+    """Show one exact snapshot's provenance and lifecycle."""
+    database_path = database_path_from_option(db)
+    require_valid_database_path(database_path)
+    require_current_database_schema(database_path)
+    row = DuckDBStore(database_path).snapshot_summary(snapshot_id)
+    if row is None:
+        console.print(f"[red]Snapshot not found:[/red] {snapshot_id}")
+        raise typer.Exit(1)
+    typer.echo(json.dumps(snapshot_summary_payload(row), indent=2, sort_keys=True, default=str))
+
+
+@snapshots_app.command("replay")
+def snapshots_replay(
+    snapshot_id: str,
+    output: Annotated[Path, typer.Option("--output", help="Exact raw-byte destination.")],
+    db: Annotated[Path | None, typer.Option("--db", help="DuckDB path to inspect.")] = None,
+) -> None:
+    """Atomically write one exact captured source to an explicit path."""
+    database_path = database_path_from_option(db)
+    require_valid_database_path(database_path)
+    require_current_database_schema(database_path)
+    source_bytes = DuckDBStore(database_path).load_snapshot_bytes(snapshot_id)
+    if source_bytes is None:
+        console.print(f"[red]Snapshot not found:[/red] {snapshot_id}")
+        raise typer.Exit(1)
+    destination = output.expanduser()
+    if not destination.parent.is_dir():
+        raise typer.BadParameter("output parent directory must exist", param_hint="--output")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.", dir=destination.parent
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as temporary:
+            temporary.write(source_bytes)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.replace(temporary_name, destination)
+    except Exception:
+        Path(temporary_name).unlink(missing_ok=True)
+        raise
+    typer.echo(f"Wrote exact snapshot: {destination}")
+
+
+@snapshots_app.command("prune")
+def snapshots_prune(
+    snapshot_id: str,
+    db: Annotated[Path | None, typer.Option("--db", help="DuckDB path to modify.")] = None,
+    force: Annotated[bool, typer.Option("--force", help="Delete dependent derived rows.")] = False,
+) -> None:
+    """Explicitly prune one snapshot and checkpoint DuckDB."""
+    database_path = database_path_from_option(db)
+    require_valid_database_path(database_path)
+    require_current_database_schema(database_path)
+    try:
+        if force:
+            dependencies = DuckDBStore(database_path).snapshot_dependencies(snapshot_id)
+            typer.echo(
+                "Force prune dependent sources: "
+                + (", ".join(dependencies) if dependencies else "none")
+            )
+        result = DuckDBStore(database_path).prune_snapshot(snapshot_id, force=force)
+    except SnapshotPruneBlocked as exc:
+        console.print(f"[red]Snapshot prune blocked:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    typer.echo(
+        f"Pruned {result.snapshot_id}: bundles={result.deleted_bundle_count} "
+        f"blobs={result.deleted_blob_count} forced={str(result.forced).lower()}"
+    )
+
+
+def snapshot_summary_payload(row: SnapshotSummary) -> dict[str, object]:
+    return {
+        "snapshot_id": row.snapshot_id,
+        "snapshot_bundle_id": row.snapshot_bundle_id,
+        "source_id": row.source_id,
+        "agent_name": row.agent_name,
+        "source_path": row.source_path,
+        "capture_sequence": row.capture_sequence,
+        "captured_at": row.captured_at,
+        "lifecycle_state": row.lifecycle_state,
+        "capture_status": row.capture_status,
+        "byte_length": row.byte_length,
+        "is_latest": row.is_latest,
+    }
 
 
 @sessions_app.command("list")
@@ -782,6 +911,7 @@ app.add_typer(db_app, name="db")
 app.add_typer(sessions_app, name="sessions")
 app.add_typer(projects_app, name="projects")
 app.add_typer(integrations_app, name="integrations")
+app.add_typer(snapshots_app, name="snapshots")
 
 
 def render_ingest_summary(summary: IngestSummary, database_path: Path) -> None:

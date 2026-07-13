@@ -1,15 +1,27 @@
 from __future__ import annotations
 
+import json
+from datetime import timedelta
+
 import duckdb
 
-SCHEMA_VERSION = 5
+from session_doctor.ids import stable_id
 
-DURABLE_TABLE_NAMES = (
+SCHEMA_VERSION = 6
+
+BASE_DURABLE_TABLE_NAMES = (
     "source_blobs",
     "logical_sources",
     "source_snapshots",
     "snapshot_bundles",
     "snapshot_bundle_members",
+)
+
+DURABLE_TABLE_NAMES = (
+    *BASE_DURABLE_TABLE_NAMES,
+    "bundle_capture_metadata",
+    "bundle_member_capture_metadata",
+    "lifecycle_observations",
 )
 
 DERIVED_TABLE_NAMES = (
@@ -55,9 +67,9 @@ def initialize_schema(connection: duckdb.DuckDBPyConnection) -> None:
         if (
             actual_version is not None
             and actual_version < SCHEMA_VERSION
-            and set(DURABLE_TABLE_NAMES).issubset(existing_tables)
+            and set(BASE_DURABLE_TABLE_NAMES).issubset(existing_tables)
         ):
-            rebuild_derived_schema(connection)
+            rebuild_derived_schema(connection, actual_version)
             return
         require_current_schema(connection)
         return
@@ -79,13 +91,43 @@ def initialize_schema(connection: duckdb.DuckDBPyConnection) -> None:
     )
 
 
-def rebuild_derived_schema(connection: duckdb.DuckDBPyConnection) -> None:
+def rebuild_derived_schema(connection: duckdb.DuckDBPyConnection, actual_version: int) -> None:
     connection.execute("BEGIN TRANSACTION")
     try:
         for table_name in reversed(DERIVED_TABLE_NAMES):
             connection.execute(f"DROP TABLE IF EXISTS {table_name}")
+        snapshot_rows: list[tuple[object, ...]] = []
+        bundle_rows: list[tuple[object, ...]] = []
+        member_rows: list[tuple[object, ...]] = []
+        if actual_version < 6:
+            snapshot_rows = connection.execute("SELECT * FROM source_snapshots").fetchall()
+            bundle_rows = connection.execute("SELECT * FROM snapshot_bundles").fetchall()
+            member_rows = connection.execute("SELECT * FROM snapshot_bundle_members").fetchall()
+            connection.execute("DROP TABLE IF EXISTS lifecycle_observations")
+            connection.execute("DROP TABLE IF EXISTS bundle_member_capture_metadata")
+            connection.execute("DROP TABLE IF EXISTS bundle_capture_metadata")
+            connection.execute("DROP TABLE snapshot_bundle_members")
+            connection.execute("DROP TABLE snapshot_bundles")
+            connection.execute("DROP TABLE source_snapshots")
         for statement in CREATE_TABLE_STATEMENTS:
             connection.execute(statement)
+        if snapshot_rows:
+            connection.executemany(
+                "INSERT INTO source_snapshots VALUES "
+                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                snapshot_rows,
+            )
+        if bundle_rows:
+            connection.executemany(
+                "INSERT INTO snapshot_bundles VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                bundle_rows,
+            )
+        if member_rows:
+            connection.executemany(
+                "INSERT INTO snapshot_bundle_members VALUES (?, ?, ?, ?, ?, ?)",
+                member_rows,
+            )
+        backfill_capture_history(connection)
         connection.execute(
             "INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)",
             [SCHEMA_VERSION],
@@ -94,6 +136,94 @@ def rebuild_derived_schema(connection: duckdb.DuckDBPyConnection) -> None:
     except Exception:
         connection.execute("ROLLBACK")
         raise
+
+
+def backfill_capture_history(connection: duckdb.DuckDBPyConnection) -> None:
+    connection.execute(
+        """
+        INSERT INTO bundle_member_capture_metadata (
+            snapshot_bundle_id, capture_order, logical_source_id, snapshot_id,
+            source_id, source_path, member_role, member_capture_status,
+            capture_started_at, capture_completed_at,
+            native_modified_before, native_modified_after, evidence_json
+        )
+        SELECT m.snapshot_bundle_id, m.capture_order, m.logical_source_id,
+            m.snapshot_id, s.source_id, s.source_path, m.member_role,
+            m.member_capture_status, s.captured_at, s.captured_at,
+            s.native_modified_at, s.native_modified_at, ?
+        FROM snapshot_bundle_members AS m
+        JOIN source_snapshots AS s ON s.snapshot_id = m.snapshot_id
+        LEFT JOIN bundle_member_capture_metadata AS existing
+          ON existing.snapshot_bundle_id = m.snapshot_bundle_id
+         AND existing.capture_order = m.capture_order
+        WHERE existing.snapshot_bundle_id IS NULL
+        """,
+        [json.dumps({"migration": "schema-v5-to-v6"})],
+    )
+    rows = connection.execute(
+        """
+        SELECT b.snapshot_bundle_id, b.bundle_content_id, b.agent_name,
+            b.native_session_identity, b.captured_at, s.logical_source_id
+        FROM snapshot_bundles AS b
+        JOIN source_snapshots AS s ON s.snapshot_id = b.primary_snapshot_id
+        LEFT JOIN bundle_capture_metadata AS c USING (snapshot_bundle_id)
+        WHERE c.snapshot_bundle_id IS NULL
+        ORDER BY s.logical_source_id, b.captured_at, b.snapshot_bundle_id
+        """
+    ).fetchall()
+    previous_by_lineage: dict[str, tuple[str, str, object, int]] = {}
+    for bundle_id, content_id, agent_name, native_identity, captured_at, logical_source_id in rows:
+        lineage_id = stable_id("bundle-lineage", agent_name, native_identity, logical_source_id)
+        previous = previous_by_lineage.get(lineage_id)
+        sequence = previous[3] + 1 if previous else 1
+        previous_bundle_id = previous[0] if previous else None
+        connection.execute(
+            """
+            INSERT INTO bundle_capture_metadata (
+                snapshot_bundle_id, lineage_id, lineage_capture_sequence,
+                previous_lineage_bundle_id, capture_started_at,
+                capture_completed_at, capture_status, evidence_json
+            ) VALUES (?, ?, ?, ?, ?, ?, 'complete', ?)
+            """,
+            [
+                bundle_id,
+                lineage_id,
+                sequence,
+                previous_bundle_id,
+                captured_at,
+                captured_at,
+                json.dumps({"migration": "schema-v5-to-v6"}),
+            ],
+        )
+        state = "possibly_active"
+        if (
+            previous
+            and previous[1] == content_id
+            and captured_at - previous[2] >= timedelta(seconds=30)
+        ):
+            state = "settled_unknown"
+        observation_id = stable_id("lifecycle-observation", bundle_id, "lifecycle-v1", state)
+        connection.execute(
+            """
+            INSERT INTO lifecycle_observations (
+                lifecycle_observation_id, snapshot_bundle_id,
+                lifecycle_policy_version, state, observed_at, evidence_json
+            ) VALUES (?, ?, 'lifecycle-v1', ?, ?, ?)
+            """,
+            [
+                observation_id,
+                bundle_id,
+                state,
+                captured_at,
+                json.dumps({"reason": "migrated_capture_history"}),
+            ],
+        )
+        previous_by_lineage[lineage_id] = (
+            str(bundle_id),
+            str(content_id),
+            captured_at,
+            sequence,
+        )
 
 
 def require_current_schema(
@@ -174,7 +304,7 @@ CREATE_TABLE_STATEMENTS = (
         captured_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
         native_modified_at TIMESTAMP,
         capture_status VARCHAR NOT NULL CHECK (capture_status IN ('captured')),
-        previous_snapshot_id VARCHAR REFERENCES source_snapshots(snapshot_id),
+        previous_snapshot_id VARCHAR,
         UNIQUE (logical_source_id, capture_sequence),
         UNIQUE (snapshot_id, logical_source_id),
         UNIQUE (snapshot_id, source_id)
@@ -191,7 +321,7 @@ CREATE_TABLE_STATEMENTS = (
             CHECK (native_identity_status IN ('observed', 'fallback_parse_failed')),
         native_bundle_capture_sequence BIGINT NOT NULL
             CHECK (native_bundle_capture_sequence > 0),
-        previous_snapshot_bundle_id VARCHAR REFERENCES snapshot_bundles(snapshot_bundle_id),
+        previous_snapshot_bundle_id VARCHAR,
         captured_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
         UNIQUE (agent_name, native_session_identity, native_bundle_capture_sequence),
         UNIQUE (snapshot_bundle_id, primary_snapshot_id)
@@ -210,6 +340,65 @@ CREATE_TABLE_STATEMENTS = (
         UNIQUE (snapshot_bundle_id, capture_order),
         FOREIGN KEY (snapshot_id, logical_source_id)
             REFERENCES source_snapshots(snapshot_id, logical_source_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS bundle_capture_metadata (
+        snapshot_bundle_id VARCHAR PRIMARY KEY
+            REFERENCES snapshot_bundles(snapshot_bundle_id),
+        lineage_id VARCHAR NOT NULL,
+        lineage_capture_sequence BIGINT NOT NULL CHECK (lineage_capture_sequence > 0),
+        previous_lineage_bundle_id VARCHAR,
+        capture_started_at TIMESTAMP NOT NULL,
+        capture_completed_at TIMESTAMP NOT NULL,
+        capture_status VARCHAR NOT NULL CHECK (
+            capture_status IN ('complete', 'incomplete', 'skewed', 'parse_failed')
+        ),
+        evidence_json VARCHAR NOT NULL DEFAULT '{}',
+        UNIQUE (lineage_id, lineage_capture_sequence)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS bundle_member_capture_metadata (
+        snapshot_bundle_id VARCHAR NOT NULL
+            REFERENCES snapshot_bundles(snapshot_bundle_id),
+        capture_order INTEGER NOT NULL CHECK (capture_order >= 0),
+        logical_source_id VARCHAR REFERENCES logical_sources(logical_source_id),
+        snapshot_id VARCHAR REFERENCES source_snapshots(snapshot_id),
+        source_id VARCHAR NOT NULL,
+        source_path VARCHAR NOT NULL,
+        member_role VARCHAR NOT NULL,
+        member_capture_status VARCHAR NOT NULL CHECK (
+            member_capture_status IN (
+                'captured', 'missing', 'unreadable', 'changed_during_capture'
+            )
+        ),
+        capture_started_at TIMESTAMP NOT NULL,
+        capture_completed_at TIMESTAMP NOT NULL,
+        native_modified_before TIMESTAMP,
+        native_modified_after TIMESTAMP,
+        evidence_json VARCHAR NOT NULL DEFAULT '{}',
+        PRIMARY KEY (snapshot_bundle_id, capture_order),
+        CHECK (
+            (member_capture_status = 'captured' AND snapshot_id IS NOT NULL)
+            OR member_capture_status != 'captured'
+        )
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS lifecycle_observations (
+        lifecycle_observation_id VARCHAR PRIMARY KEY,
+        snapshot_bundle_id VARCHAR NOT NULL UNIQUE
+            REFERENCES snapshot_bundles(snapshot_bundle_id),
+        lifecycle_policy_version VARCHAR NOT NULL,
+        state VARCHAR NOT NULL CHECK (
+            state IN (
+                'terminal_observed', 'settled_unknown',
+                'possibly_active', 'snapshot_incomplete'
+            )
+        ),
+        observed_at TIMESTAMP NOT NULL,
+        evidence_json VARCHAR NOT NULL DEFAULT '{}'
     )
     """,
     """
