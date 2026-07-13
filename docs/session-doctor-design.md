@@ -386,6 +386,7 @@ envelope and excluded from blinded quality claims.
 ### Judge Annotation
 
 ```text
+judge_annotation_id
 schema_version
 annotation_protocol_version
 packet_id
@@ -413,6 +414,7 @@ reference resolution are separate versioned records:
 
 ```text
 JudgePanelResolution
+  judge_panel_resolution_id
   schema_version
   annotation_protocol_version
   packet_id
@@ -422,6 +424,7 @@ JudgePanelResolution
   resolved_at
 
 AuditSelection
+  audit_selection_id
   schema_version
   annotation_protocol_version
   packet_id
@@ -431,6 +434,7 @@ AuditSelection
   selected_at
 
 HumanAdjudication
+  human_adjudication_id
   schema_version
   annotation_protocol_version
   packet_id
@@ -442,6 +446,7 @@ HumanAdjudication
   reviewed_at
 
 ReferenceResolution
+  reference_resolution_id
   schema_version
   annotation_protocol_version
   packet_id
