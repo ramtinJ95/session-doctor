@@ -37,6 +37,7 @@ class PruneResult:
     dependent_source_ids: tuple[str, ...]
     dependent_session_ids: tuple[str, ...]
     dependent_analysis_run_ids: tuple[str, ...]
+    dependent_normalization_run_ids: tuple[str, ...]
     inbound_source_ids: tuple[str, ...]
     inbound_session_ids: tuple[str, ...]
     downstream_lifecycle_bundle_ids: tuple[str, ...]
@@ -51,6 +52,7 @@ class PruneDependencies:
     source_ids: tuple[str, ...]
     session_ids: tuple[str, ...]
     analysis_run_ids: tuple[str, ...]
+    normalization_run_ids: tuple[str, ...]
     inbound_source_ids: tuple[str, ...]
     inbound_session_ids: tuple[str, ...]
     downstream_lifecycle_bundle_ids: tuple[str, ...]
@@ -100,6 +102,7 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
             source_ids=(),
             session_ids=(),
             analysis_run_ids=(),
+            normalization_run_ids=(),
             inbound_source_ids=(),
             inbound_session_ids=(),
             downstream_lifecycle_bundle_ids=(),
@@ -108,6 +111,15 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
     if len(bundle_rows) != 1:
         raise RuntimeError(f"Snapshot has multiple owning bundles: {snapshot_id}")
     bundle_ids = tuple(str(row[0]) for row in bundle_rows)
+    normalization_rows = connection.execute(
+        """
+        SELECT normalization_run_id FROM normalization_run_bundles
+        WHERE snapshot_bundle_id IN (SELECT unnest(?))
+        ORDER BY normalization_run_id
+        """,
+        [list(bundle_ids)],
+    ).fetchall()
+    normalization_run_ids = tuple(str(row[0]) for row in normalization_rows)
     source_rows = connection.execute(
         """
             SELECT source_id FROM session_sources
@@ -170,6 +182,18 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
         "session_sources": len(source_ids),
         "sessions": len(session_ids),
     }
+    normalized_entity_count = (
+        connection.execute(
+            "SELECT count(*) FROM normalized_entities "
+            "WHERE normalization_run_id IN (SELECT unnest(?))",
+            [list(normalization_run_ids)],
+        ).fetchone()
+        if normalization_run_ids
+        else None
+    )
+    derived_row_counts["normalized_entities"] = (
+        int(normalized_entity_count[0]) if normalized_entity_count else 0
+    )
     for table_name in ("raw_events", "parse_warnings"):
         if not source_ids:
             derived_row_counts[table_name] = 0
@@ -204,6 +228,7 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
         source_ids=source_ids,
         session_ids=session_ids,
         analysis_run_ids=analysis_run_ids,
+        normalization_run_ids=normalization_run_ids,
         inbound_source_ids=inbound_source_ids,
         inbound_session_ids=inbound_session_ids,
         downstream_lifecycle_bundle_ids=downstream_lifecycle_bundle_ids,
@@ -310,6 +335,7 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
         dependencies = _snapshot_dependencies(connection, snapshot_id)
         if (
             dependencies.source_ids
+            or dependencies.normalization_run_ids
             or dependencies.inbound_source_ids
             or dependencies.inbound_session_ids
             or dependencies.downstream_lifecycle_bundle_ids
@@ -432,6 +458,26 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
             """,
             [bundle_id],
         ).fetchall()
+
+        connection.execute(
+            "DELETE FROM normalization_run_bundles WHERE snapshot_bundle_id = ?",
+            [bundle_id],
+        )
+        for normalization_run_id in dependencies.normalization_run_ids:
+            remaining_run_bundles = connection.execute(
+                "SELECT count(*) FROM normalization_run_bundles WHERE normalization_run_id = ?",
+                [normalization_run_id],
+            ).fetchone()
+            if remaining_run_bundles != (0,):
+                continue
+            connection.execute(
+                "DELETE FROM normalized_entities WHERE normalization_run_id = ?",
+                [normalization_run_id],
+            )
+            connection.execute(
+                "DELETE FROM normalization_runs WHERE normalization_run_id = ?",
+                [normalization_run_id],
+            )
 
         for source_id in dependencies.source_ids:
             delete_source_records(connection, source_id)
@@ -559,6 +605,7 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
         dependent_source_ids=dependencies.source_ids,
         dependent_session_ids=dependencies.session_ids,
         dependent_analysis_run_ids=dependencies.analysis_run_ids,
+        dependent_normalization_run_ids=dependencies.normalization_run_ids,
         inbound_source_ids=dependencies.inbound_source_ids,
         inbound_session_ids=dependencies.inbound_session_ids,
         downstream_lifecycle_bundle_ids=dependencies.downstream_lifecycle_bundle_ids,

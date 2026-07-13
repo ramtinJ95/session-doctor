@@ -28,6 +28,16 @@ from .lifecycle import (
 )
 from .migrations import require_current_schema
 from .models import AggregateSummary, SessionScopeFilters, SessionSummary, StoreInfo, SummaryFilters
+from .normalization_runs import (
+    NORMALIZATION_CONFIGURATION_HASH,
+    NORMALIZATION_VERSION,
+    NormalizationCoverage,
+    NormalizationRun,
+    StoredNormalization,
+    load_normalization,
+    normalization_coverage,
+    persist_normalization,
+)
 from .project_readers import read_projects
 from .readers import (
     list_session_summaries,
@@ -252,6 +262,47 @@ class DuckDBStore:
 
     def snapshot_dependencies(self, snapshot_id: str) -> PruneDependencies:
         return read_snapshot_dependencies(self.database_path, snapshot_id)
+
+    def persist_normalization(
+        self,
+        snapshot_bundle_id: str,
+        source: SessionSource,
+        bundle: ParsedSessionBundle,
+        *,
+        adapter_version: str,
+        normalization_version: str = NORMALIZATION_VERSION,
+        configuration_hash: str = NORMALIZATION_CONFIGURATION_HASH,
+    ) -> NormalizationRun:
+        return persist_normalization(
+            self.database_path,
+            snapshot_bundle_id,
+            source,
+            bundle,
+            adapter_version=adapter_version,
+            normalization_version=normalization_version,
+            configuration_hash=configuration_hash,
+        )
+
+    def normalization_coverage(
+        self,
+        snapshot_bundle_id: str,
+        *,
+        adapter_name: str,
+        adapter_version: str,
+        normalization_version: str = NORMALIZATION_VERSION,
+        configuration_hash: str = NORMALIZATION_CONFIGURATION_HASH,
+    ) -> NormalizationCoverage:
+        return normalization_coverage(
+            self.database_path,
+            snapshot_bundle_id,
+            adapter_name=adapter_name,
+            adapter_version=adapter_version,
+            normalization_version=normalization_version,
+            configuration_hash=configuration_hash,
+        )
+
+    def load_normalization(self, normalization_run_id: str) -> StoredNormalization | None:
+        return load_normalization(self.database_path, normalization_run_id)
 
     def replace_analysis_rows(
         self,
