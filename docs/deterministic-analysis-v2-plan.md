@@ -1009,6 +1009,24 @@ Gate:
 
 ### PR 6: Evaluation Packets, Judge Import, And Corpus Workflow
 
+Implementation contract:
+
+- schema version 9 durably stores immutable packet, judge, panel, audit, human,
+  and final-reference records in separate tables;
+- boundary export emits a private routing envelope and a deterministic
+  judge-visible packet with predictions and routing identity excluded;
+- imports validate schema/protocol, rubric answers, packet evidence IDs,
+  excluded target judges, and all panel/audit/human/reference co-references;
+- only three distinct unanimous judges form automatic consensus; 2-1 is
+  disputed and fewer than three is insufficient;
+- audit selection uses a frozen seed and stable 20% packet hash, while exposed
+  or unverifiable packets remain ineligible for blinded quality claims;
+- `evaluation/boundary-pilot-v1.json` contains 24 stratified development
+  regions with family identity unknown/ambiguous before PR 12;
+- episode packet schema is available, but generation fails explicitly until
+  frozen boundary references exist after PR 8;
+- Session Doctor performs no provider calls in export, import, or resolution.
+
 Deliverables:
 
 - add boundary and episode packet schemas/export;
