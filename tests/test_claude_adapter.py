@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from session_doctor.adapters import SourceFormatError
+from session_doctor.adapters.base import CapturedAdapterMember
 from session_doctor.adapters.claude import ClaudeCodeAdapter, classify_claude_path
 from session_doctor.adapters.claude_sidecars import hash_sidecar
 from session_doctor.analysis import analyze_features, classify_session
@@ -1092,8 +1093,34 @@ def test_claude_subagent_ambiguous_parent_signals_remain_unlinked(tmp_path) -> N
     assert child_source.parent_source_id is None
     assert child_source.metadata["claude_parent_link_status"] == "ambiguous"
     assert child_source.metadata["claude_parent_candidate_count"] == 2
+    assert len(child_source.metadata["claude_parent_candidate_source_ids"]) == 2
     assert "subagent_parent_ambiguous" in {
         warning.metadata["code"] for warning in bundle.parse_warnings
+    }
+    captured_source = adapter.source_for_captured_parse(child_source)
+    captured_members = adapter.bundle_member_sources(child_source, child_path.read_bytes())
+    transcript_members = [
+        member
+        for member, role in captured_members
+        if role in {"related_transcript", "subagent_transcript"}
+    ]
+    assert len(transcript_members) == 2
+    context = (
+        CapturedAdapterMember(captured_source, "primary", child_path.read_bytes()),
+        *(
+            CapturedAdapterMember(member, role, Path(member.source_path).read_bytes())
+            for member, role in captured_members
+            if Path(member.source_path).is_file()
+        ),
+    )
+    replayed = adapter.parse_source(
+        adapter.prepare_captured_source(captured_source, context),
+        child_path.read_bytes(),
+    )
+    assert replayed.session is not None
+    assert replayed.session.parent_session_id is None
+    assert "subagent_parent_ambiguous" in {
+        warning.metadata["code"] for warning in replayed.parse_warnings
     }
 
 

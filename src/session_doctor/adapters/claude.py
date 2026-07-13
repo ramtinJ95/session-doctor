@@ -71,8 +71,8 @@ def claude_topology_directory_members(directory: Path) -> tuple[str, ...]:
 def trailing_json_record_malformed(path: Path, source_bytes: bytes) -> bool:
     try:
         lines = source_bytes.decode("utf-8").splitlines()
-    except UnicodeDecodeError as exc:
-        raise SourceFormatError(path, "source is not valid UTF-8") from exc
+    except UnicodeDecodeError:
+        return True
     if not lines:
         return False
     try:
@@ -246,6 +246,7 @@ class ClaudeCodeAdapter(BaseAdapter):
             source.metadata["capture_topology_directory_members"] = list(topology_directory_members)
             transcripts = sorted((session_dir / "subagents").glob("*.jsonl"))
             candidates.extend(transcripts)
+            candidates.extend(sorted((session_dir / "subagents").glob("*.meta.json")))
             candidates.extend(candidate.with_suffix(".meta.json") for candidate in transcripts)
             for transcript in transcripts:
                 try:
@@ -306,25 +307,33 @@ class ClaudeCodeAdapter(BaseAdapter):
                 ),
                 None,
             )
-            if current is not None and current.parent_source_id is not None:
-                parent_path = next(
-                    (
-                        path
-                        for path in topology_paths
-                        if source_id_for_path(self.name, path) == current.parent_source_id
-                    ),
-                    None,
+            candidate_source_ids = (
+                current.metadata.get("claude_parent_candidate_source_ids", [])
+                if current is not None
+                else []
+            )
+            if isinstance(candidate_source_ids, list):
+                parent_paths = [
+                    path
+                    for path in topology_paths
+                    if source_id_for_path(self.name, path) in candidate_source_ids
+                    and path in topology_bytes
+                ]
+                candidates.extend(parent_paths)
+                expected_hashes.update(
+                    {
+                        path: hashlib.sha256(topology_bytes[path]).hexdigest()
+                        for path in parent_paths
+                    }
                 )
-                if parent_path is not None and parent_path in topology_bytes:
-                    candidates.append(parent_path)
-                    expected_hashes[parent_path] = hashlib.sha256(
-                        topology_bytes[parent_path]
-                    ).hexdigest()
         for evidence_path, evidence_bytes in evidence_sources:
             try:
                 evidence_lines = evidence_bytes.decode("utf-8").splitlines()
             except UnicodeDecodeError as exc:
-                raise SourceFormatError(evidence_path, "source is not valid UTF-8") from exc
+                if evidence_path == source_path:
+                    raise SourceFormatError(evidence_path, "source is not valid UTF-8") from exc
+                parse_incomplete_paths.add(evidence_path)
+                continue
             for line in evidence_lines:
                 try:
                     record = json.loads(line)
