@@ -239,7 +239,7 @@ class ClaudeCodeAdapter(BaseAdapter):
         topology_directory: Path | None = None
         topology_directory_members: tuple[str, ...] = ()
         parse_incomplete_paths: set[Path] = set()
-        if source.source_kind is SourceKind.ROOT_SESSION and session_dir.is_dir():
+        if source.source_kind is SourceKind.ROOT_SESSION:
             topology_directory = session_dir / "subagents"
             topology_directory_members = claude_topology_directory_members(topology_directory)
             source.metadata["capture_topology_directory"] = str(topology_directory)
