@@ -51,6 +51,7 @@ def insert_parsed_bundle(
     normalization_version: str = NORMALIZATION_VERSION,
     configuration_hash: str = NORMALIZATION_CONFIGURATION_HASH,
     capability_declarations: tuple[AdapterCapabilityDeclaration, ...] = (),
+    terminal_evidence_ids: tuple[str, ...] = (),
 ) -> None:
     validate_bundle_ownership(source, bundle)
     with write_connection(database_path) as connection, transaction(connection):
@@ -128,6 +129,7 @@ def insert_parsed_bundle(
             normalization_version,
             configuration_hash,
             capability_declarations,
+            terminal_evidence_ids,
         )
         delete_source_records(connection, source.source_id)
         insert_session_source(connection, source, bundle, captured_source, captured_bundle)

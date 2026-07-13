@@ -154,7 +154,11 @@ def model_usage_from_token_count(
         cache_read_tokens=int_value(usage.get("cached_input_tokens")),
         total_tokens=int_value(usage.get("total_tokens")),
         aggregation_semantics=(
-            UsageSemantics.INCREMENTAL if last_usage else UsageSemantics.CUMULATIVE
+            UsageSemantics.INCREMENTAL
+            if last_usage
+            else UsageSemantics.CUMULATIVE
+            if total_usage
+            else UsageSemantics.AGGREGATION_UNAVAILABLE
         ),
         metadata={
             "payload_type": string_value(payload.get("type")),

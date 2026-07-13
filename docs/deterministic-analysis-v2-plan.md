@@ -972,7 +972,8 @@ Implementation contract:
 - source record index is authoritative, native parent links are source-local,
   and cross-source order remains partial;
 - adapter capability declarations and observed instrumentation are independent
-  fields, with missing evidence represented as unavailable;
+  fields, declarations participate in normalization configuration identity,
+  terminal evidence cites raw-event IDs, and missing evidence is unavailable;
 - project identity follows native repository metadata, ingestion-observed VCS
   root, stored CWD, then unknown; the observed root is stored in capture
   evidence and bundle content identity;

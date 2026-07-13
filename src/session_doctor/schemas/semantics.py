@@ -48,6 +48,8 @@ class OrderingProjection(SessionDoctorModel):
     ordering_version: str
     source_order: list[SourceOrderItem] = Field(default_factory=list)
     causal_edges: list[CausalOrderEdge] = Field(default_factory=list)
+    ambiguous_native_event_ids: list[str] = Field(default_factory=list)
+    unresolved_parent_event_ids: list[str] = Field(default_factory=list)
     cross_source_order: str = "partial_order"
 
 

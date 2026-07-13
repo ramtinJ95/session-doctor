@@ -34,13 +34,12 @@ def raw_event_for_record(
         record_index=record_index,
         native_event_type=string_value(record.get("type")),
         native_event_id=string_value(payload.get("id")) or string_value(payload.get("call_id")),
-        native_parent_id=(
-            string_value(payload.get("parent_id")) or string_value(payload.get("turn_id"))
-        ),
+        native_parent_id=string_value(payload.get("parent_id")),
         timestamp=parse_timestamp(string_value(record.get("timestamp"))),
         payload_hash=hash_json(record),
         metadata={
             "payload_type": payload_type,
             "payload_keys": sorted(payload.keys()),
+            "turn_id": string_value(payload.get("turn_id")),
         },
     )

@@ -12,7 +12,7 @@ from session_doctor.adapters.codex import CodexAdapter
 from session_doctor.cli import app
 from session_doctor.normalization_workflow import normalize_snapshot
 from session_doctor.schemas import AgentName, SessionSource
-from session_doctor.store import DuckDBStore
+from session_doctor.store import DuckDBStore, NormalizationConflictError
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "codex" / "basic-session.jsonl"
 runner = CliRunner()
@@ -28,6 +28,10 @@ class VersionNineCodexAdapter(CodexAdapter):
 
 class VersionTenCodexAdapter(CodexAdapter):
     version = "10.0"
+
+
+class ReconfiguredCodexAdapter(CodexAdapter):
+    capabilities = CodexAdapter.capabilities[:-1]
 
 
 def test_bundle_without_run_reports_missing_coverage(tmp_path) -> None:
@@ -48,6 +52,7 @@ def test_bundle_without_run_reports_missing_coverage(tmp_path) -> None:
         bundle.snapshot_bundle_id,
         adapter_name="codex",
         adapter_version=CodexAdapter.version,
+        capability_declarations=CodexAdapter.capabilities,
     )
 
     assert coverage.status == "missing"
@@ -84,6 +89,7 @@ def test_parser_versions_coexist_and_replay_is_additive(tmp_path) -> None:
         summary.snapshot_bundle_id,
         adapter_name="codex",
         adapter_version=CodexAdapter.version,
+        capability_declarations=CodexAdapter.capabilities,
     )
     assert current.status == "current"
     assert current.current_normalization_run_id is not None
@@ -113,6 +119,43 @@ def test_parser_versions_coexist_and_replay_is_additive(tmp_path) -> None:
         "terminal_evidence",
         "model_usage",
     }
+    terminal = next(row for row in foundation.capabilities if row.capability == "terminal_evidence")
+    assert terminal.evidence_status == "observed"
+    assert terminal.evidence_ids
+    assert set(terminal.evidence_ids) <= {
+        event.event_id for event in stored_current.bundle.raw_events
+    }
+
+
+def test_capability_declarations_are_part_of_normalization_configuration(tmp_path) -> None:
+    store, snapshot_id = ingest_fixture(tmp_path / "session-doctor.duckdb")
+    summary = store.snapshot_summary(snapshot_id)
+    assert summary is not None
+    assert summary.snapshot_bundle_id is not None
+    current = store.normalization_coverage(
+        summary.snapshot_bundle_id,
+        adapter_name="codex",
+        adapter_version=CodexAdapter.version,
+        capability_declarations=CodexAdapter.capabilities,
+    )
+    assert current.current_normalization_run_id is not None
+
+    changed = normalize_snapshot(ReconfiguredCodexAdapter(), store, snapshot_id)
+
+    assert changed.normalization_run_id != current.current_normalization_run_id
+    with pytest.raises(NormalizationConflictError, match="duplicate"):
+        stored = store.load_normalization(current.current_normalization_run_id)
+        assert stored is not None
+        store.persist_normalization(
+            summary.snapshot_bundle_id,
+            stored.source,
+            stored.bundle,
+            adapter_version=CodexAdapter.version,
+            capability_declarations=(
+                CodexAdapter.capabilities[0],
+                CodexAdapter.capabilities[0],
+            ),
+        )
 
 
 def test_latest_compatible_selection_uses_parsed_versions(tmp_path) -> None:
@@ -127,6 +170,7 @@ def test_latest_compatible_selection_uses_parsed_versions(tmp_path) -> None:
         summary.snapshot_bundle_id,
         adapter_name="codex",
         adapter_version="10.1",
+        capability_declarations=CodexAdapter.capabilities,
     )
 
     assert coverage.status == "stale"
@@ -137,6 +181,7 @@ def test_latest_compatible_selection_uses_parsed_versions(tmp_path) -> None:
         summary.snapshot_bundle_id,
         adapter_name="codex",
         adapter_version="10",
+        capability_declarations=CodexAdapter.capabilities,
     )
     assert equivalent.selected_normalization_run_id == version_ten.normalization_run_id
 
@@ -160,16 +205,19 @@ def test_coverage_selection_is_deterministic_and_read_only(tmp_path) -> None:
         summary.snapshot_bundle_id,
         adapter_name="codex",
         adapter_version=CodexAdapter.version,
+        capability_declarations=CodexAdapter.capabilities,
     )
     second = store.normalization_coverage(
         summary.snapshot_bundle_id,
         adapter_name="codex",
         adapter_version=CodexAdapter.version,
+        capability_declarations=CodexAdapter.capabilities,
     )
     stale = store.normalization_coverage(
         summary.snapshot_bundle_id,
         adapter_name="codex",
         adapter_version="0.2.0",
+        capability_declarations=CodexAdapter.capabilities,
     )
 
     assert first == second

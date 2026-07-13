@@ -172,6 +172,7 @@ class DuckDBStore:
         *,
         adapter_version: str = "0.1.0",
         capability_declarations: tuple[AdapterCapabilityDeclaration, ...] = (),
+        terminal_evidence_ids: tuple[str, ...] = (),
     ) -> None:
         write_parsed_bundle(
             self.database_path,
@@ -181,6 +182,7 @@ class DuckDBStore:
             captured_bundle,
             adapter_version=adapter_version,
             capability_declarations=capability_declarations,
+            terminal_evidence_ids=terminal_evidence_ids,
         )
 
     def insert_untracked_parsed_bundle(
@@ -293,6 +295,7 @@ class DuckDBStore:
         normalization_version: str = NORMALIZATION_VERSION,
         configuration_hash: str = NORMALIZATION_CONFIGURATION_HASH,
         capability_declarations: tuple[AdapterCapabilityDeclaration, ...] = (),
+        terminal_evidence_ids: tuple[str, ...] = (),
     ) -> NormalizationRun:
         return persist_normalization(
             self.database_path,
@@ -303,6 +306,7 @@ class DuckDBStore:
             normalization_version=normalization_version,
             configuration_hash=configuration_hash,
             capability_declarations=capability_declarations,
+            terminal_evidence_ids=terminal_evidence_ids,
         )
 
     def normalization_coverage(
@@ -313,6 +317,7 @@ class DuckDBStore:
         adapter_version: str,
         normalization_version: str = NORMALIZATION_VERSION,
         configuration_hash: str = NORMALIZATION_CONFIGURATION_HASH,
+        capability_declarations: tuple[AdapterCapabilityDeclaration, ...] = (),
     ) -> NormalizationCoverage:
         return normalization_coverage(
             self.database_path,
@@ -321,6 +326,7 @@ class DuckDBStore:
             adapter_version=adapter_version,
             normalization_version=normalization_version,
             configuration_hash=configuration_hash,
+            capability_declarations=capability_declarations,
         )
 
     def load_normalization(self, normalization_run_id: str) -> StoredNormalization | None:
