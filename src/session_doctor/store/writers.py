@@ -44,7 +44,8 @@ def insert_parsed_bundle(
     with write_connection(database_path) as connection, transaction(connection):
         provenance = connection.execute(
             """
-            SELECT 1
+            SELECT b.bundle_content_id, b.native_session_identity,
+                b.native_identity_status, b.native_bundle_capture_sequence
             FROM source_snapshots AS s
             JOIN snapshot_bundle_members AS m
               ON m.snapshot_id = s.snapshot_id
@@ -79,7 +80,20 @@ def insert_parsed_bundle(
                 metadata_json(source.metadata),
             ],
         ).fetchone()
-        if provenance is None:
+        expected_native_session_identity = (
+            bundle.session.native_session_id
+            if bundle.session and bundle.session.native_session_id
+            else source.native_session_id or source.source_id
+        )
+        if provenance != (
+            captured_bundle.bundle_content_id,
+            expected_native_session_identity,
+            captured_bundle.native_identity_status,
+            captured_bundle.capture_sequence,
+        ) or (
+            captured_bundle.native_session_identity != expected_native_session_identity
+            or captured_bundle.native_identity_status != "observed"
+        ):
             raise CaptureProvenanceError(source.source_id)
         latest = connection.execute(
             """

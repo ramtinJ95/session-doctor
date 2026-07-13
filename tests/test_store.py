@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -147,7 +148,7 @@ def test_older_capture_cannot_replace_newer_normalized_projection(tmp_path) -> N
         source_path="/sessions/source-1.jsonl",
     )
     older = store.capture_source(source, b"older")
-    older_bundle = store.create_single_source_bundle(source, older, "native-1")
+    older_bundle = store.create_single_source_bundle(source, older, source.source_id)
     store.capture_source(source, b"newer")
 
     with pytest.raises(StaleCaptureError, match="no longer the latest"):
@@ -176,6 +177,15 @@ def test_projection_rejects_capture_from_another_source(tmp_path) -> None:
             ParsedSessionBundle(),
             captured,
             captured_bundle,
+        )
+
+    forged_bundle = replace(captured_bundle, native_session_identity="other-native")
+    with pytest.raises(CaptureProvenanceError, match="does not belong"):
+        store.insert_parsed_bundle(
+            captured_source,
+            ParsedSessionBundle(),
+            captured,
+            forged_bundle,
         )
 
 
