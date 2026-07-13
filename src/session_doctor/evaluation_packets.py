@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import tempfile
+from fractions import Fraction
 from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -20,7 +21,7 @@ from session_doctor.evaluation_models import (
     PacketKind,
     RoutingEnvelope,
 )
-from session_doctor.schemas import NormalizedRole, SemanticFoundation
+from session_doctor.schemas import Message, NormalizedRole, SemanticFoundation
 
 if TYPE_CHECKING:
     from session_doctor.store.normalization_runs import StoredNormalization
@@ -134,7 +135,8 @@ def boundary_packet(
 def packet_events(stored: StoredNormalization) -> list[PacketEvent]:
     bundle = stored.bundle
     record_indexes = {event.event_id: event.record_index for event in bundle.raw_events}
-    rows: list[tuple[int, int, int, str, PacketEvent]] = []
+    message_order = normalized_message_order(bundle.messages, record_indexes)
+    rows: list[tuple[Fraction, int, int, str, PacketEvent]] = []
 
     def add(
         evidence_id: str,
@@ -142,6 +144,7 @@ def packet_events(stored: StoredNormalization) -> list[PacketEvent]:
         source_event_id: str | None,
         entity_rank: int,
         entity_order: int,
+        fallback_order: Fraction | None = None,
         *,
         role: str | None = None,
         text: str | None = None,
@@ -152,7 +155,11 @@ def packet_events(stored: StoredNormalization) -> list[PacketEvent]:
         resolved_source_event_id = source_event_id if source_event_id in record_indexes else None
         rows.append(
             (
-                record_indexes.get(resolved_source_event_id or "", 2**31 - 1),
+                Fraction(record_indexes[resolved_source_event_id])
+                if resolved_source_event_id is not None
+                else fallback_order
+                if fallback_order is not None
+                else Fraction(2**31 - 1),
                 entity_rank,
                 entity_order,
                 evidence_id,
@@ -176,6 +183,7 @@ def packet_events(stored: StoredNormalization) -> list[PacketEvent]:
             message.source_event_id,
             0,
             index,
+            fallback_order=message_order[message.message_id],
             role=message.role.value,
             text=message.text,
             text_hash=message.text_hash,
@@ -219,6 +227,38 @@ def packet_events(stored: StoredNormalization) -> list[PacketEvent]:
             structure={"operation": activity.operation},
         )
     return [row[4] for row in sorted(rows, key=lambda row: row[:4])]
+
+
+def normalized_message_order(
+    messages: list[Message],
+    record_indexes: dict[str, int],
+) -> dict[str, Fraction]:
+    resolved = {
+        index: record_indexes[message.source_event_id]
+        for index, message in enumerate(messages)
+        if message.source_event_id in record_indexes
+    }
+    order: dict[str, Fraction] = {}
+    for index, message in enumerate(messages):
+        if index in resolved:
+            order[message.message_id] = Fraction(resolved[index])
+            continue
+        previous = max((row for row in resolved if row < index), default=None)
+        following = min((row for row in resolved if row > index), default=None)
+        if previous is not None and following is not None:
+            span_count = following - previous
+            offset = index - previous
+            order[message.message_id] = Fraction(resolved[previous]) + Fraction(
+                (resolved[following] - resolved[previous]) * offset,
+                span_count,
+            )
+        elif previous is not None:
+            order[message.message_id] = Fraction(resolved[previous] + index - previous)
+        elif following is not None:
+            order[message.message_id] = Fraction(resolved[following] - (following - index))
+        else:
+            order[message.message_id] = Fraction(index)
+    return order
 
 
 def routing_identities(
@@ -335,6 +375,17 @@ def identity_exposure_status(
 def write_packet_exports(
     exports: tuple[EvaluationPacketExport, ...], output_directory: Path
 ) -> None:
+    temporary = stage_packet_exports(exports, output_directory)
+    try:
+        publish_staged_packet_exports(temporary, output_directory)
+    except Exception:
+        discard_staged_packet_exports(temporary)
+        raise
+
+
+def stage_packet_exports(
+    exports: tuple[EvaluationPacketExport, ...], output_directory: Path
+) -> Path:
     if output_directory.exists():
         raise ValueError("evaluation output directory already exists")
     if not output_directory.parent.is_dir():
@@ -348,10 +399,20 @@ def write_packet_exports(
             (temporary / f"{packet_id}.judge.json").write_text(
                 canonical_json(packet_export.judge_packet.model_dump(mode="json")) + "\n"
             )
-        os.replace(temporary, output_directory)
+        return temporary
     except Exception:
         shutil.rmtree(temporary, ignore_errors=True)
         raise
+
+
+def publish_staged_packet_exports(temporary: Path, output_directory: Path) -> None:
+    if output_directory.exists():
+        raise ValueError("evaluation output directory already exists")
+    os.replace(temporary, output_directory)
+
+
+def discard_staged_packet_exports(temporary: Path) -> None:
+    shutil.rmtree(temporary, ignore_errors=True)
 
 
 def canonical_json(value: object) -> str:
