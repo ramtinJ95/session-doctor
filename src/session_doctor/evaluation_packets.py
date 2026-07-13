@@ -30,8 +30,11 @@ def export_boundary_packets(
     stored: StoredNormalization,
     foundation: SemanticFoundation,
     *,
-    evaluation_corpus_id: str = "boundary-development-v1",
+    evaluation_corpus_id: str | None = None,
 ) -> tuple[EvaluationPacketExport, ...]:
+    evaluation_corpus_id = evaluation_corpus_id or (
+        f"boundary-development:{stored.run.normalization_run_id}"
+    )
     events = packet_events(stored)
     user_positions = [
         index for index, event in enumerate(events) if event.role == NormalizedRole.USER.value
@@ -347,10 +350,37 @@ def digest_json(value: object) -> str:
     return hashlib.sha256(canonical_json(value).encode()).hexdigest()
 
 
+CANONICAL_PILOT_MANIFEST = Path(__file__).parents[2] / "evaluation/boundary-pilot-v1.json"
+
+
+def boundary_pilot_corpus_bytes() -> bytes:
+    manifest = json.loads(CANONICAL_PILOT_MANIFEST.read_text())
+    sources = json.loads(
+        (CANONICAL_PILOT_MANIFEST.parent / str(manifest["source_corpus"])).read_text()
+    )
+    if (
+        manifest.get("manifest_version") != "boundary-pilot-v1"
+        or manifest.get("annotation_protocol_version") != ANNOTATION_PROTOCOL_VERSION
+        or len(manifest.get("cases", [])) != 24
+        or sources.get("schema_version") != "boundary-pilot-sources-v1"
+    ):
+        raise ValueError("checked boundary pilot contract is invalid")
+    return (canonical_json({"manifest": manifest, "sources": sources}) + "\n").encode()
+
+
 def load_boundary_pilot(manifest_path: Path) -> tuple[BoundaryPacket, ...]:
     manifest = json.loads(manifest_path.read_text())
     source_path = manifest_path.parent / str(manifest["source_corpus"])
     source_document = json.loads(source_path.read_text())
+    return load_boundary_pilot_bytes(
+        (canonical_json({"manifest": manifest, "sources": source_document}) + "\n").encode()
+    )
+
+
+def load_boundary_pilot_bytes(corpus_bytes: bytes) -> tuple[BoundaryPacket, ...]:
+    corpus = json.loads(corpus_bytes)
+    manifest = corpus["manifest"]
+    source_document = corpus["sources"]
     sources = {str(row["source_id"]): row for row in source_document["sources"]}
     packets: list[BoundaryPacket] = []
     seen_regions: set[tuple[str, int]] = set()
@@ -420,16 +450,17 @@ def load_boundary_pilot(manifest_path: Path) -> tuple[BoundaryPacket, ...]:
 
 
 def export_boundary_pilot(
-    manifest_path: Path,
+    corpus_bytes: bytes,
     snapshot_bundle_id: str,
 ) -> tuple[EvaluationPacketExport, ...]:
-    manifest = json.loads(manifest_path.read_text())
-    source_document = json.loads(
-        (manifest_path.parent / str(manifest["source_corpus"])).read_text()
-    )
+    if corpus_bytes != boundary_pilot_corpus_bytes():
+        raise ValueError("pilot corpus does not match the checked 24-case corpus")
+    corpus = json.loads(corpus_bytes)
+    manifest = corpus["manifest"]
+    source_document = corpus["sources"]
     corpus_content_id = digest_json({"manifest": manifest, "sources": source_document})
     sources = {str(row["source_id"]): row for row in source_document["sources"]}
-    packets = load_boundary_pilot(manifest_path)
+    packets = load_boundary_pilot_bytes(corpus_bytes)
     exports = []
     for case, packet in zip(manifest["cases"], packets, strict=True):
         source = sources[str(case["source_id"])]

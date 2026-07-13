@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import zlib
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -24,10 +25,8 @@ from session_doctor.evaluation_models import (
 )
 from session_doctor.evaluation_packets import (
     canonical_json,
-    digest_json,
+    export_boundary_packets,
     export_boundary_pilot,
-    identity_exposure_status,
-    routing_identities,
 )
 from session_doctor.ids import stable_id
 
@@ -42,32 +41,58 @@ class EvaluationImportError(ValueError):
 
 def register_boundary_pilot(
     database_path: Path,
-    manifest_path: Path,
+    corpus_bytes: bytes,
     snapshot_bundle_id: str,
     exports: tuple[EvaluationPacketExport, ...],
 ) -> None:
-    expected = export_boundary_pilot(manifest_path, snapshot_bundle_id)
+    expected = export_boundary_pilot(corpus_bytes, snapshot_bundle_id)
     if exports != expected:
         raise EvaluationImportError("pilot packets do not match the checked corpus")
     with write_connection(database_path) as connection, transaction(connection):
-        if (
-            connection.execute(
-                "SELECT 1 FROM snapshot_bundles WHERE snapshot_bundle_id = ?",
-                [snapshot_bundle_id],
-            ).fetchone()
-            is None
-        ):
+        snapshot_row = connection.execute(
+            """
+            SELECT blobs.codec, blobs.compressed_bytes, blobs.original_byte_length,
+                blobs.content_hash
+            FROM snapshot_bundles AS bundles
+            JOIN source_snapshots AS snapshots
+                ON snapshots.snapshot_id = bundles.primary_snapshot_id
+            JOIN source_blobs AS blobs ON blobs.blob_id = snapshots.blob_id
+            WHERE bundles.snapshot_bundle_id = ?
+            """,
+            [snapshot_bundle_id],
+        ).fetchone()
+        if snapshot_row is None:
             raise EvaluationImportError("pilot snapshot bundle not found")
+        stored_bytes = zlib.decompress(bytes(snapshot_row[1]))
+        if (
+            snapshot_row[0] != "zlib"
+            or len(stored_bytes) != int(snapshot_row[2])
+            or hashlib.sha256(stored_bytes).hexdigest() != str(snapshot_row[3])
+            or stored_bytes != corpus_bytes
+        ):
+            raise EvaluationImportError("pilot snapshot bytes do not match checked corpus")
         existing_rows = connection.execute(
-            "SELECT packet_id, judge_packet_hash FROM evaluation_packets "
+            "SELECT packet_id, schema_version, annotation_protocol_version, packet_kind, "
+            "evaluation_corpus_id, normalization_run_id, snapshot_bundle_id, routing_json, "
+            "judge_packet_json, judge_packet_hash, evidence_ids_json, allowed_answers_json "
+            "FROM evaluation_packets "
             "WHERE evaluation_corpus_id = ? ORDER BY packet_id",
             [exports[0].routing.evaluation_corpus_id],
         ).fetchall()
-        expected_rows = sorted(
-            (packet.routing.packet_id, packet.routing.judge_packet_hash) for packet in exports
-        )
+        expected_rows = sorted(packet_values(None, packet) for packet in exports)
         if existing_rows:
-            if [(str(row[0]), str(row[1])) for row in existing_rows] != expected_rows:
+            normalized_rows = [tuple(duckdb_value(value) for value in row) for row in existing_rows]
+            existing_corpus = connection.execute(
+                "SELECT annotation_protocol_version, expected_packet_count, source_identity "
+                "FROM evaluation_corpora WHERE evaluation_corpus_id = ?",
+                [exports[0].routing.evaluation_corpus_id],
+            ).fetchone()
+            expected_corpus = (
+                exports[0].routing.annotation_protocol_version,
+                len(exports),
+                hashlib.sha256(corpus_bytes).hexdigest(),
+            )
+            if normalized_rows != expected_rows or existing_corpus != expected_corpus:
                 raise EvaluationImportError(
                     "registered pilot corpus conflicts with checked packets"
                 )
@@ -81,89 +106,128 @@ def register_boundary_pilot(
             is not None
         ):
             raise EvaluationImportError("cannot add pilot packets after audit freeze")
+        insert_immutable(
+            connection,
+            "evaluation_corpora",
+            "evaluation_corpus_id",
+            (
+                "evaluation_corpus_id",
+                "annotation_protocol_version",
+                "expected_packet_count",
+                "source_identity",
+            ),
+            (
+                exports[0].routing.evaluation_corpus_id,
+                exports[0].routing.annotation_protocol_version,
+                len(exports),
+                hashlib.sha256(corpus_bytes).hexdigest(),
+            ),
+        )
         for packet_export in exports:
-            routing = packet_export.routing
-            judge_packet = packet_export.judge_packet
-            judge_json = canonical_json(judge_packet.model_dump(mode="json"))
-            evidence_ids = sorted(packet_evidence_ids(judge_packet.model_dump(mode="json")))
-            insert_immutable(
-                connection,
-                "evaluation_packets",
-                "packet_id",
-                (
-                    "packet_id",
-                    "schema_version",
-                    "annotation_protocol_version",
-                    "packet_kind",
-                    "evaluation_corpus_id",
-                    "normalization_run_id",
-                    "snapshot_bundle_id",
-                    "routing_json",
-                    "judge_packet_json",
-                    "judge_packet_hash",
-                    "evidence_ids_json",
-                    "allowed_answers_json",
-                ),
-                (
-                    routing.packet_id,
-                    routing.schema_version,
-                    routing.annotation_protocol_version,
-                    routing.packet_kind.value,
-                    routing.evaluation_corpus_id,
-                    None,
-                    snapshot_bundle_id,
-                    canonical_json(routing.model_dump(mode="json")),
-                    judge_json,
-                    routing.judge_packet_hash,
-                    canonical_json(evidence_ids),
-                    canonical_json(judge_packet.allowed_answers),
-                ),
-            )
+            insert_packet(connection, None, packet_export)
 
 
-def register_evaluation_packet(
+def register_evaluation_corpus(
     database_path: Path,
     normalization_run_id: str,
-    packet_export: EvaluationPacketExport,
+    exports: tuple[EvaluationPacketExport, ...],
 ) -> None:
-    routing = packet_export.routing
-    judge_packet = packet_export.judge_packet
+    if not exports:
+        raise EvaluationImportError("evaluation corpus cannot be empty")
     stored = load_normalization(database_path, normalization_run_id)
     foundation = load_semantic_foundation(database_path, normalization_run_id)
     if stored is None or foundation is None:
         raise EvaluationImportError("normalization or semantic foundation not found")
-    judge_json = canonical_json(judge_packet.model_dump(mode="json"))
-    judge_hash = hashlib.sha256(judge_json.encode()).hexdigest()
-    expected_packet_id = digest_json(
-        {
-            "normalization_run_id": normalization_run_id,
-            "evaluation_corpus_id": routing.evaluation_corpus_id,
-            "judge_packet": judge_packet.model_copy(update={"packet_id": ""}).model_dump(
-                mode="json"
-            ),
-        }
+    corpus_ids = {packet.routing.evaluation_corpus_id for packet in exports}
+    if len(corpus_ids) != 1:
+        raise EvaluationImportError("evaluation corpus IDs must be identical")
+    corpus_id = next(iter(corpus_ids))
+    expected = export_boundary_packets(
+        stored,
+        foundation,
+        evaluation_corpus_id=corpus_id,
     )
-    if (
-        routing.packet_id != judge_packet.packet_id
-        or routing.packet_id != expected_packet_id
-        or routing.judge_packet_hash != judge_hash
-        or routing.normalization_run_id != normalization_run_id
-        or routing.snapshot_bundle_id != stored.run.snapshot_bundle_id
-        or routing.schema_version != judge_packet.schema_version
-        or routing.annotation_protocol_version != judge_packet.annotation_protocol_version
-        or routing.packet_kind.value != judge_packet.packet_kind.value
-    ):
-        raise EvaluationImportError("packet routing hash or identity mismatch")
-    expected_targets, _ = routing_identities(stored, foundation)
-    if (
-        routing.target_model_identities != expected_targets
-        or routing.excluded_judge_identities != expected_targets
-        or routing.identity_exposure_status
-        != identity_exposure_status(judge_json, expected_targets)
-    ):
-        raise EvaluationImportError("routing identity policy does not match stored semantics")
+    if exports != expected:
+        raise EvaluationImportError("evaluation corpus does not match stored normalization")
+    with write_connection(database_path) as connection, transaction(connection):
+        normalization_exists = connection.execute(
+            """
+            SELECT 1 FROM normalization_run_bundles
+            WHERE normalization_run_id = ? AND snapshot_bundle_id = ?
+            """,
+            [normalization_run_id, stored.run.snapshot_bundle_id],
+        ).fetchone()
+        if normalization_exists is None:
+            raise EvaluationImportError("normalization run not found")
+        audit_frozen = connection.execute(
+            "SELECT 1 FROM audit_protocols WHERE annotation_protocol_version = ? "
+            "AND evaluation_corpus_id = ?",
+            [exports[0].routing.annotation_protocol_version, corpus_id],
+        ).fetchone()
+        corpus_exists = connection.execute(
+            "SELECT 1 FROM evaluation_corpora WHERE evaluation_corpus_id = ?",
+            [corpus_id],
+        ).fetchone()
+        if corpus_exists is None and audit_frozen is not None:
+            raise EvaluationImportError("cannot add packets after the audit cohort is frozen")
+        insert_immutable(
+            connection,
+            "evaluation_corpora",
+            "evaluation_corpus_id",
+            (
+                "evaluation_corpus_id",
+                "annotation_protocol_version",
+                "expected_packet_count",
+                "source_identity",
+            ),
+            (
+                corpus_id,
+                exports[0].routing.annotation_protocol_version,
+                len(exports),
+                normalization_run_id,
+            ),
+        )
+        for packet_export in exports:
+            insert_packet(connection, normalization_run_id, packet_export)
+
+
+def insert_packet(
+    connection: duckdb.DuckDBPyConnection,
+    normalization_run_id: str | None,
+    packet_export: EvaluationPacketExport,
+) -> None:
+    values = packet_values(normalization_run_id, packet_export)
+    insert_immutable(
+        connection,
+        "evaluation_packets",
+        "packet_id",
+        (
+            "packet_id",
+            "schema_version",
+            "annotation_protocol_version",
+            "packet_kind",
+            "evaluation_corpus_id",
+            "normalization_run_id",
+            "snapshot_bundle_id",
+            "routing_json",
+            "judge_packet_json",
+            "judge_packet_hash",
+            "evidence_ids_json",
+            "allowed_answers_json",
+        ),
+        values,
+    )
+
+
+def packet_values(
+    normalization_run_id: str | None,
+    packet_export: EvaluationPacketExport,
+) -> tuple:
+    routing = packet_export.routing
+    judge_packet = packet_export.judge_packet
+    judge_json = canonical_json(judge_packet.model_dump(mode="json"))
     evidence_ids = sorted(packet_evidence_ids(judge_packet.model_dump(mode="json")))
-    values = (
+    return (
         routing.packet_id,
         routing.schema_version,
         routing.annotation_protocol_version,
@@ -173,50 +237,10 @@ def register_evaluation_packet(
         routing.snapshot_bundle_id,
         canonical_json(routing.model_dump(mode="json")),
         judge_json,
-        judge_hash,
+        routing.judge_packet_hash,
         canonical_json(evidence_ids),
         canonical_json(judge_packet.allowed_answers),
     )
-    with write_connection(database_path) as connection, transaction(connection):
-        normalization_exists = connection.execute(
-            """
-            SELECT 1 FROM normalization_run_bundles
-            WHERE normalization_run_id = ? AND snapshot_bundle_id = ?
-            """,
-            [normalization_run_id, routing.snapshot_bundle_id],
-        ).fetchone()
-        if normalization_exists is None:
-            raise EvaluationImportError("normalization run not found")
-        packet_exists = connection.execute(
-            "SELECT 1 FROM evaluation_packets WHERE packet_id = ?",
-            [routing.packet_id],
-        ).fetchone()
-        audit_frozen = connection.execute(
-            "SELECT 1 FROM audit_protocols WHERE annotation_protocol_version = ?",
-            [routing.annotation_protocol_version],
-        ).fetchone()
-        if packet_exists is None and audit_frozen is not None:
-            raise EvaluationImportError("cannot add packets after the audit cohort is frozen")
-        insert_immutable(
-            connection,
-            "evaluation_packets",
-            "packet_id",
-            (
-                "packet_id",
-                "schema_version",
-                "annotation_protocol_version",
-                "packet_kind",
-                "evaluation_corpus_id",
-                "normalization_run_id",
-                "snapshot_bundle_id",
-                "routing_json",
-                "judge_packet_json",
-                "judge_packet_hash",
-                "evidence_ids_json",
-                "allowed_answers_json",
-            ),
-            values,
-        )
 
 
 def import_judge_annotation(database_path: Path, annotation: JudgeAnnotation) -> JudgeAnnotation:
@@ -361,13 +385,18 @@ def freeze_audit_protocol(
     database_path: Path,
     evaluation_corpus_id: str,
     selection_seed_id: str,
-    expected_packet_count: int,
     *,
     frozen_at: datetime | None = None,
 ) -> AuditProtocol:
-    if expected_packet_count <= 0:
-        raise EvaluationImportError("audit corpus cardinality must be positive")
     with write_connection(database_path) as connection, transaction(connection):
+        corpus_row = connection.execute(
+            "SELECT annotation_protocol_version, expected_packet_count "
+            "FROM evaluation_corpora WHERE evaluation_corpus_id = ?",
+            [evaluation_corpus_id],
+        ).fetchone()
+        if corpus_row is None:
+            raise EvaluationImportError("evaluation corpus is not registered")
+        expected_packet_count = int(corpus_row[1])
         if (
             connection.execute(
                 """
@@ -384,7 +413,7 @@ def freeze_audit_protocol(
             "SELECT packet_id, routing_json FROM evaluation_packets "
             "WHERE annotation_protocol_version = ? AND evaluation_corpus_id = ? "
             "ORDER BY packet_id",
-            ["annotation-protocol-v1", evaluation_corpus_id],
+            [str(corpus_row[0]), evaluation_corpus_id],
         ).fetchall()
         eligible_packet_ids = sorted(
             str(row[0])
@@ -403,9 +432,7 @@ def freeze_audit_protocol(
         )
         selected_count = round(len(ranked) * 0.2)
         protocol = AuditProtocol(
-            audit_protocol_id=stable_id(
-                "audit-protocol", "annotation-protocol-v1", evaluation_corpus_id
-            ),
+            audit_protocol_id=stable_id("audit-protocol", str(corpus_row[0]), evaluation_corpus_id),
             evaluation_corpus_id=evaluation_corpus_id,
             expected_packet_count=expected_packet_count,
             selection_seed_id=selection_seed_id,
@@ -707,7 +734,6 @@ def packet_evidence_ids(value: object) -> set[str]:
         for key, row in value.items():
             if key in {
                 "evidence_id",
-                "source_event_id",
                 "left_user_event_id",
                 "right_user_event_id",
             } and isinstance(row, str):

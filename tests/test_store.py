@@ -67,6 +67,7 @@ def test_store_initialize_creates_expected_tables(tmp_path) -> None:
         "bundle_member_capture_metadata",
         "lifecycle_observations",
         "evaluation_packets",
+        "evaluation_corpora",
         "judge_annotations",
         "judge_panel_resolutions",
         "audit_selections",

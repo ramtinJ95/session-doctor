@@ -123,6 +123,8 @@ class BoundaryPacket(SessionDoctorModel):
         ]
         if [self.left_user_event_id, self.right_user_event_id] != expected_anchors:
             raise ValueError("boundary anchors must match adjacent user turns")
+        if self.left_user_event_id == self.right_user_event_id:
+            raise ValueError("boundary anchors must be distinct")
         event_ids = [
             event.evidence_id
             for event in (
@@ -149,6 +151,33 @@ class EpisodePacket(SessionDoctorModel):
     anonymized_model_roles: dict[str, str] = Field(default_factory=dict)
     anonymized_capability_support: list[dict[str, str]] = Field(default_factory=list)
     allowed_answers: list[str]
+
+    @model_validator(mode="after")
+    def validate_episode_contract(self) -> EpisodePacket:
+        if not self.annotation_task.strip():
+            raise ValueError("episode annotation task must be nonblank")
+        if not self.episode_anchor_ids or len(self.episode_anchor_ids) != len(
+            set(self.episode_anchor_ids)
+        ):
+            raise ValueError("episode anchors must be nonempty and unique")
+        if not self.normalized_episode_events:
+            raise ValueError("episode packet requires normalized evidence")
+        events = self.normalized_episode_events + self.bounded_context_events
+        evidence_ids = [event.evidence_id for event in events]
+        if len(evidence_ids) != len(set(evidence_ids)):
+            raise ValueError("episode evidence IDs must be unique")
+        citable_ids = set(evidence_ids) | {
+            event.source_event_id for event in events if event.source_event_id is not None
+        }
+        if not set(self.episode_anchor_ids).issubset(citable_ids):
+            raise ValueError("episode anchors must reference packet evidence")
+        if (
+            not self.allowed_answers
+            or len(self.allowed_answers) != len(set(self.allowed_answers))
+            or any(not answer.strip() for answer in self.allowed_answers)
+        ):
+            raise ValueError("episode answer rubric must be nonempty and unique")
+        return self
 
 
 class EvaluationPacketExport(SessionDoctorModel):
