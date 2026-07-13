@@ -234,6 +234,7 @@ snapshot_bundles
 
 snapshot_bundle_members
   snapshot_bundle_id
+  logical_source_id
   snapshot_id
   capture_order
   member_role
@@ -694,6 +695,8 @@ output import. External agents or provider tooling make LLM calls.
 Every imported judgment records:
 
 ```text
+judge_annotation_id
+schema_version
 packet_id
 annotation_protocol_version
 judge_model
@@ -705,10 +708,13 @@ rationale
 created_at
 ```
 
-The default panel is three distinct non-target models. Unanimous answers become
-`judge_consensus`; disagreements become `human_review_required`. Twenty percent
-of unanimous pilot answers are randomly selected from a frozen seed for human
-audit. Human-unresolved cases retain ambiguous allowed answers.
+The default panel is three distinct non-target models. Imported answers first
+produce an immutable `JudgePanelResolution`: `unanimous`, `disputed`, or
+`insufficient`. Disputed/insufficient panels require human adjudication. Twenty
+percent of unanimous pilot panels are selected by a frozen `AuditSelection` for
+human audit. Only after required adjudication/audit records exist does the
+workflow create a `ReferenceResolution` of `judge_consensus`, `human_resolved`,
+or `ambiguous`; it never overwrites the original panel result.
 
 ### Corpus Stages
 
