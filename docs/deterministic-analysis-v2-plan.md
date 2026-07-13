@@ -237,6 +237,7 @@ snapshot_bundle_members
   snapshot_id
   capture_order
   member_role
+  member_capture_status
 
 lifecycle_observations
   lifecycle_observation_id
@@ -251,8 +252,12 @@ lifecycle_observations
 `snapshot_content_id` identifies one logical source plus one blob for reusable
 normalization. `snapshot_id` identifies one immutable capture observation and
 includes capture sequence/time, so two identical recaptures remain distinct and
-can establish settling. `bundle_content_id` identifies the ordered member-byte
-manifest; `snapshot_bundle_id` identifies one bundle capture observation.
+can establish settling. `bundle_content_id` hashes the agent/native bundle
+identity plus ordered member role, logical-source identity, snapshot-content
+identity, and capture completeness. Identical bytes from unrelated native
+sessions therefore cannot collide. `snapshot_bundle_id` identifies one bundle
+capture observation. A bundle member may have no snapshot only when its capture
+status explicitly records a missing/unreadable required source.
 
 Capture parses only bytes already stored in the blob row. A live append after
 capture cannot change those bytes. Invalid trailing data is recorded against
@@ -316,6 +321,17 @@ possibly_active
 snapshot_incomplete
 ```
 
+Lifecycle precedence is:
+
+1. any required member missing/unreadable, changing during capture, or carrying
+   adapter/parser evidence of a truncated native record/structure ->
+   `snapshot_incomplete`;
+2. complete bundle with trustworthy native terminal evidence ->
+   `terminal_observed`;
+3. later complete capture with the same `bundle_content_id` after the settling
+   interval -> `settled_unknown`;
+4. otherwise -> `possibly_active`.
+
 For sources without terminal markers, one capture produces a
 `possibly_active` lifecycle observation. A later ingestion observing the same
 content hash after the explicit settling interval creates a new
@@ -326,6 +342,11 @@ and re-reads implicitly.
 The latest active snapshot is still analyzed descriptively. Result state,
 efficiency totals, and unresolved-ending conclusions remain provisional and do
 not enter finalized rates.
+
+`snapshot_incomplete` is always provisional and ineligible for finalized
+aggregates. Terminal evidence inside an incomplete bundle cannot override
+incompleteness. Settling compares complete bundle identities, never one member's
+content hash.
 
 ### Ordering And Delegation
 
@@ -407,11 +428,18 @@ mixed
 unknown
 ```
 
-- mutation tools produce `mutating`;
-- shell/deployment/browser actions produce `operational`;
-- read/search/web activity produces `inspection`;
+- normalized file mutations and recognized mutating commands produce
+  `mutating`;
+- recognized deploy/publish/service/configuration or external-state-changing
+  actions produce `operational`;
+- normalized reads/searches, recognized read-only shell commands, browser
+  navigation/inspection, and web retrieval produce `inspection`;
+- unrecognized shell/browser actions provide action evidence but do not select
+  a work mode by tool name alone;
 - multiple modes produce `mixed`;
-- no action tools produce `response_only`.
+- no observed action tools produce `response_only` only when the adapter declares
+  sufficient action instrumentation and the snapshot is complete; otherwise
+  the mode is `unknown`.
 
 `response_only` does not assert that the user requested only advice. It may
 also represent a requested action that the agent never performed.
@@ -1094,6 +1122,9 @@ Tests:
 
 - every work mode and result state;
 - action request with no tool use remains response-only observed mode;
+- missing action instrumentation or incomplete capture prevents response-only;
+- read-only shell/browser inspection, shell/file mutation, external operation,
+  and unrecognized shell/browser cases;
 - active snapshot never finalizes;
 - silence never means abandonment;
 - acceptance does not replace validation;
