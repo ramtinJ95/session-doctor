@@ -3,9 +3,15 @@ from __future__ import annotations
 from pathlib import Path
 
 from session_doctor.ids import source_id_for_path
-from session_doctor.schemas import AgentName, NormalizedRole, SessionSource, SourceKind
+from session_doctor.schemas import (
+    AgentName,
+    CapabilitySupport,
+    NormalizedRole,
+    SessionSource,
+    SourceKind,
+)
 
-from .base import BaseAdapter, ParsedSessionBundle
+from .base import BaseAdapter, ParsedSessionBundle, adapter_capability
 from .common import (
     content_blocks,
     dict_value,
@@ -54,6 +60,14 @@ PI_METADATA_ONLY_TYPES = {
 class PiAdapter(BaseAdapter):
     name = AgentName.PI
     display_name = "Pi"
+    capabilities = (
+        adapter_capability("native_causal_links", CapabilitySupport.SUPPORTED, "native"),
+        adapter_capability("terminal_evidence", CapabilitySupport.UNKNOWN, "unavailable"),
+        adapter_capability("delegation_topology", CapabilitySupport.UNKNOWN, "unavailable"),
+        adapter_capability("model_usage", CapabilitySupport.SUPPORTED, "native"),
+        adapter_capability("native_project_metadata", CapabilitySupport.UNKNOWN, "unavailable"),
+        adapter_capability("native_cost", CapabilitySupport.SUPPORTED, "native"),
+    )
 
     def default_roots(self) -> tuple[Path, ...]:
         return (Path.home() / ".pi" / "agent" / "sessions",)

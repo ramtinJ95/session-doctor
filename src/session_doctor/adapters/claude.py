@@ -7,9 +7,15 @@ from typing import Any
 
 from session_doctor.ids import source_id_for_path
 from session_doctor.privacy import hash_text
-from session_doctor.schemas import AgentName, RawEvent, SessionSource, SourceKind
+from session_doctor.schemas import (
+    AgentName,
+    CapabilitySupport,
+    RawEvent,
+    SessionSource,
+    SourceKind,
+)
 
-from .base import BaseAdapter, CapturedAdapterMember, ParsedSessionBundle
+from .base import BaseAdapter, CapturedAdapterMember, ParsedSessionBundle, adapter_capability
 from .claude_commands import ClaudeToolResult, ClaudeToolUse, command_runs_from_tools
 from .claude_files import FILE_TOOL_OPERATIONS, file_activity_from_tool_use
 from .claude_messages import message_from_record, unsupported_content_shapes
@@ -96,6 +102,14 @@ CLAUDE_MESSAGE_TYPES = {"assistant", "system", "user"}
 class ClaudeCodeAdapter(BaseAdapter):
     name = AgentName.CLAUDE
     display_name = "Claude Code"
+    capabilities = (
+        adapter_capability("native_causal_links", CapabilitySupport.SUPPORTED, "native"),
+        adapter_capability("terminal_evidence", CapabilitySupport.UNKNOWN, "unavailable"),
+        adapter_capability("delegation_topology", CapabilitySupport.SUPPORTED, "native"),
+        adapter_capability("model_usage", CapabilitySupport.SUPPORTED, "native"),
+        adapter_capability("native_project_metadata", CapabilitySupport.UNKNOWN, "unavailable"),
+        adapter_capability("native_cost", CapabilitySupport.UNSUPPORTED, "unavailable"),
+    )
     ingestible_source_kinds = (SourceKind.ROOT_SESSION, SourceKind.SUBSESSION)
 
     def default_roots(self) -> tuple[Path, ...]:

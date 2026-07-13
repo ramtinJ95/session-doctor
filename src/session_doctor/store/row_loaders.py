@@ -327,6 +327,7 @@ def load_model_usage(connection: duckdb.DuckDBPyConnection, session_id: str) -> 
             u.cache_write_tokens,
             u.total_tokens,
             u.cost,
+            u.aggregation_semantics,
             u.metadata_json
         FROM model_usage AS u
         LEFT JOIN raw_events AS e ON e.event_id = u.source_event_id
@@ -349,7 +350,8 @@ def load_model_usage(connection: duckdb.DuckDBPyConnection, session_id: str) -> 
             cache_write_tokens=row[9],
             total_tokens=row[10],
             cost=row[11],
-            metadata=parse_metadata(row[12]),
+            aggregation_semantics=row[12],
+            metadata=parse_metadata(row[13]),
         )
         for row in rows
     ]

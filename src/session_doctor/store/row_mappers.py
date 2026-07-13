@@ -169,6 +169,7 @@ def model_usage_rows(bundle: ParsedSessionBundle) -> list[dict[str, Any]]:
             "cache_write_tokens": usage.cache_write_tokens,
             "total_tokens": usage.total_tokens,
             "cost": usage.cost,
+            "aggregation_semantics": usage.aggregation_semantics.value,
             "metadata_json": metadata_json(usage.metadata),
         }
         for usage in bundle.model_usage

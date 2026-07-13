@@ -6,7 +6,7 @@ import duckdb
 
 from session_doctor.ids import stable_id
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 BASE_DURABLE_TABLE_NAMES = (
     "source_blobs",
@@ -27,6 +27,8 @@ DERIVED_TABLE_NAMES = (
     "normalization_runs",
     "normalization_run_bundles",
     "normalized_entities",
+    "normalization_semantics",
+    "semantic_analysis_runs",
     "session_sources",
     "sessions",
     "raw_events",
@@ -315,6 +317,31 @@ CREATE_TABLE_STATEMENTS = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS normalization_semantics (
+        normalization_run_id VARCHAR PRIMARY KEY,
+        semantic_foundation_version VARCHAR NOT NULL,
+        foundation_json VARCHAR NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS semantic_analysis_runs (
+        analysis_identity VARCHAR PRIMARY KEY,
+        normalization_run_id VARCHAR NOT NULL,
+        lifecycle_observation_id VARCHAR NOT NULL,
+        lifecycle_policy_version VARCHAR NOT NULL,
+        ordering_version VARCHAR NOT NULL,
+        segmentation_version VARCHAR NOT NULL,
+        relation_rule_set_version VARCHAR NOT NULL,
+        result_rule_set_version VARCHAR NOT NULL,
+        finding_rule_set_version VARCHAR NOT NULL,
+        facet_policy_version VARCHAR NOT NULL,
+        configuration_hash VARCHAR NOT NULL,
+        started_at TIMESTAMP,
+        completed_at TIMESTAMP,
+        metadata_json VARCHAR NOT NULL DEFAULT '{}'
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS source_blobs (
         blob_id VARCHAR PRIMARY KEY,
         content_hash VARCHAR NOT NULL UNIQUE,
@@ -584,6 +611,7 @@ CREATE_TABLE_STATEMENTS = (
         cache_write_tokens INTEGER,
         total_tokens INTEGER,
         cost DECIMAL(18, 8),
+        aggregation_semantics VARCHAR NOT NULL,
         metadata_json VARCHAR NOT NULL DEFAULT '{}'
     )
     """,

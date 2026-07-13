@@ -11,21 +11,25 @@ from pydantic import BaseModel
 from session_doctor.adapters import ParsedSessionBundle
 from session_doctor.ids import stable_id
 from session_doctor.schemas import (
+    AdapterCapabilityDeclaration,
     CommandRun,
     FileActivity,
     Message,
     ModelUsage,
     ParseWarning,
     RawEvent,
+    SemanticFoundation,
     Session,
     SessionSource,
     ToolCall,
     ToolResult,
 )
+from session_doctor.semantic_foundations import derive_semantic_foundation
 
 from .connection import read_connection, transaction, write_connection
+from .json_values import parse_metadata
 
-NORMALIZATION_VERSION = "normalization-v2"
+NORMALIZATION_VERSION = "normalization-v3"
 NORMALIZATION_CONFIGURATION_HASH = stable_id(
     "normalization-configuration",
     NORMALIZATION_VERSION,
@@ -89,6 +93,7 @@ def persist_normalization(
     adapter_version: str,
     normalization_version: str = NORMALIZATION_VERSION,
     configuration_hash: str = NORMALIZATION_CONFIGURATION_HASH,
+    capability_declarations: tuple[AdapterCapabilityDeclaration, ...] = (),
 ) -> NormalizationRun:
     with write_connection(database_path) as connection, transaction(connection):
         return persist_normalization_rows(
@@ -99,6 +104,7 @@ def persist_normalization(
             adapter_version,
             normalization_version,
             configuration_hash,
+            capability_declarations,
         )
 
 
@@ -110,11 +116,16 @@ def persist_normalization_rows(
     adapter_version: str,
     normalization_version: str = NORMALIZATION_VERSION,
     configuration_hash: str = NORMALIZATION_CONFIGURATION_HASH,
+    capability_declarations: tuple[AdapterCapabilityDeclaration, ...] = (),
 ) -> NormalizationRun:
     bundle_row = connection.execute(
         """
-        SELECT bundle_content_id, agent_name
-        FROM snapshot_bundles WHERE snapshot_bundle_id = ?
+        SELECT b.bundle_content_id, b.agent_name, c.evidence_json,
+            coalesce(l.state, 'snapshot_incomplete'), l.evidence_json
+        FROM snapshot_bundles AS b
+        JOIN bundle_capture_metadata AS c USING (snapshot_bundle_id)
+        LEFT JOIN lifecycle_observations AS l USING (snapshot_bundle_id)
+        WHERE b.snapshot_bundle_id = ?
         """,
         [snapshot_bundle_id],
     ).fetchone()
@@ -197,6 +208,44 @@ def persist_normalization_rows(
     if tuple(stored_rows) != tuple(sorted(rows, key=lambda row: (row[0], row[2], row[1]))):
         raise NormalizationConflictError(
             "normalization replay differs for an existing semantic identity"
+        )
+    capture_evidence = parse_metadata(bundle_row[2])
+    lifecycle_evidence = parse_metadata(bundle_row[4])
+    observed_vcs_root = capture_evidence.get("observed_vcs_root")
+    foundation = derive_semantic_foundation(
+        bundle,
+        capability_declarations,
+        terminal_observed=(
+            lifecycle_evidence.get("terminal_observed") is True
+            or str(bundle_row[3]) == "terminal_observed"
+        ),
+        observed_vcs_root=(observed_vcs_root if isinstance(observed_vcs_root, str) else None),
+    )
+    foundation_json = canonical_model_json(foundation)
+    connection.execute(
+        """
+        INSERT INTO normalization_semantics (
+            normalization_run_id, semantic_foundation_version, foundation_json
+        ) VALUES (?, ?, ?)
+        ON CONFLICT DO NOTHING
+        """,
+        [
+            run_id,
+            foundation.semantic_foundation_version,
+            foundation_json,
+        ],
+    )
+    stored_foundation = connection.execute(
+        "SELECT semantic_foundation_version, foundation_json "
+        "FROM normalization_semantics WHERE normalization_run_id = ?",
+        [run_id],
+    ).fetchone()
+    if stored_foundation != (
+        foundation.semantic_foundation_version,
+        foundation_json,
+    ):
+        raise NormalizationConflictError(
+            "semantic foundation differs for an existing normalization identity"
         )
     return NormalizationRun(
         normalization_run_id=run_id,
@@ -414,6 +463,17 @@ def load_normalization(
         configuration_hash=str(run_row[5]),
     )
     return StoredNormalization(run=run, source=source, bundle=bundle)
+
+
+def load_semantic_foundation(
+    database_path: Path, normalization_run_id: str
+) -> SemanticFoundation | None:
+    with read_connection(database_path) as connection:
+        row = connection.execute(
+            "SELECT foundation_json FROM normalization_semantics WHERE normalization_run_id = ?",
+            [normalization_run_id],
+        ).fetchone()
+    return SemanticFoundation.model_validate_json(str(row[0])) if row else None
 
 
 def parse_entities(model: type[BaseModel], payloads: list[str]) -> list:

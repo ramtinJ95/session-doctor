@@ -102,6 +102,17 @@ def test_parser_versions_coexist_and_replay_is_additive(tmp_path) -> None:
     assert stored_current is not None
     assert stored_legacy is not None
     assert stored_current.bundle == stored_legacy.bundle
+    foundation = store.load_semantic_foundation(current.current_normalization_run_id)
+    assert foundation is not None
+    assert foundation.ordering.cross_source_order == "partial_order"
+    assert foundation.project_identity.state == "stored_cwd"
+    assert foundation.model_identity.state == "one_model"
+    assert foundation.usage.aggregation == "incremental"
+    assert {row.capability for row in foundation.capabilities} >= {
+        "native_causal_links",
+        "terminal_evidence",
+        "model_usage",
+    }
 
 
 def test_latest_compatible_selection_uses_parsed_versions(tmp_path) -> None:

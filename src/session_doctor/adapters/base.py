@@ -8,7 +8,9 @@ from pydantic import Field
 
 from session_doctor.ids import source_id_for_path
 from session_doctor.schemas import (
+    AdapterCapabilityDeclaration,
     AgentName,
+    CapabilitySupport,
     CommandRun,
     FileActivity,
     Message,
@@ -48,6 +50,7 @@ class BaseAdapter(ABC):
     display_name: str
     version = "0.1.0"
     ingestible_source_kinds = (SourceKind.ROOT_SESSION,)
+    capabilities: tuple[AdapterCapabilityDeclaration, ...] = ()
 
     @abstractmethod
     def default_roots(self) -> tuple[Path, ...]:
@@ -104,3 +107,15 @@ class BaseAdapter(ABC):
         if root is not None:
             return root.expanduser()
         return self.default_roots()[0]
+
+
+def adapter_capability(
+    capability: str,
+    support: CapabilitySupport,
+    instrumentation: str,
+) -> AdapterCapabilityDeclaration:
+    return AdapterCapabilityDeclaration(
+        capability=capability,
+        support=support,
+        instrumentation=instrumentation,
+    )

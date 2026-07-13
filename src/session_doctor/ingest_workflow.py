@@ -16,6 +16,7 @@ from .adapters.codex import (
 )
 from .adapters.common import read_source_bytes
 from .schemas.sessions import SessionSource
+from .semantic_foundations import observe_vcs_root
 from .store import BundleMemberCapture, DuckDBStore
 
 
@@ -124,6 +125,9 @@ def ingest_sources(
                     captured_parse_source,
                     source_bytes,
                 )
+                observed_vcs_root = observe_vcs_root(
+                    bundle.session.cwd if bundle.session is not None else None
+                )
             except Exception as exc:
                 if isinstance(exc, BundleMemberCaptureError):
                     bundle_members = exc.members
@@ -178,6 +182,7 @@ def ingest_sources(
                 "primary_signature_before": primary_signature_before,
                 "primary_signature_after": primary_signature_after,
                 "primary_signature_final": primary_signature_final,
+                "observed_vcs_root": observed_vcs_root,
             },
         )
         captured_bundle = store.add_bundle_members(captured_bundle, bundle_members)
@@ -191,6 +196,7 @@ def ingest_sources(
             captured_source,
             captured_bundle,
             adapter_version=adapter.version,
+            capability_declarations=adapter.capabilities,
         )
 
         source_kind = session_source.source_kind.value
