@@ -21,7 +21,7 @@ from session_doctor.store.lifecycle import FINALIZED_LIFECYCLE_STATES, Lifecycle
 SEGMENTATION_VERSION = "segmentation-v1"
 
 EXPLICIT_NEW_TASK = re.compile(
-    r"^\s*(?:new|separate|unrelated)\s+(?:task|request)\s*[:\-]|"
+    r"^\s*(?:new|separate|unrelated)\s+(?:task|request|question)\s*[:\-]|"
     r"^\s*(?:switching|moving)\s+to\s+(?:a\s+)?(?:new|different)\s+(?:task|topic)\b",
     re.IGNORECASE,
 )
@@ -71,7 +71,7 @@ def segment_session(
     episodes: list[TaskEpisode] = []
     observations: list[EpisodeObservation] = []
     boundary_by_left = {row.left_user_anchor_id: row for row in boundaries}
-    for group in groups:
+    for group_index, group in enumerate(groups):
         anchors = [message_anchor(message) for message in group]
         episode_id = stable_id(
             "task-episode",
@@ -83,9 +83,11 @@ def segment_session(
         episode_boundaries = [
             boundary_by_left[anchor].boundary_id for anchor in anchors if anchor in boundary_by_left
         ]
-        event_anchors = ordered_unique(
-            message_anchor(message)
-            for message in messages_between(bundle.messages, group[0], group[-1])
+        next_first = groups[group_index + 1][0] if group_index + 1 < len(groups) else None
+        event_anchors = episode_event_anchors(
+            bundle,
+            group[0],
+            next_first,
         )
         episode = TaskEpisode(
             episode_id=episode_id,
@@ -145,13 +147,16 @@ def classify_boundary(
     right_anchor = message_anchor(right)
     right_text = right.text or ""
     similarity = broad_goal_similarity(left.text or "", right_text)
+    closure_anchor = closure_evidence_between(bundle, left, right)
     if EXPLICIT_NEW_TASK.search(right_text):
         decision = BoundaryDecision.SPLIT
         reason = BoundaryReason.EXPLICIT_NEW_TASK
-    elif CORRECTION_OR_CONTINUATION.search(right_text) or similarity >= 0.62:
+    elif CORRECTION_OR_CONTINUATION.search(right_text) or (
+        similarity is not None and similarity >= 0.62
+    ):
         decision = BoundaryDecision.NO_SPLIT
         reason = BoundaryReason.CORRECTION_OR_REPEAT
-    elif interaction_closed_between(bundle.messages, left, right) and similarity <= 0.12:
+    elif closure_anchor is not None and similarity is not None and similarity <= 0.12:
         decision = BoundaryDecision.SPLIT
         reason = BoundaryReason.CLOSURE_AND_TOPIC_SHIFT
     else:
@@ -165,16 +170,18 @@ def classify_boundary(
         right_user_anchor_id=right_anchor,
         decision=decision,
         reason=reason,
-        evidence_anchor_ids=[left_anchor, right_anchor],
+        evidence_anchor_ids=ordered_unique(
+            [left_anchor, right_anchor, *([closure_anchor] if closure_anchor else [])]
+        ),
         broad_goal_similarity=similarity,
     )
 
 
-def broad_goal_similarity(left: str, right: str) -> float:
+def broad_goal_similarity(left: str, right: str) -> float | None:
     left_terms = goal_terms(left)
     right_terms = goal_terms(right)
     if not left_terms or not right_terms:
-        return 0.0
+        return None
     return len(left_terms & right_terms) / len(left_terms | right_terms)
 
 
@@ -183,24 +190,87 @@ def goal_terms(value: str) -> set[str]:
     return {term for term in WORD.findall(normalized) if term not in STOPWORDS}
 
 
-def interaction_closed_between(
-    messages: list[Message],
+def closure_evidence_between(
+    bundle: ParsedSessionBundle,
     left: Message,
     right: Message,
-) -> bool:
-    rows = messages_between(messages, left, right)[1:-1]
+) -> str | None:
+    rows = messages_between(bundle.messages, left, right)[1:-1]
     assistants = [row for row in rows if row.role is NormalizedRole.ASSISTANT]
     if not assistants:
-        return False
+        return None
     last = assistants[-1]
     phase = last.metadata.get("phase")
-    return phase in {"final_answer", "final"} or bool(last.metadata.get("turn_closed"))
+    if phase not in {"final_answer", "final"} and not bool(last.metadata.get("turn_closed")):
+        return None
+    raw_order = {event.event_id: event.record_index for event in bundle.raw_events}
+    last_index = raw_order.get(last.source_event_id or "")
+    right_index = raw_order.get(right.source_event_id or "")
+    if last_index is not None and right_index is not None:
+        calls = [
+            call
+            for call in bundle.tool_calls
+            if last_index < raw_order.get(call.source_event_id or "", right_index) < right_index
+        ]
+        result_call_ids = {
+            result.tool_call_id
+            for result in bundle.tool_results
+            if result.tool_call_id is not None
+            and last_index < raw_order.get(result.source_event_id or "", right_index) < right_index
+        }
+        if any(call.tool_call_id not in result_call_ids for call in calls):
+            return None
+        if any(
+            command.ended_at is None
+            for command in bundle.command_runs
+            if last_index < raw_order.get(command.source_event_id or "", right_index) < right_index
+        ):
+            return None
+    return message_anchor(last)
 
 
 def messages_between(messages: list[Message], left: Message, right: Message) -> list[Message]:
     left_index = messages.index(left)
     right_index = messages.index(right)
     return messages[left_index : right_index + 1]
+
+
+def episode_event_anchors(
+    bundle: ParsedSessionBundle,
+    first_user: Message,
+    next_episode_first_user: Message | None,
+) -> list[str]:
+    raw_by_id = {event.event_id: event for event in bundle.raw_events}
+    first_event = raw_by_id.get(first_user.source_event_id or "")
+    next_event = (
+        raw_by_id.get(next_episode_first_user.source_event_id or "")
+        if next_episode_first_user is not None
+        else None
+    )
+    if first_event is not None:
+        anchors = [
+            event.event_id
+            for event in sorted(
+                bundle.raw_events,
+                key=lambda row: (row.source_id, row.record_index, row.event_id),
+            )
+            if event.source_id == first_event.source_id
+            and event.record_index >= first_event.record_index
+            and (
+                next_event is None
+                or next_event.source_id != first_event.source_id
+                or event.record_index < next_event.record_index
+            )
+        ]
+        if anchors:
+            return anchors
+    start = bundle.messages.index(first_user)
+    end = (
+        bundle.messages.index(next_episode_first_user)
+        if next_episode_first_user is not None
+        else len(bundle.messages)
+    )
+    return ordered_unique(message_anchor(message) for message in bundle.messages[start:end])
 
 
 def message_anchor(message: Message) -> str:

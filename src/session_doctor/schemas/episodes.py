@@ -29,7 +29,7 @@ class EpisodeBoundary(SessionDoctorModel):
     decision: BoundaryDecision
     reason: BoundaryReason
     evidence_anchor_ids: list[str] = Field(min_length=2)
-    broad_goal_similarity: float = Field(ge=0.0, le=1.0)
+    broad_goal_similarity: float | None = Field(default=None, ge=0.0, le=1.0)
 
     @model_validator(mode="after")
     def validate_anchors(self) -> EpisodeBoundary:

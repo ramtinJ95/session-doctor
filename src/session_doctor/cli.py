@@ -711,6 +711,15 @@ def analyze(
             f"- {episode.episode_id} users={len(episode.user_anchor_ids)} "
             f"provisional={str(episode.provisional).lower()}"
         )
+    for boundary in analysis.boundaries:
+        console.print(
+            f"- boundary {boundary.boundary_id} decision={boundary.decision.value} "
+            f"reason={boundary.reason.value}"
+        )
+    for observation in analysis.observations:
+        console.print(
+            f"- observation {observation.observation_id} kind={observation.observation_kind}"
+        )
 
 
 UNAVAILABLE_REBUILD_MESSAGE = (
@@ -724,20 +733,22 @@ def unavailable_during_v2_rebuild(command: str) -> NoReturn:
     raise typer.Exit(1)
 
 
-@app.command()
-def summary() -> None:
+@app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def summary(_context: typer.Context) -> None:
     """Fail explicitly while the v2 summary projection is rebuilt."""
     unavailable_during_v2_rebuild("summary")
 
 
-@app.command()
-def trends() -> None:
+@app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def trends(_context: typer.Context) -> None:
     """Fail explicitly while the v2 trends projection is rebuilt."""
     unavailable_during_v2_rebuild("trends")
 
 
-@projects_app.command("list")
-def projects_list() -> None:
+@projects_app.command(
+    "list", context_settings={"allow_extra_args": True, "ignore_unknown_options": True}
+)
+def projects_list(_context: typer.Context) -> None:
     """Fail explicitly while the v2 project projection is rebuilt."""
     unavailable_during_v2_rebuild("projects list")
 
@@ -753,14 +764,14 @@ def integration_path() -> None:
     typer.echo(skill_directory)
 
 
-@app.command()
-def report() -> None:
+@app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def report(_context: typer.Context) -> None:
     """Fail explicitly while the v2 report projection is rebuilt."""
     unavailable_during_v2_rebuild("report")
 
 
-@app.command()
-def graph() -> None:
+@app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def graph(_context: typer.Context) -> None:
     """Fail explicitly while the v2 graph projection is rebuilt."""
     unavailable_during_v2_rebuild("graph")
 

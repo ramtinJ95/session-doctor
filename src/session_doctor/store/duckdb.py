@@ -305,8 +305,16 @@ class DuckDBStore:
             capability_declarations=capability_declarations,
         )
 
-    def load_normalization(self, normalization_run_id: str) -> StoredNormalization | None:
-        return load_normalization(self.database_path, normalization_run_id)
+    def load_normalization(
+        self,
+        normalization_run_id: str,
+        snapshot_bundle_id: str | None = None,
+    ) -> StoredNormalization | None:
+        return load_normalization(
+            self.database_path,
+            normalization_run_id,
+            snapshot_bundle_id,
+        )
 
     def load_semantic_foundation(self, normalization_run_id: str) -> SemanticFoundation | None:
         return load_semantic_foundation(self.database_path, normalization_run_id)

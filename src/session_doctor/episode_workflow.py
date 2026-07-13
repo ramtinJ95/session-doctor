@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from session_doctor.schemas import EpisodeAnalysis
+from session_doctor.adapters import built_in_adapters
+from session_doctor.schemas import AgentName, EpisodeAnalysis
 from session_doctor.segmentation import segment_session
 from session_doctor.store import DuckDBStore
 from session_doctor.store.connection import read_connection
@@ -20,19 +21,30 @@ def analyze_session_episodes(
     with read_connection(database_path) as connection:
         row = connection.execute(
             """
-            SELECT entities.normalization_run_id
-            FROM normalized_entities AS entities
-            JOIN normalization_runs AS runs USING (normalization_run_id)
-            WHERE entities.entity_kind = 'session'
-              AND json_extract_string(entities.payload_json, '$.session_id') = ?
-            ORDER BY runs.created_at DESC, entities.normalization_run_id DESC
-            LIMIT 1
+            SELECT sources.snapshot_bundle_id, sessions.agent_name
+            FROM sessions
+            JOIN session_sources AS sources USING (source_id)
+            WHERE sessions.session_id = ?
             """,
             [session_id],
         ).fetchone()
     if row is None:
         raise EpisodeAnalysisUnavailable("session has no normalized v2 input")
-    stored = store.load_normalization(str(row[0]))
+    snapshot_bundle_id = str(row[0])
+    agent_name = AgentName(str(row[1]))
+    adapter = next(item for item in built_in_adapters() if item.name is agent_name)
+    coverage = store.normalization_coverage(
+        snapshot_bundle_id,
+        adapter_name=adapter.name.value,
+        adapter_version=adapter.version,
+        capability_declarations=adapter.capabilities,
+    )
+    if coverage.selected_normalization_run_id is None:
+        raise EpisodeAnalysisUnavailable("normalization input is unavailable")
+    stored = store.load_normalization(
+        coverage.selected_normalization_run_id,
+        snapshot_bundle_id,
+    )
     if stored is None:
         raise EpisodeAnalysisUnavailable("normalization input is unavailable")
     lifecycle = store.lifecycle_for_bundle(stored.run.snapshot_bundle_id)
