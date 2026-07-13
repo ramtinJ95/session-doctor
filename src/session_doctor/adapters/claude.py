@@ -71,7 +71,9 @@ class ClaudeCodeAdapter(BaseAdapter):
         enrich_claude_sources(self._topology_context(sources, discovery_root))
         return sources
 
-    def parse_source(self, source: SessionSource) -> ParsedSessionBundle:
+    def parse_source(
+        self, source: SessionSource, source_bytes: bytes | None = None
+    ) -> ParsedSessionBundle:
         source_path = Path(source.source_path).expanduser()
         if source.source_kind not in self.ingestible_source_kinds:
             raise SourceFormatError(
@@ -79,7 +81,7 @@ class ClaudeCodeAdapter(BaseAdapter):
                 f"Claude Code source kind {source.source_kind.value} is not a session transcript",
             )
 
-        valid_records, malformed_warnings = read_claude_jsonl(source, source_path)
+        valid_records, malformed_warnings = read_claude_jsonl(source, source_path, source_bytes)
         session_metadata = extract_session_metadata(source, source_path, valid_records)
         bundle = ParsedSessionBundle(
             session=session_metadata.session,

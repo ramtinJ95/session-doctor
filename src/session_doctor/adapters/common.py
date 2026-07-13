@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from io import StringIO
 from pathlib import Path
 from typing import Any, cast
 
@@ -19,11 +20,16 @@ def read_jsonl_records(
     source_path: Path,
     *,
     agent_display_name: str,
+    source_bytes: bytes | None = None,
 ) -> tuple[list[JsonRecord], list[ParseWarning]]:
     records: list[JsonRecord] = []
     warnings: list[ParseWarning] = []
     try:
-        with source_path.open(encoding="utf-8") as file:
+        if source_bytes is None:
+            file = source_path.open(encoding="utf-8")
+        else:
+            file = StringIO(source_bytes.decode("utf-8"))
+        with file:
             for record_index, line in enumerate(file):
                 try:
                     parsed = json.loads(line)
@@ -60,6 +66,15 @@ def read_jsonl_records(
             source_path, f"Unable to read {agent_display_name} source: {exc}"
         ) from exc
     return records, warnings
+
+
+def read_source_bytes(source_path: Path, *, agent_display_name: str) -> bytes:
+    try:
+        return source_path.read_bytes()
+    except OSError as exc:
+        raise SourceReadError(
+            source_path, f"Unable to read {agent_display_name} source: {exc}"
+        ) from exc
 
 
 def warning_for_record(

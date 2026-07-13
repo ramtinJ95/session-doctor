@@ -67,8 +67,11 @@ def test_claude_parse_source_is_implemented(tmp_path) -> None:
         '{"role":"user","content":"Hello"}}\n'
     )
     adapter = ClaudeCodeAdapter()
+    source = adapter.source_for_path(source_path)
+    captured_bytes = source_path.read_bytes()
+    source_path.write_text("not the captured transcript")
 
-    bundle = adapter.parse_source(adapter.source_for_path(source_path))
+    bundle = adapter.parse_source(source, captured_bytes)
 
     assert bundle.session is not None
     assert bundle.session.native_session_id == "session-1"

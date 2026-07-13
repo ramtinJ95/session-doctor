@@ -12,8 +12,11 @@ from .common import dict_value, hash_json, parse_timestamp, read_jsonl_records, 
 def read_codex_jsonl(
     source: SessionSource,
     source_path: Path,
+    source_bytes: bytes | None = None,
 ) -> tuple[list[tuple[int, dict[str, Any]]], list[ParseWarning]]:
-    return read_jsonl_records(source, source_path, agent_display_name="Codex")
+    return read_jsonl_records(
+        source, source_path, agent_display_name="Codex", source_bytes=source_bytes
+    )
 
 
 def raw_event_for_record(

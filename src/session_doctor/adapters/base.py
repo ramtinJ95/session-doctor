@@ -49,7 +49,11 @@ class BaseAdapter(ABC):
     def discover(self, root: Path | None = None) -> list[SessionSource]:
         raise NotImplementedError
 
-    def parse_source(self, source: SessionSource) -> ParsedSessionBundle:
+    def parse_source(
+        self,
+        source: SessionSource,
+        source_bytes: bytes | None = None,
+    ) -> ParsedSessionBundle:
         msg = f"{self.display_name} parsing is not implemented yet."
         raise NotImplementedError(msg)
 

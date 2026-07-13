@@ -19,11 +19,13 @@ from .common import (
 def read_pi_jsonl(
     source: SessionSource,
     source_path: Path,
+    source_bytes: bytes | None = None,
 ) -> tuple[list[JsonRecord], list[ParseWarning]]:
     return read_jsonl_records(
         source,
         source_path,
         agent_display_name="Pi",
+        source_bytes=source_bytes,
     )
 
 
