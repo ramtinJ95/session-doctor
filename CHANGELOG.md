@@ -5,6 +5,8 @@ artifact, payload, and CLI contracts may change incompatibly during dogfooding.
 
 ## Unreleased
 
+- persist source-local ordering, capability/instrumentation evidence, project
+  and model identity, usage semantics, and additive semantic analysis identity
 - add immutable, run-keyed normalization history with explicit replay and
   current/stale/missing parser coverage
 - retain compressed exact source snapshots, multi-file Claude bundle manifests,

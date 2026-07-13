@@ -188,6 +188,25 @@ version no newer than the running parser; ties break by run identity.
 - Model identity is one model, mixed models, or unknown.
 - Usage semantics are cumulative, incremental, or unavailable.
 
+Schema version 8 persists `normalization-v3` semantic foundations by
+normalization run. Source order is `(source_id, record_index, event_id)` and
+timestamps never reorder records or create cross-source edges. Native parent
+links create causal edges only within their source. Adapter declarations keep
+capability support separate from observed instrumentation, so absent evidence
+is unavailable rather than zero.
+
+Project identity records native repository metadata, a VCS root observed and
+stored at ingestion, stored CWD, or unknown in that precedence order. Bundle
+content identity includes the stored ingestion observation. Model identity is
+one model, mixed models, or unknown from all normalized model evidence. Every
+usage row declares cumulative, incremental, or aggregation-unavailable
+semantics; mixed row semantics make aggregate usage unavailable.
+
+`semantic_analysis_runs` retains additive v2 semantic histories keyed by the
+declared analysis identity. Execution timestamps are metadata and do not alter
+the identity. A run is accepted only when its normalization foundation,
+lifecycle observation, and ordering version exist and match.
+
 Every delegated evidence row has one source episode and one canonical rollup
 owner. Parent reports may project delegated components, but additive aggregates
 count each row once. Cross-model delegation makes the parent episode mixed and

@@ -965,6 +965,23 @@ Implementation contract:
 
 ### PR 5: Ordering, Capabilities, Identity, Project, Model, And Usage Semantics
 
+Implementation contract:
+
+- schema version 8 and `normalization-v3` persist one canonical semantic
+  foundation per normalization run;
+- source record index is authoritative, native parent links are source-local,
+  and cross-source order remains partial;
+- adapter capability declarations and observed instrumentation are independent
+  fields, with missing evidence represented as unavailable;
+- project identity follows native repository metadata, ingestion-observed VCS
+  root, stored CWD, then unknown; the observed root is stored in capture
+  evidence and bundle content identity;
+- model identity preserves one-model, mixed-model, and unknown states;
+- every usage row declares cumulative, incremental, or
+  aggregation-unavailable semantics, and mixed semantics do not aggregate;
+- `semantic_analysis_runs` is additive and keyed by the exact v2 semantic
+  identity components, with execution time kept outside identity.
+
 Deliverables:
 
 - define source order and partial-order relationships;
