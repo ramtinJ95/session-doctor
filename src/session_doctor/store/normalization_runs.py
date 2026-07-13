@@ -448,33 +448,45 @@ def load_normalization(
     snapshot_bundle_id: str | None = None,
 ) -> StoredNormalization | None:
     with read_connection(database_path) as connection:
-        bundle_clause = " AND b.snapshot_bundle_id = ?" if snapshot_bundle_id is not None else ""
-        params = (
-            [normalization_run_id, snapshot_bundle_id]
-            if snapshot_bundle_id is not None
-            else [normalization_run_id]
+        return load_normalization_from_connection(
+            connection,
+            normalization_run_id,
+            snapshot_bundle_id,
         )
-        run_row = connection.execute(
-            f"""
-            SELECT r.bundle_content_id, b.snapshot_bundle_id, r.adapter_name,
-                r.adapter_version, r.normalization_version, r.configuration_hash
-            FROM normalization_runs AS r
-            JOIN normalization_run_bundles AS b USING (normalization_run_id)
-            WHERE r.normalization_run_id = ? {bundle_clause}
-            ORDER BY b.snapshot_bundle_id LIMIT 1
-            """,
-            params,
-        ).fetchone()
-        if run_row is None:
-            return None
-        rows = connection.execute(
-            """
-            SELECT entity_kind, payload_json FROM normalized_entities
-            WHERE normalization_run_id = ?
-            ORDER BY entity_kind, entity_order, entity_id
-            """,
-            [normalization_run_id],
-        ).fetchall()
+
+
+def load_normalization_from_connection(
+    connection: duckdb.DuckDBPyConnection,
+    normalization_run_id: str,
+    snapshot_bundle_id: str | None = None,
+) -> StoredNormalization | None:
+    bundle_clause = " AND b.snapshot_bundle_id = ?" if snapshot_bundle_id is not None else ""
+    params = (
+        [normalization_run_id, snapshot_bundle_id]
+        if snapshot_bundle_id is not None
+        else [normalization_run_id]
+    )
+    run_row = connection.execute(
+        f"""
+        SELECT r.bundle_content_id, b.snapshot_bundle_id, r.adapter_name,
+            r.adapter_version, r.normalization_version, r.configuration_hash
+        FROM normalization_runs AS r
+        JOIN normalization_run_bundles AS b USING (normalization_run_id)
+        WHERE r.normalization_run_id = ? {bundle_clause}
+        ORDER BY b.snapshot_bundle_id LIMIT 1
+        """,
+        params,
+    ).fetchone()
+    if run_row is None:
+        return None
+    rows = connection.execute(
+        """
+        SELECT entity_kind, payload_json FROM normalized_entities
+        WHERE normalization_run_id = ?
+        ORDER BY entity_kind, entity_order, entity_id
+        """,
+        [normalization_run_id],
+    ).fetchall()
     by_kind: dict[str, list[str]] = {}
     for entity_kind, payload_json in rows:
         by_kind.setdefault(str(entity_kind), []).append(str(payload_json))
