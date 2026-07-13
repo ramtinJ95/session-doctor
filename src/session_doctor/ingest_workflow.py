@@ -63,14 +63,23 @@ def ingest_sources(
     )
 
     for session_source in sources:
+        captured_parse_source = adapter.source_for_captured_parse(session_source)
         try:
-            captured_parse_source = adapter.source_for_captured_parse(session_source)
             source_bytes = read_source_bytes(
                 Path(session_source.source_path).expanduser(),
                 agent_display_name=adapter.display_name,
             )
             captured_source = store.capture_source(captured_parse_source, source_bytes)
-            bundle = adapter.parse_source(captured_parse_source, source_bytes)
+            try:
+                bundle = adapter.parse_source(captured_parse_source, source_bytes)
+            except Exception:
+                store.create_single_source_bundle(
+                    captured_parse_source,
+                    captured_source,
+                    f"parse-failed:{captured_parse_source.source_id}",
+                    native_identity_status="fallback_parse_failed",
+                )
+                raise
         except RecoverableSourceError as exc:
             if not continue_on_source_error:
                 raise

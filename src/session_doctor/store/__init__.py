@@ -21,7 +21,7 @@ from .trend_models import (
     TrendReport,
     TrendStatus,
 )
-from .writers import StaleCaptureError
+from .writers import CaptureProvenanceError, StaleCaptureError
 
 __all__ = [
     "AggregateSummary",
@@ -29,6 +29,7 @@ __all__ = [
     "AnalysisTarget",
     "CapturedSource",
     "CapturedBundle",
+    "CaptureProvenanceError",
     "DatabaseOpenError",
     "DuckDBStore",
     "DURABLE_TABLE_NAMES",

@@ -712,6 +712,8 @@ def test_ingest_unexpected_parser_failure_aborts_without_skipping(
     assert "Source failed" not in result.stdout
     assert DuckDBStore(database_path).table_count("source_blobs") == 1
     assert DuckDBStore(database_path).table_count("source_snapshots") == 1
+    assert DuckDBStore(database_path).table_count("snapshot_bundles") == 1
+    assert DuckDBStore(database_path).table_count("snapshot_bundle_members") == 1
 
 
 def test_ingest_pi_fixture_writes_database_and_prints_summary(tmp_path) -> None:

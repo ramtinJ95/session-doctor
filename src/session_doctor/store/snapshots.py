@@ -10,7 +10,7 @@ from session_doctor.ids import stable_id
 from session_doctor.schemas import SessionSource
 
 from .connection import read_connection, transaction, write_connection
-from .json_values import metadata_json
+from .json_values import metadata_json, parse_metadata
 
 SNAPSHOT_CODEC = "zlib"
 SNAPSHOT_COMPRESSION_LEVEL = 6
@@ -32,6 +32,7 @@ class CapturedBundle:
     bundle_content_id: str
     native_session_identity: str
     capture_sequence: int
+    native_identity_status: str
 
 
 def capture_source(
@@ -104,13 +105,22 @@ def capture_source(
         connection.execute(
             """
             INSERT INTO source_snapshots (
-                snapshot_id, logical_source_id, blob_id, snapshot_content_id,
+                snapshot_id, source_id, agent_name, source_kind, source_path,
+                native_session_id, parent_source_id, source_metadata_json,
+                logical_source_id, blob_id, snapshot_content_id,
                 capture_sequence, captured_at, native_modified_at, capture_status,
                 previous_snapshot_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'captured', ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'captured', ?)
             """,
             [
                 snapshot_id,
+                source.source_id,
+                source.agent_name.value,
+                source.source_kind.value,
+                source.source_path,
+                source.native_session_id,
+                source.parent_source_id,
+                metadata_json(source.metadata),
                 logical_source_id,
                 blob_id,
                 snapshot_content_id,
@@ -137,6 +147,7 @@ def create_single_source_bundle(
     captured_source: CapturedSource,
     *,
     native_session_identity: str,
+    native_identity_status: str = "observed",
 ) -> CapturedBundle:
     with write_connection(database_path) as connection, transaction(connection):
         previous_bundle = connection.execute(
@@ -171,15 +182,17 @@ def create_single_source_bundle(
             """
             INSERT INTO snapshot_bundles (
                 snapshot_bundle_id, bundle_content_id, agent_name,
-                native_session_identity, native_bundle_capture_sequence,
+                native_session_identity, native_identity_status,
+                native_bundle_capture_sequence,
                 previous_snapshot_bundle_id, captured_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 snapshot_bundle_id,
                 bundle_content_id,
                 source.agent_name.value,
                 native_session_identity,
+                native_identity_status,
                 bundle_sequence,
                 previous_bundle_id,
                 captured_source.captured_at,
@@ -203,6 +216,7 @@ def create_single_source_bundle(
         bundle_content_id=bundle_content_id,
         native_session_identity=native_session_identity,
         capture_sequence=bundle_sequence,
+        native_identity_status=native_identity_status,
     )
 
 
@@ -228,3 +242,29 @@ def load_snapshot_bytes(database_path: Path, snapshot_id: str) -> bytes | None:
     if hashlib.sha256(source_bytes).hexdigest() != content_hash:
         raise ValueError("Snapshot content hash does not match stored metadata")
     return source_bytes
+
+
+def load_snapshot_source(database_path: Path, snapshot_id: str) -> SessionSource | None:
+    with read_connection(database_path) as connection:
+        row = connection.execute(
+            """
+            SELECT source_id, agent_name, source_path, source_kind,
+                native_session_id, parent_source_id, source_metadata_json
+            FROM source_snapshots
+            WHERE snapshot_id = ?
+            """,
+            [snapshot_id],
+        ).fetchone()
+    if row is None:
+        return None
+    return SessionSource.model_validate(
+        {
+            "source_id": row[0],
+            "agent_name": row[1],
+            "source_path": row[2],
+            "source_kind": row[3],
+            "native_session_id": row[4],
+            "parent_source_id": row[5],
+            "metadata": parse_metadata(row[6]),
+        }
+    )
