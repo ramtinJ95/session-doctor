@@ -851,6 +851,9 @@ Implementation decisions:
   reuse one blob and snapshot-content identity;
 - production ingestion commits captured bytes before passing those same bytes
   to the adapter.
+- Claude topology and persisted tool-result enrichment are explicitly
+  unavailable until PR 3 captures their multi-file evidence; production
+  normalization never reads those sidecars live after transcript capture.
 
 Deliverables:
 

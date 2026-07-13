@@ -36,6 +36,7 @@ from session_doctor.store import (
     DuckDBStore,
     SchemaMismatchError,
     SessionScopeFilters,
+    StaleCaptureError,
     SummaryFilters,
 )
 
@@ -97,6 +98,8 @@ def test_source_snapshots_round_trip_exact_bytes_and_deduplicate_blobs(tmp_path)
     first = store.capture_source(source, b'{"type":"first"}\n\x00')
     second = store.capture_source(source, b'{"type":"first"}\n\x00')
     third = store.capture_source(source, b'{"type":"first"}\n{"type":"second"}\n')
+    for captured in (first, second, third):
+        store.create_single_source_bundle(source, captured, "native-session-1")
 
     assert first.blob_id == second.blob_id
     assert first.snapshot_content_id == second.snapshot_content_id
@@ -114,6 +117,69 @@ def test_source_snapshots_round_trip_exact_bytes_and_deduplicate_blobs(tmp_path)
         assert connection.execute("SELECT count(*) FROM source_snapshots").fetchone() == (3,)
         assert connection.execute("SELECT count(*) FROM snapshot_bundles").fetchone() == (3,)
         assert connection.execute("SELECT count(*) FROM snapshot_bundle_members").fetchone() == (3,)
+
+
+def test_schema_rebuild_preserves_durable_snapshots(tmp_path) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    store = DuckDBStore(database_path)
+    source = SessionSource(
+        source_id="source-1",
+        agent_name=AgentName.PI,
+        source_path="/sessions/source-1.jsonl",
+    )
+    captured = store.capture_source(source, b"exact history")
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("DELETE FROM schema_migrations WHERE version = ?", [SCHEMA_VERSION])
+        connection.execute("INSERT INTO schema_migrations (version) VALUES (4)")
+
+    store.initialize()
+
+    assert store.load_snapshot_bytes(captured.snapshot_id) == b"exact history"
+    assert store.info().schema_version == SCHEMA_VERSION
+
+
+def test_older_capture_cannot_replace_newer_normalized_projection(tmp_path) -> None:
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    source = SessionSource(
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+        source_path="/sessions/source-1.jsonl",
+    )
+    older = store.capture_source(source, b"older")
+    older_bundle = store.create_single_source_bundle(source, older, "native-1")
+    store.capture_source(source, b"newer")
+
+    with pytest.raises(StaleCaptureError, match="no longer the latest"):
+        store.insert_parsed_bundle(
+            source,
+            ParsedSessionBundle(),
+            older,
+            older_bundle,
+        )
+
+
+def test_snapshot_manifest_constraints_reject_orphans_and_empty_captures(tmp_path) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    DuckDBStore(database_path).initialize()
+    with duckdb.connect(str(database_path)) as connection:
+        with pytest.raises(duckdb.ConstraintException):
+            connection.execute(
+                """
+                INSERT INTO source_snapshots (
+                    snapshot_id, logical_source_id, blob_id, snapshot_content_id,
+                    capture_sequence, capture_status
+                ) VALUES ('snapshot', 'missing-source', 'missing-blob', 'content', 1, 'captured')
+                """
+            )
+        with pytest.raises(duckdb.ConstraintException):
+            connection.execute(
+                """
+                INSERT INTO snapshot_bundle_members (
+                    snapshot_bundle_id, logical_source_id, snapshot_id,
+                    capture_order, member_role, member_capture_status
+                ) VALUES ('missing-bundle', 'missing-source', NULL, 0, 'primary', 'captured')
+                """
+            )
 
 
 def test_store_classifies_filtered_analysis_targets_and_orders_untimed_last(tmp_path) -> None:
@@ -152,7 +218,7 @@ def test_store_classifies_filtered_analysis_targets_and_orders_untimed_last(tmp_
             agent_name=session.agent_name,
             source_path=f"/tmp/{session.source_id}.jsonl",
         )
-        store.insert_parsed_bundle(source, ParsedSessionBundle(session=session))
+        store.insert_untracked_parsed_bundle(source, ParsedSessionBundle(session=session))
 
     for session_id, version in (
         ("session-current", ANALYZER_VERSION),
@@ -198,7 +264,7 @@ def test_store_project_root_scope_includes_absolute_paths(tmp_path) -> None:
         agent_name=session.agent_name,
         source_path="/tmp/root-scope.jsonl",
     )
-    store.insert_parsed_bundle(source, ParsedSessionBundle(session=session))
+    store.insert_untracked_parsed_bundle(source, ParsedSessionBundle(session=session))
 
     targets = store.list_analysis_targets(SessionScopeFilters(project_path="/"))
 
@@ -237,10 +303,10 @@ def test_store_initialize_rejects_stale_schema_without_modifying_it(tmp_path) ->
 def test_store_insert_parsed_bundle_persists_normalized_records(tmp_path) -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
     source = source_for_fixture(fixture_path)
-    bundle = CodexAdapter().parse_source(source)
+    bundle = CodexAdapter().parse_live_source(source)
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
 
-    store.insert_parsed_bundle(source, bundle)
+    store.insert_untracked_parsed_bundle(source, bundle)
 
     assert store.table_count("session_sources") == 1
     assert store.table_count("sessions") == 1
@@ -257,10 +323,10 @@ def test_store_insert_parsed_bundle_persists_normalized_records(tmp_path) -> Non
 def test_store_insert_parsed_bundle_preserves_utc_timestamps(tmp_path) -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
     source = source_for_fixture(fixture_path)
-    bundle = CodexAdapter().parse_source(source)
+    bundle = CodexAdapter().parse_live_source(source)
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
 
-    store.insert_parsed_bundle(source, bundle)
+    store.insert_untracked_parsed_bundle(source, bundle)
 
     with duckdb.connect(str(store.database_path), read_only=True) as connection:
         session_started_at = connection.execute(
@@ -316,7 +382,7 @@ def test_store_insert_parsed_bundle_normalizes_offset_aware_timestamps(tmp_path)
     )
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
 
-    store.insert_parsed_bundle(source, bundle)
+    store.insert_untracked_parsed_bundle(source, bundle)
 
     with duckdb.connect(str(store.database_path), read_only=True) as connection:
         session_started_at = connection.execute(
@@ -337,11 +403,11 @@ def test_store_insert_parsed_bundle_normalizes_offset_aware_timestamps(tmp_path)
 def test_store_insert_parsed_bundle_replaces_existing_source_records(tmp_path) -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
     source = source_for_fixture(fixture_path)
-    bundle = CodexAdapter().parse_source(source)
+    bundle = CodexAdapter().parse_live_source(source)
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
 
-    store.insert_parsed_bundle(source, bundle)
-    store.insert_parsed_bundle(source, bundle)
+    store.insert_untracked_parsed_bundle(source, bundle)
+    store.insert_untracked_parsed_bundle(source, bundle)
 
     assert store.table_count("session_sources") == 1
     assert store.table_count("sessions") == 1
@@ -353,9 +419,9 @@ def test_store_insert_parsed_bundle_replaces_existing_source_records(tmp_path) -
 def test_store_list_session_summaries_includes_message_source_counts(tmp_path) -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
     source = source_for_fixture(fixture_path)
-    bundle = CodexAdapter().parse_source(source)
+    bundle = CodexAdapter().parse_live_source(source)
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
-    store.insert_parsed_bundle(source, bundle)
+    store.insert_untracked_parsed_bundle(source, bundle)
 
     summaries = store.list_session_summaries()
 
@@ -373,10 +439,10 @@ def test_store_list_session_summaries_includes_message_source_counts(tmp_path) -
 def test_store_load_session_bundle_round_trips_ingested_records(tmp_path) -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
     source = source_for_fixture(fixture_path)
-    bundle = CodexAdapter().parse_source(source)
+    bundle = CodexAdapter().parse_live_source(source)
     assert bundle.session is not None
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
-    store.insert_parsed_bundle(source, bundle)
+    store.insert_untracked_parsed_bundle(source, bundle)
 
     loaded = store.load_session_bundle(bundle.session.session_id)
 
@@ -397,11 +463,11 @@ def test_store_round_trips_claude_root_records_without_private_payloads(tmp_path
         agent_name=AgentName.CLAUDE,
         source_path=str(fixture_path),
     )
-    bundle = ClaudeCodeAdapter().parse_source(source)
+    bundle = ClaudeCodeAdapter().parse_live_source(source)
     assert bundle.session is not None
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
 
-    store.insert_parsed_bundle(source, bundle)
+    store.insert_untracked_parsed_bundle(source, bundle)
     loaded = store.load_session_bundle(bundle.session.session_id)
 
     assert loaded is not None
@@ -466,7 +532,7 @@ def test_store_load_session_bundle_orders_messages_by_raw_event_index(tmp_path) 
         ],
     )
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
-    store.insert_parsed_bundle(source, bundle)
+    store.insert_untracked_parsed_bundle(source, bundle)
 
     loaded = store.load_session_bundle(session.session_id)
 
@@ -569,7 +635,7 @@ def test_store_load_session_bundle_orders_analysis_records_by_raw_event_index(tm
         ],
     )
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
-    store.insert_parsed_bundle(source, bundle)
+    store.insert_untracked_parsed_bundle(source, bundle)
 
     loaded = store.load_session_bundle(session.session_id)
 
@@ -676,9 +742,9 @@ def test_store_replace_analysis_rows_rebuilds_derived_records(tmp_path) -> None:
 def test_store_insert_parsed_bundle_deletes_existing_analysis_rows(tmp_path) -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
     source = source_for_fixture(fixture_path)
-    bundle = CodexAdapter().parse_source(source)
+    bundle = CodexAdapter().parse_live_source(source)
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
-    store.insert_parsed_bundle(source, bundle)
+    store.insert_untracked_parsed_bundle(source, bundle)
     assert bundle.session is not None
 
     analysis_run = AnalysisRun(
@@ -695,7 +761,7 @@ def test_store_insert_parsed_bundle_deletes_existing_analysis_rows(tmp_path) -> 
     )
     store.replace_analysis_rows(analysis_run, [], [session_feature], [])
 
-    store.insert_parsed_bundle(source, bundle)
+    store.insert_untracked_parsed_bundle(source, bundle)
 
     assert store.table_count("analysis_runs") == 0
     assert store.table_count("session_features") == 0
@@ -717,17 +783,17 @@ def test_store_aggregate_summary_counts_sessions_and_analysis(tmp_path) -> None:
         agent_name=AgentName.CLAUDE,
         source_path=str(claude_path),
     )
-    codex_bundle = CodexAdapter().parse_source(codex_source)
+    codex_bundle = CodexAdapter().parse_live_source(codex_source)
     from session_doctor.adapters.pi import PiAdapter
 
-    pi_bundle = PiAdapter().parse_source(pi_source)
-    claude_bundle = ClaudeCodeAdapter().parse_source(claude_source)
+    pi_bundle = PiAdapter().parse_live_source(pi_source)
+    claude_bundle = ClaudeCodeAdapter().parse_live_source(claude_source)
     assert codex_bundle.session is not None
     assert pi_bundle.session is not None
     assert claude_bundle.session is not None
-    store.insert_parsed_bundle(codex_source, codex_bundle)
-    store.insert_parsed_bundle(pi_source, pi_bundle)
-    store.insert_parsed_bundle(claude_source, claude_bundle)
+    store.insert_untracked_parsed_bundle(codex_source, codex_bundle)
+    store.insert_untracked_parsed_bundle(pi_source, pi_bundle)
+    store.insert_untracked_parsed_bundle(claude_source, claude_bundle)
 
     initial_summary = store.aggregate_summary(SummaryFilters())
 
@@ -777,9 +843,9 @@ def test_store_aggregate_summary_filters_by_agent_and_project(tmp_path) -> None:
     codex_path = FIXTURE_DIR / "basic-session.jsonl"
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
     source = source_for_fixture(codex_path)
-    bundle = CodexAdapter().parse_source(source)
+    bundle = CodexAdapter().parse_live_source(source)
     assert bundle.session is not None
-    store.insert_parsed_bundle(source, bundle)
+    store.insert_untracked_parsed_bundle(source, bundle)
     add_summary_analysis_rows(store, bundle.session.session_id, "healthy", 0.1)
 
     codex_summary = store.aggregate_summary(SummaryFilters(agent_name="codex"))
@@ -839,7 +905,7 @@ def test_store_repeated_files_groups_canonical_path_when_project_metadata_differ
             agent_name=session.agent_name,
             source_path=f"/tmp/{session.source_id}.jsonl",
         )
-        store.insert_parsed_bundle(
+        store.insert_untracked_parsed_bundle(
             source,
             ParsedSessionBundle(session=session, file_activities=[activity]),
         )
@@ -917,7 +983,7 @@ def test_store_aggregate_summary_redacts_commands_and_home_paths(tmp_path) -> No
         ],
     )
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
-    store.insert_parsed_bundle(source, bundle)
+    store.insert_untracked_parsed_bundle(source, bundle)
     add_summary_analysis_rows(store, session.session_id, "tooling_blocked", 0.9)
 
     summary = store.aggregate_summary(SummaryFilters())
@@ -941,7 +1007,7 @@ def test_store_aggregate_summary_uses_structured_command_failure_metadata(tmp_pa
         agent_name=source.agent_name,
     )
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
-    store.insert_parsed_bundle(
+    store.insert_untracked_parsed_bundle(
         source,
         ParsedSessionBundle(
             session=session,
@@ -998,7 +1064,7 @@ def test_store_aggregate_summary_recommendations_use_uncapped_labels(tmp_path) -
             agent_name=AgentName.CODEX,
             source_path=f"/tmp/{session.source_id}.jsonl",
         )
-        store.insert_parsed_bundle(source, ParsedSessionBundle(session=session))
+        store.insert_untracked_parsed_bundle(source, ParsedSessionBundle(session=session))
 
     add_summary_analysis_rows(store, "session-abandoned", "abandoned_or_stopped", 0.8)
     add_summary_analysis_rows(store, "session-tooling", "tooling_blocked", 0.8)
@@ -1012,8 +1078,8 @@ def test_store_aggregate_summary_recommendations_use_uncapped_labels(tmp_path) -
 def test_store_aggregate_summary_empty_filter_recommendation_is_filter_specific(tmp_path) -> None:
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
     source = source_for_fixture(FIXTURE_DIR / "basic-session.jsonl")
-    bundle = CodexAdapter().parse_source(source)
-    store.insert_parsed_bundle(source, bundle)
+    bundle = CodexAdapter().parse_live_source(source)
+    store.insert_untracked_parsed_bundle(source, bundle)
 
     summary = store.aggregate_summary(SummaryFilters(agent_name="pi"))
 

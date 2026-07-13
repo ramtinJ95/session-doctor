@@ -25,7 +25,7 @@ def source_for_fixture(path: Path) -> SessionSource:
 
 def test_codex_parse_source_normalizes_core_records() -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
-    bundle = CodexAdapter().parse_source(source_for_fixture(fixture_path))
+    bundle = CodexAdapter().parse_live_source(source_for_fixture(fixture_path))
 
     assert bundle.session is not None
     assert bundle.session.native_session_id == "codex-session-1"
@@ -42,7 +42,7 @@ def test_codex_parse_source_normalizes_core_records() -> None:
 
 def test_codex_parse_source_uses_response_item_as_canonical_message_source() -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
-    bundle = CodexAdapter().parse_source(source_for_fixture(fixture_path))
+    bundle = CodexAdapter().parse_live_source(source_for_fixture(fixture_path))
 
     message_sources = [message.metadata["codex_message_source"] for message in bundle.messages]
     assert message_sources == [
@@ -58,7 +58,7 @@ def test_codex_parse_source_uses_response_item_as_canonical_message_source() -> 
 
 def test_codex_parse_source_uses_event_msg_messages_as_fallback() -> None:
     fixture_path = FIXTURE_DIR / "event-msg-fallback.jsonl"
-    bundle = CodexAdapter().parse_source(source_for_fixture(fixture_path))
+    bundle = CodexAdapter().parse_live_source(source_for_fixture(fixture_path))
 
     assert [(message.role, message.text) for message in bundle.messages] == [
         (NormalizedRole.USER, "Only event message user text exists."),
@@ -76,7 +76,7 @@ def test_codex_parse_source_uses_event_msg_messages_as_fallback() -> None:
 
 def test_codex_parse_source_records_command_and_patch_metadata() -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
-    bundle = CodexAdapter().parse_source(source_for_fixture(fixture_path))
+    bundle = CodexAdapter().parse_live_source(source_for_fixture(fixture_path))
 
     command_run = bundle.command_runs[0]
     assert command_run.command == "/bin/zsh -lc 'pytest -q'"
@@ -100,7 +100,7 @@ def test_codex_parse_source_records_command_and_patch_metadata() -> None:
 
 def test_codex_empty_patch_uses_an_explicit_missing_path_marker() -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
-    bundle = CodexAdapter().parse_source(source_for_fixture(fixture_path))
+    bundle = CodexAdapter().parse_live_source(source_for_fixture(fixture_path))
     assert bundle.session is not None
 
     activities = file_activities_from_patch_event(
@@ -120,7 +120,7 @@ def test_codex_empty_patch_uses_an_explicit_missing_path_marker() -> None:
 
 def test_codex_parse_source_normalizes_expected_common_shapes() -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
-    bundle = CodexAdapter().parse_source(source_for_fixture(fixture_path))
+    bundle = CodexAdapter().parse_live_source(source_for_fixture(fixture_path))
 
     web_search_call = next(
         tool_call for tool_call in bundle.tool_calls if tool_call.name == "web_search"
@@ -153,7 +153,7 @@ def test_codex_parse_source_normalizes_expected_common_shapes() -> None:
 
 def test_codex_parse_source_emits_warnings_without_stopping() -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
-    bundle = CodexAdapter().parse_source(source_for_fixture(fixture_path))
+    bundle = CodexAdapter().parse_live_source(source_for_fixture(fixture_path))
 
     warning_codes = {warning.metadata["code"] for warning in bundle.parse_warnings}
     assert {"malformed_json", "unsupported_record_type"}.issubset(warning_codes)
@@ -199,7 +199,7 @@ def test_codex_handles_current_metadata_drift_without_unsupported_warnings(tmp_p
     ]
     session_path.write_text("\n".join(json.dumps(record) for record in records))
 
-    bundle = CodexAdapter().parse_source(source_for_fixture(session_path))
+    bundle = CodexAdapter().parse_live_source(source_for_fixture(session_path))
 
     assert bundle.session is not None
     assert bundle.session.metadata["codex_expected_ignored_counts"] == {
@@ -245,7 +245,7 @@ def test_codex_parse_source_keeps_repeated_fallback_messages_across_turns(tmp_pa
     ]
     session_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
 
-    bundle = CodexAdapter().parse_source(source_for_fixture(session_path))
+    bundle = CodexAdapter().parse_live_source(source_for_fixture(session_path))
 
     assert [(message.role, message.text) for message in bundle.messages] == [
         (NormalizedRole.USER, "same request"),
@@ -274,7 +274,7 @@ def test_codex_facade_preserves_helper_imports() -> None:
 
 def test_codex_normalizes_current_response_item_commands() -> None:
     fixture_path = FIXTURE_DIR / "current-response-items.jsonl"
-    bundle = CodexAdapter().parse_source(source_for_fixture(fixture_path))
+    bundle = CodexAdapter().parse_live_source(source_for_fixture(fixture_path))
 
     assert len(bundle.command_runs) == 4
     assert len(bundle.tool_calls) == 6
@@ -351,7 +351,7 @@ def test_codex_normalizes_current_response_item_commands() -> None:
 
 def test_codex_response_item_cardinality_is_explicit() -> None:
     fixture_path = FIXTURE_DIR / "current-response-item-ambiguities.jsonl"
-    bundle = CodexAdapter().parse_source(source_for_fixture(fixture_path))
+    bundle = CodexAdapter().parse_live_source(source_for_fixture(fixture_path))
 
     warning_codes = [warning.metadata["code"] for warning in bundle.parse_warnings]
     assert len(bundle.tool_calls) == 2
@@ -416,7 +416,7 @@ def test_codex_legacy_command_wins_over_response_item(tmp_path) -> None:
     ]
     session_path.write_text("\n".join(json.dumps(record) for record in records))
 
-    bundle = CodexAdapter().parse_source(source_for_fixture(session_path))
+    bundle = CodexAdapter().parse_live_source(source_for_fixture(session_path))
 
     assert len(bundle.tool_calls) == 1
     assert len(bundle.tool_results) == 1
@@ -455,7 +455,7 @@ def test_codex_rejects_malformed_response_command_without_guessing(tmp_path) -> 
     ]
     session_path.write_text("\n".join(json.dumps(record) for record in records))
 
-    bundle = CodexAdapter().parse_source(source_for_fixture(session_path))
+    bundle = CodexAdapter().parse_live_source(source_for_fixture(session_path))
 
     assert len(bundle.tool_calls) == 1
     assert len(bundle.tool_results) == 1

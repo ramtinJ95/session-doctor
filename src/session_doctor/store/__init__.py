@@ -12,7 +12,7 @@ from .duckdb import (
     SummaryFilters,
 )
 from .migrations import DURABLE_TABLE_NAMES, SCHEMA_VERSION, TABLE_NAMES, SchemaMismatchError
-from .snapshots import CapturedSource
+from .snapshots import CapturedBundle, CapturedSource
 from .trend_models import (
     ProjectFilters,
     ProjectReport,
@@ -21,12 +21,14 @@ from .trend_models import (
     TrendReport,
     TrendStatus,
 )
+from .writers import StaleCaptureError
 
 __all__ = [
     "AggregateSummary",
     "AnalysisCompatibility",
     "AnalysisTarget",
     "CapturedSource",
+    "CapturedBundle",
     "DatabaseOpenError",
     "DuckDBStore",
     "DURABLE_TABLE_NAMES",
@@ -37,6 +39,7 @@ __all__ = [
     "SessionSummary",
     "SessionScopeFilters",
     "StoreInfo",
+    "StaleCaptureError",
     "SummaryFilters",
     "TABLE_NAMES",
     "TrendBucketSize",

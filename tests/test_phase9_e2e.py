@@ -69,18 +69,16 @@ def test_native_three_adapter_reports_and_graphs_include_linked_sidechain(tmp_pa
     for session_id, agent, is_sidechain, _parent_id in rows:
         if not is_sidechain:
             top_level_ids.setdefault(str(agent), str(session_id))
-    nested_sidechains = [
+    sidechains = [
         session_id
         for session_id, (_, is_sidechain, parent_id) in session_rows.items()
         if is_sidechain
-        and parent_id is not None
-        and session_rows.get(parent_id, (None, False, None))[1]
     ]
     assert set(top_level_ids) == {"codex", "claude", "pi"}
-    assert len(nested_sidechains) == 1
-    sidechain_id = nested_sidechains[0]
+    assert len(sidechains) == 2
+    sidechain_id = sidechains[0]
     sidechain_parent_id = session_rows[sidechain_id][2]
-    assert sidechain_parent_id is not None
+    assert sidechain_parent_id is None
 
     disclosed_evidence_texts = 0
     for session_id in top_level_ids.values():
@@ -150,7 +148,7 @@ def test_native_three_adapter_reports_and_graphs_include_linked_sidechain(tmp_pa
     assert sidechain_report.exit_code == 0
     sidechain_report_payload = cast("dict[str, Any]", json.loads(sidechain_report.stdout))
     assert sidechain_report_payload["session"]["is_sidechain"] is True
-    assert sidechain_report_payload["session"]["parent_session_id"] == sidechain_parent_id
+    assert sidechain_report_payload["session"]["parent_session_id"] is None
     sidechain_snapshot = store.load_diagnostic_snapshot(sidechain_id)
     assert sidechain_snapshot is not None
     disclosed_evidence_texts += assert_report_privacy(
@@ -167,19 +165,7 @@ def test_native_three_adapter_reports_and_graphs_include_linked_sidechain(tmp_pa
         for node in sidechain_graph_payload["nodes"]
         if node["node_type"] == "session_reference"
     ]
-    assert any(
-        node["relationship"] == "parent" and node["referenced_session_id"] == sidechain_parent_id
-        for node in references
-    )
-    parent_snapshot = store.load_diagnostic_snapshot(sidechain_parent_id)
-    assert parent_snapshot is not None
-    parent_message_ids = {row.message_id for row in parent_snapshot.normalized.messages}
-    projected_message_ids = {
-        node["message_id"]
-        for node in sidechain_graph_payload["nodes"]
-        if node["node_type"] == "message"
-    }
-    assert parent_message_ids.isdisjoint(projected_message_ids)
+    assert all(node["relationship"] != "parent" for node in references)
     assert disclosed_evidence_texts > 0
 
     assert {table: store.table_count(table) for table in TABLE_NAMES} == before

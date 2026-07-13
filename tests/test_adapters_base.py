@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 from session_doctor.adapters import ClaudeCodeAdapter, CodexAdapter, PiAdapter
+from session_doctor.adapters.base import BaseAdapter
 from session_doctor.adapters.claude import classify_claude_path
 from session_doctor.schemas import AgentName, SourceKind
+from session_doctor.store import DuckDBStore
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def test_codex_discovery_finds_jsonl_sessions(tmp_path) -> None:
@@ -100,3 +108,31 @@ def test_claude_discovery_classifies_layout_names_relative_to_root(tmp_path) -> 
     assert by_path[str(root_named_tool_results)] == SourceKind.ROOT_SESSION
     assert by_path[str(project_named_subagents)] == SourceKind.ROOT_SESSION
     assert by_path[str(real_subagent)] == SourceKind.SUBSESSION
+
+
+@pytest.mark.parametrize(
+    ("adapter", "fixture_path"),
+    (
+        (CodexAdapter(), FIXTURES / "codex" / "basic-session.jsonl"),
+        (PiAdapter(), FIXTURES / "pi" / "basic-session.jsonl"),
+        (ClaudeCodeAdapter(), FIXTURES / "claude" / "basic-session.jsonl"),
+    ),
+)
+def test_adapters_replay_committed_bytes_without_original_source(
+    tmp_path,
+    adapter: BaseAdapter,
+    fixture_path: Path,
+) -> None:
+    source_path = tmp_path / fixture_path.name
+    source_bytes = fixture_path.read_bytes()
+    source_path.write_bytes(source_bytes)
+    source = adapter.source_for_path(source_path)
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    captured = store.capture_source(source, source_bytes)
+    source_path.unlink()
+
+    replay_bytes = store.load_snapshot_bytes(captured.snapshot_id)
+
+    assert replay_bytes is not None
+    assert replay_bytes == source_bytes
+    assert adapter.parse_source(source, replay_bytes).session is not None

@@ -134,7 +134,7 @@ def test_graph_excludes_stale_analysis_nodes(tmp_path) -> None:
     bundle = analysis_fixture_bundle()
     assert bundle.session is not None
     store = DuckDBStore(tmp_path / "stale.duckdb")
-    store.insert_parsed_bundle(source_for_bundle(), bundle)
+    store.insert_untracked_parsed_bundle(source_for_bundle(), bundle)
     stale_run = AnalysisRun(
         analysis_run_id="stale-run",
         session_id=bundle.session.session_id,
@@ -176,7 +176,7 @@ def test_graph_projects_direct_relation_directions_and_exact_topology_scope(tmp_
         parent_session_id="root",
         is_sidechain=True,
     )
-    store.insert_parsed_bundle(
+    store.insert_untracked_parsed_bundle(
         SessionSource(
             source_id=selected.source_id,
             agent_name=selected.agent_name,
@@ -396,10 +396,10 @@ def test_graph_uses_adapter_neutral_vocabulary_for_native_fixtures(
         agent_name=agent,
         source_path=str(fixture_path),
     )
-    bundle = adapter.parse_source(source)
+    bundle = adapter.parse_live_source(source)
     assert bundle.session is not None
     store = DuckDBStore(tmp_path / f"{agent.value}.duckdb")
-    store.insert_parsed_bundle(source, bundle)
+    store.insert_untracked_parsed_bundle(source, bundle)
     analyze_session(
         store,
         bundle.session.session_id,
@@ -427,7 +427,7 @@ def analyzed_store(tmp_path) -> tuple[DuckDBStore, str]:
     bundle = analysis_fixture_bundle()
     assert bundle.session is not None
     store = DuckDBStore(tmp_path / "graph.duckdb")
-    store.insert_parsed_bundle(source_for_bundle(), bundle)
+    store.insert_untracked_parsed_bundle(source_for_bundle(), bundle)
     analyze_session(
         store,
         bundle.session.session_id,
@@ -460,7 +460,7 @@ def insert_empty_session(
         parent_session_id=parent_session_id,
         is_sidechain=parent_session_id is not None,
     )
-    store.insert_parsed_bundle(
+    store.insert_untracked_parsed_bundle(
         SessionSource(
             source_id=source_id,
             agent_name=session.agent_name,

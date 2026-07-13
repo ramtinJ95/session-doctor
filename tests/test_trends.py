@@ -771,7 +771,7 @@ def add_session(
         agent_name=agent,
         source_path=f"/tmp/{session_id}.jsonl",
     )
-    store.insert_parsed_bundle(
+    store.insert_untracked_parsed_bundle(
         source,
         ParsedSessionBundle(
             session=Session(
@@ -921,7 +921,7 @@ def add_pattern_session(
         )
         for index, path in enumerate(files)
     ]
-    store.insert_parsed_bundle(
+    store.insert_untracked_parsed_bundle(
         source,
         ParsedSessionBundle(
             session=Session(

@@ -42,10 +42,14 @@ from .row_mappers import (
     tool_result_rows,
 )
 from .snapshots import (
+    CapturedBundle,
     CapturedSource,
 )
 from .snapshots import (
     capture_source as write_source_capture,
+)
+from .snapshots import (
+    create_single_source_bundle as write_single_source_bundle,
 )
 from .snapshots import (
     load_snapshot_bytes as read_snapshot_bytes,
@@ -55,6 +59,9 @@ from .trend_models import ProjectFilters, ProjectReport, TrendFilters, TrendRepo
 from .trend_readers import read_trends
 from .writers import (
     insert_parsed_bundle as write_parsed_bundle,
+)
+from .writers import (
+    insert_untracked_parsed_bundle as write_untracked_parsed_bundle,
 )
 from .writers import (
     replace_analysis_rows as write_analysis_rows,
@@ -102,15 +109,34 @@ class DuckDBStore:
         self,
         source: SessionSource,
         bundle: ParsedSessionBundle,
-        captured_source: CapturedSource | None = None,
+        captured_source: CapturedSource,
+        captured_bundle: CapturedBundle,
     ) -> None:
-        write_parsed_bundle(self.database_path, source, bundle, captured_source)
+        write_parsed_bundle(self.database_path, source, bundle, captured_source, captured_bundle)
+
+    def insert_untracked_parsed_bundle(
+        self, source: SessionSource, bundle: ParsedSessionBundle
+    ) -> None:
+        write_untracked_parsed_bundle(self.database_path, source, bundle)
 
     def capture_source(self, source: SessionSource, source_bytes: bytes) -> CapturedSource:
         return write_source_capture(self.database_path, source, source_bytes)
 
     def load_snapshot_bytes(self, snapshot_id: str) -> bytes | None:
         return read_snapshot_bytes(self.database_path, snapshot_id)
+
+    def create_single_source_bundle(
+        self,
+        source: SessionSource,
+        captured_source: CapturedSource,
+        native_session_identity: str,
+    ) -> CapturedBundle:
+        return write_single_source_bundle(
+            self.database_path,
+            source,
+            captured_source,
+            native_session_identity=native_session_identity,
+        )
 
     def replace_analysis_rows(
         self,

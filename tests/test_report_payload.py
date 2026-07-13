@@ -176,7 +176,7 @@ def test_report_stale_analysis_is_successful_explicit_partial_output(tmp_path) -
     bundle = analysis_fixture_bundle()
     assert bundle.session is not None
     store = DuckDBStore(tmp_path / "stale.duckdb")
-    store.insert_parsed_bundle(source_for_bundle(), bundle)
+    store.insert_untracked_parsed_bundle(source_for_bundle(), bundle)
     stale_run = AnalysisRun(
         analysis_run_id="stale-run",
         session_id=bundle.session.session_id,
@@ -227,7 +227,7 @@ def test_report_missing_analysis_is_successful_explicit_partial_output(tmp_path)
     bundle = analysis_fixture_bundle()
     assert bundle.session is not None
     store = DuckDBStore(tmp_path / "missing-analysis.duckdb")
-    store.insert_parsed_bundle(source_for_bundle(), bundle)
+    store.insert_untracked_parsed_bundle(source_for_bundle(), bundle)
     snapshot = store.load_diagnostic_snapshot(bundle.session.session_id)
     assert snapshot is not None
 
@@ -408,7 +408,7 @@ def analyzed_store(tmp_path) -> tuple[DuckDBStore, str]:
     bundle = analysis_fixture_bundle()
     assert bundle.session is not None
     store = DuckDBStore(tmp_path / "report.duckdb")
-    store.insert_parsed_bundle(source_for_bundle(), bundle)
+    store.insert_untracked_parsed_bundle(source_for_bundle(), bundle)
     analyze_session(
         store,
         bundle.session.session_id,

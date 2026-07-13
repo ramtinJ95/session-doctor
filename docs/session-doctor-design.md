@@ -56,6 +56,11 @@ At PR 7:
 coverage/version fields. PR 21 restores it as a normalization-only project
 identity view with no derived-analysis dependency.
 
+From PR 2 through PR 3, Claude parent topology and persisted tool-result
+enrichment are explicitly unavailable in production ingestion rather than
+derived from uncaptured live sidecars. PR 3 restores them from exact multi-file
+bundle members.
+
 ### Phase 11: Standalone Visual Reports And Trend Dashboards
 
 Until PR 7 removes the dependent v1 projections, renderers consume typed projections only.

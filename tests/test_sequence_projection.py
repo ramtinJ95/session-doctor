@@ -59,7 +59,7 @@ def test_sequence_activity_categories_and_warning_resolution_are_exact(tmp_path)
         agent_name=source.agent_name,
     )
     store = DuckDBStore(tmp_path / "sequence.duckdb")
-    store.insert_parsed_bundle(
+    store.insert_untracked_parsed_bundle(
         source,
         ParsedSessionBundle(
             session=session,

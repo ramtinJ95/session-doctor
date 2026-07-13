@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import zlib
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from session_doctor.ids import stable_id
@@ -22,8 +22,15 @@ class CapturedSource:
     logical_source_id: str
     snapshot_id: str
     snapshot_content_id: str
+    capture_sequence: int
+    captured_at: datetime
+
+
+@dataclass(frozen=True)
+class CapturedBundle:
     snapshot_bundle_id: str
     bundle_content_id: str
+    native_session_identity: str
     capture_sequence: int
 
 
@@ -43,8 +50,7 @@ def capture_source(
         source.source_id,
     )
     snapshot_content_id = stable_id("snapshot-content", logical_source_id, blob_id)
-    native_session_identity = source.native_session_id or source.source_id
-
+    captured_at = datetime.now(UTC)
     with write_connection(database_path) as connection, transaction(connection):
         connection.execute(
             """
@@ -92,15 +98,16 @@ def capture_source(
             "source-snapshot",
             logical_source_id,
             capture_sequence,
+            captured_at.isoformat(),
             snapshot_content_id,
         )
         connection.execute(
             """
             INSERT INTO source_snapshots (
                 snapshot_id, logical_source_id, blob_id, snapshot_content_id,
-                capture_sequence, native_modified_at, capture_status,
+                capture_sequence, captured_at, native_modified_at, capture_status,
                 previous_snapshot_id
-            ) VALUES (?, ?, ?, ?, ?, ?, 'captured', ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'captured', ?)
             """,
             [
                 snapshot_id,
@@ -108,11 +115,30 @@ def capture_source(
                 blob_id,
                 snapshot_content_id,
                 capture_sequence,
+                captured_at,
                 native_modified_at,
                 previous_snapshot_id,
             ],
         )
 
+    return CapturedSource(
+        blob_id=blob_id,
+        logical_source_id=logical_source_id,
+        snapshot_id=snapshot_id,
+        snapshot_content_id=snapshot_content_id,
+        capture_sequence=capture_sequence,
+        captured_at=captured_at,
+    )
+
+
+def create_single_source_bundle(
+    database_path: Path,
+    source: SessionSource,
+    captured_source: CapturedSource,
+    *,
+    native_session_identity: str,
+) -> CapturedBundle:
+    with write_connection(database_path) as connection, transaction(connection):
         previous_bundle = connection.execute(
             """
             SELECT snapshot_bundle_id, native_bundle_capture_sequence
@@ -130,8 +156,8 @@ def capture_source(
             source.agent_name.value,
             native_session_identity,
             "primary",
-            logical_source_id,
-            snapshot_content_id,
+            captured_source.logical_source_id,
+            captured_source.snapshot_content_id,
             "captured",
         )
         snapshot_bundle_id = stable_id(
@@ -146,8 +172,8 @@ def capture_source(
             INSERT INTO snapshot_bundles (
                 snapshot_bundle_id, bundle_content_id, agent_name,
                 native_session_identity, native_bundle_capture_sequence,
-                previous_snapshot_bundle_id
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                previous_snapshot_bundle_id, captured_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 snapshot_bundle_id,
@@ -156,6 +182,7 @@ def capture_source(
                 native_session_identity,
                 bundle_sequence,
                 previous_bundle_id,
+                captured_source.captured_at,
             ],
         )
         connection.execute(
@@ -165,17 +192,17 @@ def capture_source(
                 capture_order, member_role, member_capture_status
             ) VALUES (?, ?, ?, 0, 'primary', 'captured')
             """,
-            [snapshot_bundle_id, logical_source_id, snapshot_id],
+            [
+                snapshot_bundle_id,
+                captured_source.logical_source_id,
+                captured_source.snapshot_id,
+            ],
         )
-
-    return CapturedSource(
-        blob_id=blob_id,
-        logical_source_id=logical_source_id,
-        snapshot_id=snapshot_id,
-        snapshot_content_id=snapshot_content_id,
+    return CapturedBundle(
         snapshot_bundle_id=snapshot_bundle_id,
         bundle_content_id=bundle_content_id,
-        capture_sequence=capture_sequence,
+        native_session_identity=native_session_identity,
+        capture_sequence=bundle_sequence,
     )
 
 

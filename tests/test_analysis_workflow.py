@@ -186,7 +186,7 @@ def store_with_empty_session(tmp_path: Path) -> tuple[Path, DuckDBStore]:
         source_path="/tmp/session-a.jsonl",
     )
     store = DuckDBStore(database_path)
-    store.insert_parsed_bundle(
+    store.insert_untracked_parsed_bundle(
         source,
         ParsedSessionBundle(
             session=Session(

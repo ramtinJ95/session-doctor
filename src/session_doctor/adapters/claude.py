@@ -71,8 +71,24 @@ class ClaudeCodeAdapter(BaseAdapter):
         enrich_claude_sources(self._topology_context(sources, discovery_root))
         return sources
 
-    def parse_source(
-        self, source: SessionSource, source_bytes: bytes | None = None
+    def parse_source(self, source: SessionSource, source_bytes: bytes) -> ParsedSessionBundle:
+        return self._parse_source(source, source_bytes, allow_live_sidecars=False)
+
+    def parse_live_source(self, source: SessionSource) -> ParsedSessionBundle:
+        from .common import read_source_bytes
+
+        source_bytes = read_source_bytes(
+            Path(source.source_path).expanduser(),
+            agent_display_name=self.display_name,
+        )
+        return self._parse_source(source, source_bytes, allow_live_sidecars=True)
+
+    def _parse_source(
+        self,
+        source: SessionSource,
+        source_bytes: bytes,
+        *,
+        allow_live_sidecars: bool,
     ) -> ParsedSessionBundle:
         source_path = Path(source.source_path).expanduser()
         if source.source_kind not in self.ingestible_source_kinds:
@@ -89,6 +105,14 @@ class ClaudeCodeAdapter(BaseAdapter):
         )
         add_session_identity_warnings(bundle, source, session_metadata)
         add_topology_warnings(bundle, source)
+        if source.metadata.get("claude_multifile_evidence_status") is not None:
+            bundle.parse_warnings.append(
+                warning_for_source(
+                    source,
+                    "claude_multifile_capture_unavailable",
+                    "Claude Code topology and sidecars await multi-file bundle capture",
+                )
+            )
 
         metadata_only_counts: dict[str, int] = {}
         tool_uses: list[ClaudeToolUse] = []
@@ -135,6 +159,7 @@ class ClaudeCodeAdapter(BaseAdapter):
                     metadata_only_counts,
                     tool_uses,
                     tool_results,
+                    allow_live_sidecars,
                 )
             elif record_type in CLAUDE_METADATA_ONLY_TYPES:
                 increment_count(metadata_only_counts, record_type)
@@ -159,6 +184,13 @@ class ClaudeCodeAdapter(BaseAdapter):
         )
         session_metadata.session.metadata["claude_metadata_only_counts"] = metadata_only_counts
         return bundle
+
+    def source_for_captured_parse(self, source: SessionSource) -> SessionSource:
+        metadata = {
+            key: value for key, value in source.metadata.items() if not key.startswith("claude_")
+        }
+        metadata["claude_multifile_evidence_status"] = "unavailable_until_bundle_capture"
+        return source.model_copy(update={"parent_source_id": None, "metadata": metadata})
 
     def source_for_path(self, path: Path) -> SessionSource:
         source_kind = classify_claude_path(path)
@@ -233,6 +265,7 @@ def parse_message_record(
     metadata_only_counts: dict[str, int],
     tool_uses: list[ClaudeToolUse],
     tool_results: list[ClaudeToolResult],
+    allow_live_sidecars: bool,
 ) -> None:
     record_type = string_value(record.get("type")) or "missing"
     message = message_from_record(session_metadata.session_id, event, record)
@@ -283,6 +316,7 @@ def parse_message_record(
             record,
             event,
             tool_results,
+            allow_live_sidecars,
         )
     elif record_type == "system" and string_value(record.get("subtype")) == "api_error":
         bundle.parse_warnings.append(
@@ -394,6 +428,7 @@ def parse_user_tool_results(
     record: dict[str, Any],
     event: RawEvent,
     tool_results: list[ClaudeToolResult],
+    allow_live_sidecars: bool,
 ) -> None:
     result_blocks = user_tool_result_blocks(record)
     persisted_output_path = string_value(
@@ -432,13 +467,22 @@ def parse_user_tool_results(
             block,
             block_index,
         )
-        if correlate_sidecar:
+        if correlate_sidecar and allow_live_sidecars:
             normalized_result = enrich_tool_result_from_sidecar(
                 bundle,
                 source,
                 record_index,
                 record,
                 normalized_result,
+            )
+        elif correlate_sidecar and persisted_output_path is not None:
+            bundle.parse_warnings.append(
+                warning_for_record(
+                    source,
+                    record_index,
+                    "tool_result_sidecar_capture_unavailable",
+                    "Claude Code tool-result sidecar enrichment awaits bundle capture",
+                )
             )
         bundle.tool_results.append(normalized_result)
 

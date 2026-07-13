@@ -156,7 +156,7 @@ def test_report_html_keeps_missing_analysis_and_empty_sequence_explicit(tmp_path
     bundle = analysis_fixture_bundle()
     assert bundle.session is not None
     store = DuckDBStore(tmp_path / "missing.duckdb")
-    store.insert_parsed_bundle(
+    store.insert_untracked_parsed_bundle(
         source_for_bundle(), bundle.model_copy(update={"raw_events": [], "messages": []})
     )
     snapshot = store.load_diagnostic_snapshot(bundle.session.session_id)
@@ -175,7 +175,7 @@ def test_report_html_keeps_stale_analysis_recovery_explicit(tmp_path) -> None:
     bundle = analysis_fixture_bundle()
     assert bundle.session is not None
     store = DuckDBStore(tmp_path / "stale.duckdb")
-    store.insert_parsed_bundle(source_for_bundle(), bundle)
+    store.insert_untracked_parsed_bundle(source_for_bundle(), bundle)
     stale_run = AnalysisRun(
         analysis_run_id="stale-run",
         session_id=bundle.session.session_id,
@@ -462,7 +462,7 @@ def analyzed_store(tmp_path) -> tuple[DuckDBStore, str]:
     bundle = analysis_fixture_bundle()
     assert bundle.session is not None
     store = DuckDBStore(tmp_path / "report.duckdb")
-    store.insert_parsed_bundle(source_for_bundle(), bundle)
+    store.insert_untracked_parsed_bundle(source_for_bundle(), bundle)
     analyze_session(
         store,
         bundle.session.session_id,

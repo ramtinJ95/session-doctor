@@ -35,7 +35,7 @@ def source_for_fixture(
 
 def test_claude_parse_source_normalizes_root_session_end_to_end() -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
-    bundle = ClaudeCodeAdapter().parse_source(source_for_fixture(fixture_path))
+    bundle = ClaudeCodeAdapter().parse_live_source(source_for_fixture(fixture_path))
 
     assert bundle.session is not None
     assert bundle.session.agent_name is AgentName.CLAUDE
@@ -72,7 +72,7 @@ def test_claude_parse_source_normalizes_root_session_end_to_end() -> None:
 
 
 def test_claude_messages_exclude_thinking_and_tool_result_text() -> None:
-    bundle = ClaudeCodeAdapter().parse_source(
+    bundle = ClaudeCodeAdapter().parse_live_source(
         source_for_fixture(FIXTURE_DIR / "basic-session.jsonl")
     )
 
@@ -140,7 +140,7 @@ def test_claude_end_turn_marks_final_answer_and_resolves_correction(tmp_path) ->
             )
         )
     )
-    bundle = ClaudeCodeAdapter().parse_source(source_for_fixture(source_path))
+    bundle = ClaudeCodeAdapter().parse_live_source(source_for_fixture(source_path))
 
     assert bundle.messages[-1].metadata["phase"] == "final_answer"
     features = analyze_features(bundle, "analysis-run")
@@ -178,7 +178,7 @@ def test_claude_max_tokens_stop_is_unresolved_evidence(tmp_path) -> None:
         )
     )
 
-    bundle = ClaudeCodeAdapter().parse_source(source_for_fixture(source_path))
+    bundle = ClaudeCodeAdapter().parse_live_source(source_for_fixture(source_path))
 
     warning = next(
         warning
@@ -214,7 +214,7 @@ def test_claude_stop_sequence_is_not_truncation_evidence(tmp_path) -> None:
         )
     )
 
-    bundle = ClaudeCodeAdapter().parse_source(source_for_fixture(source_path))
+    bundle = ClaudeCodeAdapter().parse_live_source(source_for_fixture(source_path))
 
     assert all(
         warning.metadata["code"] != "claude_assistant_truncated"
@@ -247,7 +247,7 @@ def test_claude_api_error_message_text_is_hashed_but_not_persisted(tmp_path) -> 
         )
     )
     source = source_for_fixture(source_path)
-    bundle = ClaudeCodeAdapter().parse_source(source)
+    bundle = ClaudeCodeAdapter().parse_live_source(source)
 
     assert bundle.messages[0].text is None
     assert bundle.messages[0].text_hash == hash_text("PRIVATE_API_ERROR_MESSAGE")
@@ -258,7 +258,7 @@ def test_claude_api_error_message_text_is_hashed_but_not_persisted(tmp_path) -> 
         warning.metadata["code"] for warning in bundle.parse_warnings
     }
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
-    store.insert_parsed_bundle(source, bundle)
+    store.insert_untracked_parsed_bundle(source, bundle)
     loaded = store.load_session_bundle(bundle.session.session_id) if bundle.session else None
     assert loaded is not None
     assert "PRIVATE_API_ERROR_MESSAGE" not in loaded.model_dump_json()
@@ -281,7 +281,7 @@ def test_claude_local_command_output_is_hashed_but_not_persisted_as_message_text
         )
     )
     source = source_for_fixture(source_path)
-    bundle = ClaudeCodeAdapter().parse_source(source)
+    bundle = ClaudeCodeAdapter().parse_live_source(source)
 
     assert bundle.messages == []
     assert bundle.session is not None
@@ -293,7 +293,7 @@ def test_claude_local_command_output_is_hashed_but_not_persisted_as_message_text
         "PRIVATE_LOCAL_COMMAND_OUTPUT"
     )
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
-    store.insert_parsed_bundle(source, bundle)
+    store.insert_untracked_parsed_bundle(source, bundle)
     loaded = store.load_session_bundle(bundle.session.session_id)
     assert loaded is not None
     assert loaded.messages == []
@@ -301,7 +301,7 @@ def test_claude_local_command_output_is_hashed_but_not_persisted_as_message_text
 
 
 def test_claude_normalizes_tools_commands_files_and_usage_without_raw_output() -> None:
-    bundle = ClaudeCodeAdapter().parse_source(
+    bundle = ClaudeCodeAdapter().parse_live_source(
         source_for_fixture(FIXTURE_DIR / "basic-session.jsonl")
     )
 
@@ -356,7 +356,7 @@ def test_claude_normalizes_tools_commands_files_and_usage_without_raw_output() -
 
 def test_claude_bundle_never_contains_private_structural_content() -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
-    bundle = ClaudeCodeAdapter().parse_source(source_for_fixture(fixture_path))
+    bundle = ClaudeCodeAdapter().parse_live_source(source_for_fixture(fixture_path))
     serialized_bundle = bundle.model_dump_json()
 
     forbidden_values = {
@@ -380,7 +380,7 @@ def test_claude_bundle_never_contains_private_structural_content() -> None:
 
 def test_claude_missing_session_id_uses_filename_and_preserves_drift() -> None:
     fixture_path = FIXTURE_DIR / "drift-and-warnings.jsonl"
-    bundle = ClaudeCodeAdapter().parse_source(source_for_fixture(fixture_path))
+    bundle = ClaudeCodeAdapter().parse_live_source(source_for_fixture(fixture_path))
 
     assert bundle.session is not None
     assert bundle.session.native_session_id is None
@@ -429,7 +429,7 @@ def test_claude_warns_for_malformed_rows_and_inconsistent_session_ids(tmp_path) 
         )
     )
 
-    bundle = ClaudeCodeAdapter().parse_source(source_for_fixture(source_path))
+    bundle = ClaudeCodeAdapter().parse_live_source(source_for_fixture(source_path))
 
     assert len(bundle.raw_events) == 2
     assert len(bundle.messages) == 2
@@ -466,7 +466,7 @@ def test_claude_idless_blocks_get_distinct_fallback_ids_and_boolean_usage_is_rej
         )
     )
 
-    bundle = ClaudeCodeAdapter().parse_source(source_for_fixture(source_path))
+    bundle = ClaudeCodeAdapter().parse_live_source(source_for_fixture(source_path))
 
     assert len(bundle.tool_calls) == 2
     assert len({tool_call.tool_call_id for tool_call in bundle.tool_calls}) == 2
@@ -528,7 +528,7 @@ def test_claude_bash_error_without_exit_code_is_visible_to_analysis(tmp_path) ->
         )
     )
 
-    bundle = ClaudeCodeAdapter().parse_source(source_for_fixture(source_path))
+    bundle = ClaudeCodeAdapter().parse_live_source(source_for_fixture(source_path))
 
     assert bundle.command_runs[0].exit_code == 1
     assert bundle.command_runs[0].metadata["exit_code_inferred_from_is_error"] is True
@@ -586,7 +586,7 @@ def test_claude_empty_bash_streams_do_not_create_repeated_failure_evidence(
         )
     source_path.write_text("\n".join(json.dumps(record) for record in records))
 
-    bundle = ClaudeCodeAdapter().parse_source(source_for_fixture(source_path))
+    bundle = ClaudeCodeAdapter().parse_live_source(source_for_fixture(source_path))
 
     assert all(command.stdout_hash is None for command in bundle.command_runs)
     assert all(command.stderr_hash is None for command in bundle.command_runs)
@@ -644,13 +644,13 @@ def test_claude_idless_duplicate_file_tools_persist_with_explicit_false(tmp_path
         )
     )
     source = source_for_fixture(source_path)
-    bundle = ClaudeCodeAdapter().parse_source(source)
+    bundle = ClaudeCodeAdapter().parse_live_source(source)
 
     assert len(bundle.file_activities) == 2
     assert len({activity.file_activity_id for activity in bundle.file_activities}) == 2
     assert all(activity.metadata["replace_all"] is False for activity in bundle.file_activities)
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
-    store.insert_parsed_bundle(source, bundle)
+    store.insert_untracked_parsed_bundle(source, bundle)
     assert store.table_count("file_activities") == 2
 
 
@@ -726,7 +726,7 @@ def test_claude_rejects_non_transcript_source_kind() -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
 
     with pytest.raises(SourceFormatError, match="is not a session transcript"):
-        ClaudeCodeAdapter().parse_source(
+        ClaudeCodeAdapter().parse_live_source(
             source_for_fixture(fixture_path, source_kind=SourceKind.TOOL_RESULT)
         )
 
@@ -744,9 +744,9 @@ def test_claude_topology_links_root_and_nested_subagents() -> None:
     assert agent_a_source.parent_source_id == root_source.source_id
     assert agent_b_source.parent_source_id == agent_a_source.source_id
 
-    root_bundle = adapter.parse_source(root_source)
-    agent_a_bundle = adapter.parse_source(agent_a_source)
-    agent_b_bundle = adapter.parse_source(agent_b_source)
+    root_bundle = adapter.parse_live_source(root_source)
+    agent_a_bundle = adapter.parse_live_source(agent_a_source)
+    agent_b_bundle = adapter.parse_live_source(agent_b_source)
 
     assert root_bundle.session is not None
     assert agent_a_bundle.session is not None
@@ -848,8 +848,8 @@ def test_claude_parent_session_id_uses_first_observed_native_id(tmp_path) -> Non
     adapter = ClaudeCodeAdapter()
     sources = {Path(source.source_path): source for source in adapter.discover(tmp_path)}
 
-    root_bundle = adapter.parse_source(sources[root_path])
-    child_bundle = adapter.parse_source(sources[child_path])
+    root_bundle = adapter.parse_live_source(sources[root_path])
+    child_bundle = adapter.parse_live_source(sources[child_path])
 
     assert root_bundle.session is not None
     assert child_bundle.session is not None
@@ -882,7 +882,7 @@ def test_claude_cyclic_subagent_links_are_invalidated(tmp_path) -> None:
     ]
 
     for source in subagents:
-        bundle = adapter.parse_source(source)
+        bundle = adapter.parse_live_source(source)
         assert source.parent_source_id is None
         assert source.metadata["claude_parent_link_status"] == "cyclic"
         assert "claude_parent_session_id" not in source.metadata
@@ -917,7 +917,7 @@ def test_claude_correlates_tool_result_sidecar_without_raw_content() -> None:
     adapter = ClaudeCodeAdapter()
     root_source = sources_for_ingest(adapter, TOPOLOGY_FIXTURE_DIR)[0]
 
-    bundle = adapter.parse_source(root_source)
+    bundle = adapter.parse_live_source(root_source)
 
     tool_result = bundle.tool_results[0]
     expected_output = (
@@ -968,7 +968,7 @@ def test_claude_sidecar_lengths_use_text_characters_for_unicode_output(tmp_path)
     ]
     root_path.write_text("\n".join(json.dumps(record) for record in records))
 
-    bundle = ClaudeCodeAdapter().parse_source(ClaudeCodeAdapter().source_for_path(root_path))
+    bundle = ClaudeCodeAdapter().parse_live_source(ClaudeCodeAdapter().source_for_path(root_path))
 
     inline_result, persisted_result = bundle.tool_results
     assert inline_result.output_length == len(output)
@@ -1004,7 +1004,7 @@ def test_claude_does_not_apply_one_sidecar_to_multiple_tool_results(tmp_path) ->
         )
     )
 
-    bundle = ClaudeCodeAdapter().parse_source(ClaudeCodeAdapter().source_for_path(root_path))
+    bundle = ClaudeCodeAdapter().parse_live_source(ClaudeCodeAdapter().source_for_path(root_path))
 
     assert len(bundle.tool_results) == 2
     assert all("sidecar_correlated" not in result.metadata for result in bundle.tool_results)
@@ -1054,7 +1054,7 @@ def test_claude_subagent_without_parent_signal_warns_instead_of_guessing(tmp_pat
         if source.source_kind is SourceKind.SUBSESSION
     )
 
-    bundle = adapter.parse_source(subagent_source)
+    bundle = adapter.parse_live_source(subagent_source)
 
     assert subagent_source.parent_source_id is None
     assert bundle.session is not None
@@ -1087,7 +1087,7 @@ def test_claude_subagent_ambiguous_parent_signals_remain_unlinked(tmp_path) -> N
         source for source in adapter.discover(tmp_path) if Path(source.source_path) == child_path
     )
 
-    bundle = adapter.parse_source(child_source)
+    bundle = adapter.parse_live_source(child_source)
 
     assert child_source.parent_source_id is None
     assert child_source.metadata["claude_parent_link_status"] == "ambiguous"
@@ -1124,7 +1124,7 @@ def test_claude_subagent_conflicting_parent_signals_warn(tmp_path) -> None:
         source for source in adapter.discover(tmp_path) if Path(source.source_path) == child_path
     )
 
-    bundle = adapter.parse_source(child_source)
+    bundle = adapter.parse_live_source(child_source)
 
     assert child_source.parent_source_id is None
     assert child_source.metadata["claude_parent_link_status"] == "mismatched"
@@ -1157,8 +1157,8 @@ def test_claude_malformed_and_mismatched_metadata_warns(tmp_path) -> None:
     adapter = ClaudeCodeAdapter()
     sources = {Path(source.source_path): source for source in adapter.discover(tmp_path)}
 
-    malformed_bundle = adapter.parse_source(sources[malformed_path])
-    mismatch_bundle = adapter.parse_source(sources[mismatch_path])
+    malformed_bundle = adapter.parse_live_source(sources[malformed_path])
+    mismatch_bundle = adapter.parse_live_source(sources[mismatch_path])
 
     assert "subagent_metadata_malformed" in {
         warning.metadata["code"] for warning in malformed_bundle.parse_warnings
@@ -1189,7 +1189,7 @@ def test_claude_missing_and_unsafe_tool_result_sidecars_warn(tmp_path) -> None:
         records.append(record)
     root_path.write_text("\n".join(json.dumps(record) for record in records))
 
-    bundle = ClaudeCodeAdapter().parse_source(ClaudeCodeAdapter().source_for_path(root_path))
+    bundle = ClaudeCodeAdapter().parse_live_source(ClaudeCodeAdapter().source_for_path(root_path))
 
     assert {warning.metadata["code"] for warning in bundle.parse_warnings} >= {
         "missing_tool_result_sidecar",

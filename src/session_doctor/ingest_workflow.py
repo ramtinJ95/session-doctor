@@ -64,12 +64,13 @@ def ingest_sources(
 
     for session_source in sources:
         try:
+            captured_parse_source = adapter.source_for_captured_parse(session_source)
             source_bytes = read_source_bytes(
                 Path(session_source.source_path).expanduser(),
                 agent_display_name=adapter.display_name,
             )
-            captured_source = store.capture_source(session_source, source_bytes)
-            bundle = adapter.parse_source(session_source, source_bytes)
+            captured_source = store.capture_source(captured_parse_source, source_bytes)
+            bundle = adapter.parse_source(captured_parse_source, source_bytes)
         except RecoverableSourceError as exc:
             if not continue_on_source_error:
                 raise
@@ -85,7 +86,22 @@ def ingest_sources(
                 f"(category={skipped_source.category}) {skipped_source.detail}"
             )
             continue
-        store.insert_parsed_bundle(session_source, bundle, captured_source)
+        native_session_identity = (
+            bundle.session.native_session_id
+            if bundle.session and bundle.session.native_session_id
+            else captured_parse_source.native_session_id or captured_parse_source.source_id
+        )
+        captured_bundle = store.create_single_source_bundle(
+            captured_parse_source,
+            captured_source,
+            native_session_identity,
+        )
+        store.insert_parsed_bundle(
+            captured_parse_source,
+            bundle,
+            captured_source,
+            captured_bundle,
+        )
 
         source_kind = session_source.source_kind.value
         summary.parsed_source_counts[source_kind] = (

@@ -44,7 +44,7 @@ def test_diagnostic_snapshot_loads_exact_session_topology_and_indexes(tmp_path) 
         agent_name=selected.agent_name,
         source_path="/private/selected.jsonl",
     )
-    store.insert_parsed_bundle(
+    store.insert_untracked_parsed_bundle(
         source,
         ParsedSessionBundle(
             session=selected,
@@ -319,7 +319,7 @@ def insert_pattern_session(
         project_path=project,
         started_at=started_at,
     )
-    store.insert_parsed_bundle(
+    store.insert_untracked_parsed_bundle(
         SessionSource(
             source_id=source_id,
             agent_name=session.agent_name,
@@ -365,7 +365,7 @@ def insert_session(
         parent_session_id=parent_session_id,
         is_sidechain=parent_session_id is not None,
     )
-    store.insert_parsed_bundle(
+    store.insert_untracked_parsed_bundle(
         SessionSource(
             source_id=source_id,
             agent_name=session.agent_name,

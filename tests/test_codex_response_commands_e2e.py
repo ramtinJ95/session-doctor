@@ -24,10 +24,10 @@ def test_current_codex_response_commands_survive_store_analysis_report_and_graph
         agent_name=AgentName.CODEX,
         source_path=str(FIXTURE),
     )
-    bundle = CodexAdapter().parse_source(source)
+    bundle = CodexAdapter().parse_live_source(source)
     assert bundle.session is not None
     store = DuckDBStore(tmp_path / "current-codex.duckdb")
-    store.insert_parsed_bundle(source, bundle)
+    store.insert_untracked_parsed_bundle(source, bundle)
     analyze_session(
         store,
         bundle.session.session_id,
