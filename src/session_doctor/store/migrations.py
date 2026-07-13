@@ -12,9 +12,7 @@ DURABLE_TABLE_NAMES = (
     "snapshot_bundle_members",
 )
 
-TABLE_NAMES = (
-    "schema_migrations",
-    *DURABLE_TABLE_NAMES,
+DERIVED_TABLE_NAMES = (
     "session_sources",
     "sessions",
     "raw_events",
@@ -30,6 +28,8 @@ TABLE_NAMES = (
     "session_features",
     "session_classifications",
 )
+
+TABLE_NAMES = ("schema_migrations", *DURABLE_TABLE_NAMES, *DERIVED_TABLE_NAMES)
 
 
 class SchemaMismatchError(RuntimeError):
@@ -49,7 +49,16 @@ class SchemaMismatchError(RuntimeError):
 
 
 def initialize_schema(connection: duckdb.DuckDBPyConnection) -> None:
-    if database_tables(connection):
+    existing_tables = database_tables(connection)
+    if existing_tables:
+        actual_version = database_schema_version(connection, existing_tables)
+        if (
+            actual_version is not None
+            and actual_version < SCHEMA_VERSION
+            and set(DURABLE_TABLE_NAMES).issubset(existing_tables)
+        ):
+            rebuild_derived_schema(connection)
+            return
         require_current_schema(connection)
         return
 
@@ -64,11 +73,27 @@ def initialize_schema(connection: duckdb.DuckDBPyConnection) -> None:
 
     for statement in CREATE_TABLE_STATEMENTS:
         connection.execute(statement)
-
     connection.execute(
         "INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)",
         [SCHEMA_VERSION],
     )
+
+
+def rebuild_derived_schema(connection: duckdb.DuckDBPyConnection) -> None:
+    connection.execute("BEGIN TRANSACTION")
+    try:
+        for table_name in reversed(DERIVED_TABLE_NAMES):
+            connection.execute(f"DROP TABLE IF EXISTS {table_name}")
+        for statement in CREATE_TABLE_STATEMENTS:
+            connection.execute(statement)
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)",
+            [SCHEMA_VERSION],
+        )
+        connection.execute("COMMIT")
+    except Exception:
+        connection.execute("ROLLBACK")
+        raise
 
 
 def require_current_schema(
@@ -134,15 +159,16 @@ CREATE_TABLE_STATEMENTS = (
     """
     CREATE TABLE IF NOT EXISTS source_snapshots (
         snapshot_id VARCHAR PRIMARY KEY,
-        logical_source_id VARCHAR NOT NULL,
-        blob_id VARCHAR NOT NULL,
+        logical_source_id VARCHAR NOT NULL REFERENCES logical_sources(logical_source_id),
+        blob_id VARCHAR NOT NULL REFERENCES source_blobs(blob_id),
         snapshot_content_id VARCHAR NOT NULL,
         capture_sequence BIGINT NOT NULL CHECK (capture_sequence > 0),
         captured_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
         native_modified_at TIMESTAMP,
         capture_status VARCHAR NOT NULL CHECK (capture_status IN ('captured')),
-        previous_snapshot_id VARCHAR,
-        UNIQUE (logical_source_id, capture_sequence)
+        previous_snapshot_id VARCHAR REFERENCES source_snapshots(snapshot_id),
+        UNIQUE (logical_source_id, capture_sequence),
+        UNIQUE (snapshot_id, logical_source_id)
     )
     """,
     """
@@ -153,21 +179,24 @@ CREATE_TABLE_STATEMENTS = (
         native_session_identity VARCHAR NOT NULL,
         native_bundle_capture_sequence BIGINT NOT NULL
             CHECK (native_bundle_capture_sequence > 0),
-        previous_snapshot_bundle_id VARCHAR,
+        previous_snapshot_bundle_id VARCHAR REFERENCES snapshot_bundles(snapshot_bundle_id),
         captured_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
         UNIQUE (agent_name, native_session_identity, native_bundle_capture_sequence)
     )
     """,
     """
     CREATE TABLE IF NOT EXISTS snapshot_bundle_members (
-        snapshot_bundle_id VARCHAR NOT NULL,
-        logical_source_id VARCHAR NOT NULL,
-        snapshot_id VARCHAR,
+        snapshot_bundle_id VARCHAR NOT NULL
+            REFERENCES snapshot_bundles(snapshot_bundle_id),
+        logical_source_id VARCHAR NOT NULL REFERENCES logical_sources(logical_source_id),
+        snapshot_id VARCHAR NOT NULL,
         capture_order INTEGER NOT NULL CHECK (capture_order >= 0),
         member_role VARCHAR NOT NULL,
         member_capture_status VARCHAR NOT NULL CHECK (member_capture_status IN ('captured')),
         PRIMARY KEY (snapshot_bundle_id, logical_source_id),
-        UNIQUE (snapshot_bundle_id, capture_order)
+        UNIQUE (snapshot_bundle_id, capture_order),
+        FOREIGN KEY (snapshot_id, logical_source_id)
+            REFERENCES source_snapshots(snapshot_id, logical_source_id)
     )
     """,
     """

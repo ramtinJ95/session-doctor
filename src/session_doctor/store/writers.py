@@ -31,18 +31,31 @@ from .row_mappers import (
     tool_call_rows,
     tool_result_rows,
 )
-from .snapshots import CapturedSource
+from .snapshots import CapturedBundle, CapturedSource
 
 
 def insert_parsed_bundle(
     database_path: Path,
     source: SessionSource,
     bundle: ParsedSessionBundle,
-    captured_source: CapturedSource | None = None,
+    captured_source: CapturedSource,
+    captured_bundle: CapturedBundle,
 ) -> None:
     with write_connection(database_path) as connection, transaction(connection):
+        latest = connection.execute(
+            """
+            SELECT snapshot_id
+            FROM source_snapshots
+            WHERE logical_source_id = ?
+            ORDER BY capture_sequence DESC
+            LIMIT 1
+            """,
+            [captured_source.logical_source_id],
+        ).fetchone()
+        if latest is None or str(latest[0]) != captured_source.snapshot_id:
+            raise StaleCaptureError(captured_source.snapshot_id)
         delete_source_records(connection, source.source_id)
-        insert_session_source(connection, source, bundle, captured_source)
+        insert_session_source(connection, source, bundle, captured_source, captured_bundle)
         if bundle.session:
             insert_rows(connection, "sessions", session_rows(bundle))
         insert_rows(connection, "raw_events", raw_event_rows(bundle))
@@ -53,6 +66,32 @@ def insert_parsed_bundle(
         insert_rows(connection, "file_activities", file_activity_rows(bundle))
         insert_rows(connection, "model_usage", model_usage_rows(bundle))
         insert_rows(connection, "parse_warnings", parse_warning_rows(bundle))
+
+
+def insert_untracked_parsed_bundle(
+    database_path: Path,
+    source: SessionSource,
+    bundle: ParsedSessionBundle,
+) -> None:
+    with write_connection(database_path) as connection, transaction(connection):
+        delete_source_records(connection, source.source_id)
+        insert_session_source(connection, source, bundle, None, None)
+        if bundle.session:
+            insert_rows(connection, "sessions", session_rows(bundle))
+        insert_rows(connection, "raw_events", raw_event_rows(bundle))
+        insert_rows(connection, "messages", message_rows(bundle))
+        insert_rows(connection, "tool_calls", tool_call_rows(bundle))
+        insert_rows(connection, "tool_results", tool_result_rows(bundle))
+        insert_rows(connection, "command_runs", command_run_rows(bundle))
+        insert_rows(connection, "file_activities", file_activity_rows(bundle))
+        insert_rows(connection, "model_usage", model_usage_rows(bundle))
+        insert_rows(connection, "parse_warnings", parse_warning_rows(bundle))
+
+
+class StaleCaptureError(RuntimeError):
+    def __init__(self, snapshot_id: str) -> None:
+        self.snapshot_id = snapshot_id
+        super().__init__(f"capture {snapshot_id} is no longer the latest source snapshot")
 
 
 def replace_analysis_rows(
@@ -118,6 +157,7 @@ def insert_session_source(
     source: SessionSource,
     bundle: ParsedSessionBundle,
     captured_source: CapturedSource | None,
+    captured_bundle: CapturedBundle | None,
 ) -> None:
     native_session_id = source.native_session_id
     if bundle.session and bundle.session.native_session_id:
@@ -147,7 +187,7 @@ def insert_session_source(
             native_session_id,
             source.parent_source_id,
             captured_source.snapshot_id if captured_source else None,
-            captured_source.snapshot_bundle_id if captured_source else None,
+            captured_bundle.snapshot_bundle_id if captured_bundle else None,
             metadata_json(source.metadata),
         ],
     )

@@ -52,10 +52,22 @@ class BaseAdapter(ABC):
     def parse_source(
         self,
         source: SessionSource,
-        source_bytes: bytes | None = None,
+        source_bytes: bytes,
     ) -> ParsedSessionBundle:
         msg = f"{self.display_name} parsing is not implemented yet."
         raise NotImplementedError(msg)
+
+    def parse_live_source(self, source: SessionSource) -> ParsedSessionBundle:
+        from .common import read_source_bytes
+
+        source_bytes = read_source_bytes(
+            Path(source.source_path).expanduser(),
+            agent_display_name=self.display_name,
+        )
+        return self.parse_source(source, source_bytes)
+
+    def source_for_captured_parse(self, source: SessionSource) -> SessionSource:
+        return source
 
     def source_for_path(self, path: Path) -> SessionSource:
         return SessionSource(

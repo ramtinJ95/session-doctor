@@ -345,7 +345,7 @@ def test_ingest_claude_root_fixture_writes_and_replaces_normalized_rows(tmp_path
     assert store.table_count("command_runs") == 1
     assert store.table_count("file_activities") == 3
     assert store.table_count("model_usage") == 2
-    assert store.table_count("parse_warnings") == 3
+    assert store.table_count("parse_warnings") == 4
 
 
 def test_ingest_claude_directory_selects_root_and_subagent_sessions(
@@ -489,8 +489,8 @@ def test_ingest_claude_topology_replaces_and_analyzes_all_sessions(tmp_path) -> 
         session_links = connection.execute(
             "SELECT is_sidechain, parent_session_id FROM sessions ORDER BY session_id"
         ).fetchall()
-    assert sum(parent_source_id is not None for _, parent_source_id in source_links) == 2
-    assert sum(parent_session_id is not None for _, parent_session_id in session_links) == 2
+    assert sum(parent_source_id is not None for _, parent_source_id in source_links) == 0
+    assert sum(parent_session_id is not None for _, parent_session_id in session_links) == 0
     assert sum(bool(is_sidechain) for is_sidechain, _ in session_links) == 2
 
     summaries = store.list_session_summaries()
@@ -1566,7 +1566,7 @@ def insert_batch_session(
         agent_name=agent_name,
         source_path=f"/tmp/{session_id}.jsonl",
     )
-    store.insert_parsed_bundle(
+    store.insert_untracked_parsed_bundle(
         source,
         ParsedSessionBundle(
             session=Session(

@@ -41,7 +41,7 @@ def session_record(
 
 def test_pi_parse_source_normalizes_session_raw_events_and_messages() -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
-    bundle = PiAdapter().parse_source(source_for_fixture(fixture_path))
+    bundle = PiAdapter().parse_live_source(source_for_fixture(fixture_path))
 
     assert bundle.session is not None
     assert bundle.session.native_session_id == "pi-session-1"
@@ -59,7 +59,7 @@ def test_pi_parse_source_normalizes_session_raw_events_and_messages() -> None:
 
 def test_pi_parse_source_preserves_message_metadata_and_block_types() -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
-    bundle = PiAdapter().parse_source(source_for_fixture(fixture_path))
+    bundle = PiAdapter().parse_live_source(source_for_fixture(fixture_path))
 
     assistant_message = next(
         message for message in bundle.messages if message.role is NormalizedRole.ASSISTANT
@@ -85,7 +85,7 @@ def test_pi_parse_source_raises_for_unreadable_source(tmp_path) -> None:
     missing_path = tmp_path / "missing.jsonl"
 
     with pytest.raises(SourceReadError, match="Unable to read Pi source"):
-        PiAdapter().parse_source(source_for_fixture(missing_path))
+        PiAdapter().parse_live_source(source_for_fixture(missing_path))
 
 
 def test_pi_parse_source_warns_when_session_record_is_missing(tmp_path) -> None:
@@ -103,7 +103,7 @@ def test_pi_parse_source_warns_when_session_record_is_missing(tmp_path) -> None:
     ]
     write_jsonl(session_path, records)
 
-    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+    bundle = PiAdapter().parse_live_source(source_for_fixture(session_path))
 
     assert bundle.session is not None
     assert bundle.session.native_session_id == "filename-session"
@@ -118,7 +118,7 @@ def test_pi_parse_source_does_not_use_source_folder_as_session_cwd(tmp_path) -> 
     records = [session_record("pi-session-no-cwd")]
     write_jsonl(session_path, records)
 
-    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+    bundle = PiAdapter().parse_live_source(source_for_fixture(session_path))
 
     assert bundle.session is not None
     assert bundle.session.cwd is None
@@ -128,7 +128,7 @@ def test_pi_parse_source_does_not_use_source_folder_as_session_cwd(tmp_path) -> 
 
 def test_pi_parse_source_normalizes_tools_commands_files_and_usage() -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
-    bundle = PiAdapter().parse_source(source_for_fixture(fixture_path))
+    bundle = PiAdapter().parse_live_source(source_for_fixture(fixture_path))
 
     assert [tool_call.name for tool_call in bundle.tool_calls] == [
         "bash",
@@ -239,7 +239,7 @@ def test_pi_parse_source_preserves_phase_partial_json_details_and_event_result_i
     ]
     write_jsonl(session_path, records)
 
-    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+    bundle = PiAdapter().parse_live_source(source_for_fixture(session_path))
 
     assistant_message = bundle.messages[0]
     assert assistant_message.metadata["phase"] == "final_answer"
@@ -302,7 +302,7 @@ def test_pi_parse_source_preserves_observed_non_file_tool_calls(tmp_path) -> Non
     ]
     write_jsonl(session_path, records)
 
-    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+    bundle = PiAdapter().parse_live_source(source_for_fixture(session_path))
 
     assert [tool_call.name for tool_call in bundle.tool_calls] == tool_names
     assert all(tool_call.arguments_hash is not None for tool_call in bundle.tool_calls)
@@ -351,7 +351,7 @@ def test_pi_parse_source_normalizes_exec_command_tool_result(tmp_path) -> None:
     ]
     write_jsonl(session_path, records)
 
-    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+    bundle = PiAdapter().parse_live_source(source_for_fixture(session_path))
 
     command_values = [
         (command.command, command.cwd, command.exit_code) for command in bundle.command_runs
@@ -381,7 +381,7 @@ def test_pi_parse_source_marks_tool_result_failed_from_structured_status(tmp_pat
     ]
     write_jsonl(session_path, records)
 
-    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+    bundle = PiAdapter().parse_live_source(source_for_fixture(session_path))
 
     assert bundle.tool_results[0].is_error is True
 
@@ -418,7 +418,7 @@ def test_pi_parse_source_marks_tool_result_failed_from_recursive_details(
     ]
     write_jsonl(session_path, records)
 
-    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+    bundle = PiAdapter().parse_live_source(source_for_fixture(session_path))
 
     assert bundle.tool_results[0].is_error is True
 
@@ -455,7 +455,7 @@ def test_pi_parse_source_does_not_mark_successful_tool_details_failed(
     ]
     write_jsonl(session_path, records)
 
-    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+    bundle = PiAdapter().parse_live_source(source_for_fixture(session_path))
 
     assert bundle.tool_results[0].is_error is False
 
@@ -515,7 +515,7 @@ def test_pi_parse_source_dedupes_non_adjacent_bash_execution(tmp_path) -> None:
     ]
     write_jsonl(session_path, records)
 
-    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+    bundle = PiAdapter().parse_live_source(source_for_fixture(session_path))
 
     assert [(command.command, command.exit_code) for command in bundle.command_runs] == [
         ("pytest -q", 1)
@@ -542,7 +542,7 @@ def test_pi_parse_source_preserves_idless_tool_calls_without_collisions(tmp_path
     ]
     write_jsonl(session_path, records)
 
-    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+    bundle = PiAdapter().parse_live_source(source_for_fixture(session_path))
 
     assert len(bundle.tool_calls) == 2
     assert len({tool_call.tool_call_id for tool_call in bundle.tool_calls}) == 2
@@ -594,7 +594,7 @@ def test_pi_parse_source_normalizes_apply_patch_file_activity_and_result_hash(
     ]
     write_jsonl(session_path, records)
 
-    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+    bundle = PiAdapter().parse_live_source(source_for_fixture(session_path))
 
     assert [(activity.path, activity.operation) for activity in bundle.file_activities] == [
         ("src/example.py", "update"),
@@ -633,7 +633,7 @@ def test_pi_parse_source_hashes_top_level_edit_text_lengths(tmp_path) -> None:
     ]
     write_jsonl(session_path, records)
 
-    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+    bundle = PiAdapter().parse_live_source(source_for_fixture(session_path))
 
     assert [(activity.path, activity.operation) for activity in bundle.file_activities] == [
         ("src/example.py", "update")
@@ -673,7 +673,7 @@ def test_pi_parse_source_allows_repeated_file_activity_in_one_message(tmp_path) 
     ]
     write_jsonl(session_path, records)
 
-    bundle = PiAdapter().parse_source(source_for_fixture(session_path))
+    bundle = PiAdapter().parse_live_source(source_for_fixture(session_path))
 
     assert len(bundle.file_activities) == 2
     assert len({activity.file_activity_id for activity in bundle.file_activities}) == 2
@@ -681,7 +681,7 @@ def test_pi_parse_source_allows_repeated_file_activity_in_one_message(tmp_path) 
 
 def test_pi_parse_source_counts_metadata_only_rows_without_warnings() -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
-    bundle = PiAdapter().parse_source(source_for_fixture(fixture_path))
+    bundle = PiAdapter().parse_live_source(source_for_fixture(fixture_path))
 
     assert bundle.session is not None
     assert bundle.session.metadata["pi_metadata_only_counts"] == {
@@ -698,7 +698,7 @@ def test_pi_parse_source_counts_metadata_only_rows_without_warnings() -> None:
 
 def test_pi_parse_source_emits_warnings_without_stopping() -> None:
     fixture_path = FIXTURE_DIR / "basic-session.jsonl"
-    bundle = PiAdapter().parse_source(source_for_fixture(fixture_path))
+    bundle = PiAdapter().parse_live_source(source_for_fixture(fixture_path))
 
     warning_codes = {warning.metadata["code"] for warning in bundle.parse_warnings}
     assert warning_codes == {

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from io import StringIO
 from pathlib import Path
 from typing import Any, cast
 
@@ -20,50 +19,41 @@ def read_jsonl_records(
     source_path: Path,
     *,
     agent_display_name: str,
-    source_bytes: bytes | None = None,
+    source_bytes: bytes,
 ) -> tuple[list[JsonRecord], list[ParseWarning]]:
     records: list[JsonRecord] = []
     warnings: list[ParseWarning] = []
     try:
-        if source_bytes is None:
-            file = source_path.open(encoding="utf-8")
-        else:
-            file = StringIO(source_bytes.decode("utf-8"))
-        with file:
-            for record_index, line in enumerate(file):
-                try:
-                    parsed = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    warnings.append(
-                        warning_for_record(
-                            source,
-                            record_index,
-                            "malformed_json",
-                            f"Malformed JSONL record: {exc.msg}",
-                            {"line": exc.lineno, "column": exc.colno},
-                        )
+        for record_index, line in enumerate(source_bytes.decode("utf-8").splitlines()):
+            try:
+                parsed = json.loads(line)
+            except json.JSONDecodeError as exc:
+                warnings.append(
+                    warning_for_record(
+                        source,
+                        record_index,
+                        "malformed_json",
+                        f"Malformed JSONL record: {exc.msg}",
+                        {"line": exc.lineno, "column": exc.colno},
                     )
-                    continue
-                if not isinstance(parsed, dict):
-                    warnings.append(
-                        warning_for_record(
-                            source,
-                            record_index,
-                            "non_object_record",
-                            f"{agent_display_name} record is not a JSON object",
-                            {"json_type": type(parsed).__name__},
-                        )
+                )
+                continue
+            if not isinstance(parsed, dict):
+                warnings.append(
+                    warning_for_record(
+                        source,
+                        record_index,
+                        "non_object_record",
+                        f"{agent_display_name} record is not a JSON object",
+                        {"json_type": type(parsed).__name__},
                     )
-                    continue
-                records.append((record_index, parsed))
+                )
+                continue
+            records.append((record_index, parsed))
     except UnicodeDecodeError as exc:
         raise SourceFormatError(
             source_path,
             f"Unable to decode {agent_display_name} source as UTF-8 at byte {exc.start}",
-        ) from exc
-    except OSError as exc:
-        raise SourceReadError(
-            source_path, f"Unable to read {agent_display_name} source: {exc}"
         ) from exc
     return records, warnings
 
