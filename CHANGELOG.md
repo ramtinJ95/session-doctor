@@ -5,6 +5,8 @@ artifact, payload, and CLI contracts may change incompatibly during dogfooding.
 
 ## Unreleased
 
+- replace v1 scores and classifications with deterministic event-anchored task
+  episode segmentation, and make unfinished downstream projections explicit
 - add deterministic blinded boundary packet export, offline judge import,
   panel/audit/human/reference provenance, and a stratified pilot manifest
 - persist source-local ordering, capability/instrumentation evidence, project

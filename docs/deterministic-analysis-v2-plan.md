@@ -1073,6 +1073,22 @@ Gate:
 
 ### PR 7: Episode Segmenter And V1 Analysis Removal
 
+Implementation contract:
+
+- schema version 10 removes all v1 score, feature, classification, and analysis
+  run tables and producers;
+- `segmentation-v1` uses Unicode NFKC/casefolded broad-goal terms and the
+  accepted conservative precedence, with immutable message/source-event
+  anchors and no elapsed-time rule;
+- explicit replacement can split without closure and emits
+  interrupted-unknown observation evidence for the prior episode;
+- ambiguous boundaries merge and remain inspectable; active/incomplete
+  lifecycle state makes episodes provisional;
+- `analyze SESSION_ID` emits only episode, boundary, lifecycle, and observation
+  values;
+- `summary`, `trends`, `projects list`, `report`, and `graph` fail immediately
+  with the deliberate rebuild message and have no v1 fallback.
+
 Deliverables:
 
 - add event-anchored episode and boundary models;

@@ -31,16 +31,12 @@ dependencies or gold evidence by themselves.
 
 ## Current Transition
 
-The repository currently contains the deterministic v1 session analyzer,
-classifications, scores, reports, graphs, summaries, and trends. They remain
-operational only until PR 7 of the v2 roadmap replaces the analyzer.
-
-At PR 7:
+PR 7 completed the analyzer cutover:
 
 - v1 labels, scores, derived tables, payloads, and tests are deleted;
 - `analyze` switches to the episode/lifecycle/observation contract;
 - `summary`, `trends`, `report`, `graph`, and `projects list` remain registered
-  but fail before opening the database with exit code 2 and this message shape:
+  but fail before opening the database with exit code 1 and this message shape:
 
   ```text
   <command> is unavailable during the deterministic analysis v2 rebuild; see docs/deterministic-analysis-v2-plan.md.
@@ -52,6 +48,12 @@ At PR 7:
 - restored v2 analysis surfaces are marked experimental until PR 23 passes the
   untouched final-test gate.
 
+Schema version 10 drops the four v1 analysis tables. `segmentation-v1` emits
+event-anchored task episodes and boundary annotations using explicit-new-task,
+correction/repeat, closure-plus-topic-shift, and conservative ambiguous-merge
+precedence. Elapsed time is never a split signal. Active or incomplete
+lifecycle state makes episodes provisional without erasing observations.
+
 `projects list` is unavailable because its current payload includes v1 analysis
 coverage/version fields. PR 21 restores it as a normalization-only project
 identity view with no derived-analysis dependency.
@@ -59,14 +61,6 @@ identity view with no derived-analysis dependency.
 Between PR 2 and PR 3, Claude parent topology and persisted tool-result
 enrichment were explicitly unavailable rather than derived from uncaptured live
 sidecars. Schema version 6 restores them from exact multi-file bundle members.
-
-### Phase 11: Standalone Visual Reports And Trend Dashboards
-
-Until PR 7 removes the dependent v1 projections, renderers consume typed projections only.
-HTML writes one self-contained offline file and does not query DuckDB. Graph remains JSON-only.
-These are current output-safety requirements, not references to the historical
-phase document. The v2 report/graph/trend replacements inherit them when PRs 20-22 restore
-those surfaces.
 
 ## Architecture
 
