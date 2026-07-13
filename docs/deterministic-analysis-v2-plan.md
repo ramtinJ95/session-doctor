@@ -888,10 +888,13 @@ Implementation decisions:
 - non-terminal sources settle only after consecutive identical complete bundle
   captures in the same lineage spanning 30 seconds;
 - `session-doctor snapshots list|show|replay|prune` is the public history
-  surface; raw replay requires an explicit output path;
+  surface; raw replay requires an explicit non-existing output path unless
+  `--overwrite` is supplied, and `--bundle` exports an ordered manifest plus
+  every captured member to a new directory;
 - pruning accepts only a bundle's primary snapshot, blocks normalized
-  dependencies unless `--force`, reports forced dependency loss, removes the
-  complete bundle capture, and runs DuckDB `CHECKPOINT`;
+  dependencies unless `--force`, reports affected bundles, sources, sessions,
+  analysis runs, and derived-row counts, removes that bundle capture
+  atomically, and runs DuckDB `CHECKPOINT` after commit;
 - Claude bundles capture transcripts, subagent metadata, persisted tool
   results, and related session files before parsing; topology and sidecar
   evidence are reconstructed only from captured bytes.

@@ -290,6 +290,12 @@ def test_snapshots_cli_lists_replays_and_prunes_exact_history(tmp_path) -> None:
     snapshot_id = rows[0]["snapshot_id"]
     assert rows[0]["is_latest"] is True
     assert rows[0]["lifecycle_state"] in {"terminal_observed", "possibly_active"}
+    show_result = runner.invoke(
+        app,
+        ["snapshots", "show", snapshot_id, "--db", str(database_path)],
+    )
+    assert show_result.exit_code == 0
+    assert json.loads(show_result.stdout)["members"][0]["member_role"] == "primary"
 
     replay_path = tmp_path / "replayed.jsonl"
     replay_result = runner.invoke(
@@ -306,6 +312,20 @@ def test_snapshots_cli_lists_replays_and_prunes_exact_history(tmp_path) -> None:
     )
     assert replay_result.exit_code == 0
     assert replay_path.read_bytes() == fixture_path.read_bytes()
+    refused_overwrite = runner.invoke(
+        app,
+        [
+            "snapshots",
+            "replay",
+            snapshot_id,
+            "--db",
+            str(database_path),
+            "--output",
+            str(replay_path),
+        ],
+    )
+    assert refused_overwrite.exit_code == 2
+    assert "--overwrite" in refused_overwrite.stderr
 
     blocked = runner.invoke(
         app,
@@ -318,7 +338,34 @@ def test_snapshots_cli_lists_replays_and_prunes_exact_history(tmp_path) -> None:
         ["snapshots", "prune", snapshot_id, "--db", str(database_path), "--force"],
     )
     assert forced.exit_code == 0
+    assert "Force prune dependencies" in forced.stdout
+    assert '"sessions"' in forced.stdout
     assert DuckDBStore(database_path).table_count("source_snapshots") == 0
+
+
+def test_malformed_trailing_record_keeps_snapshot_incomplete(tmp_path) -> None:
+    source_path = tmp_path / "truncated.jsonl"
+    source_path.write_bytes(
+        (CODEX_FIXTURE_DIR / "basic-session.jsonl").read_bytes() + b'{"truncated":'
+    )
+    database_path = tmp_path / "session-doctor.duckdb"
+
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "codex",
+            "--source",
+            str(source_path),
+            "--db",
+            str(database_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    snapshots = DuckDBStore(database_path).list_snapshots()
+    assert snapshots[0].lifecycle_state == "snapshot_incomplete"
 
 
 def test_ingest_resolves_source_path_before_deriving_ids(tmp_path) -> None:
@@ -613,15 +660,6 @@ def test_claude_multifile_bundle_replays_without_live_files(tmp_path) -> None:
                 """
             ).fetchall()
         ]
-        duplicate_capture_count = connection.execute(
-            """
-            SELECT count(*) FROM (
-                SELECT source_path FROM source_snapshots
-                GROUP BY source_path HAVING count(*) > 1
-            )
-            """
-        ).fetchone()
-    assert duplicate_capture_count == (0,)
     rmtree(source_root)
 
     adapter = ClaudeCodeAdapter()
@@ -666,11 +704,31 @@ def test_claude_multifile_bundle_replays_without_live_files(tmp_path) -> None:
     root_summary = next(
         row for row in store.list_snapshots() if row.source_id == root_snapshot.source_id
     )
+    bundle_output = tmp_path / "replayed-bundle"
+    bundle_replay = runner.invoke(
+        app,
+        [
+            "snapshots",
+            "replay",
+            root_summary.snapshot_id,
+            "--db",
+            str(database_path),
+            "--output",
+            str(bundle_output),
+            "--bundle",
+        ],
+    )
+    assert bundle_replay.exit_code == 0
+    manifest = json.loads((bundle_output / "manifest.json").read_text())
+    assert manifest[0]["member_role"] == "primary"
+    assert any(row["member_role"] == "tool_result" for row in manifest)
     with pytest.raises(SnapshotPruneBlocked):
         store.prune_snapshot(root_summary.snapshot_id)
     prune_result = store.prune_snapshot(root_summary.snapshot_id, force=True)
-    assert len(prune_result.dependent_source_ids) == 3
-    assert store.table_count("source_snapshots") == 0
+    assert len(prune_result.dependent_source_ids) == 1
+    assert store.table_count("snapshot_bundles") == 2
+    assert store.table_count("sessions") == 2
+    assert store.snapshot_summary(root_summary.snapshot_id) is None
 
 
 def test_ingest_single_file_fails_immediately_on_recoverable_source_error(

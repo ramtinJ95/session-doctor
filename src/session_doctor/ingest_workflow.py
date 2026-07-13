@@ -7,7 +7,7 @@ from pathlib import Path
 
 from rich.console import Console
 
-from .adapters import BaseAdapter, RecoverableSourceError
+from .adapters import BaseAdapter, ParsedSessionBundle, RecoverableSourceError
 from .adapters.base import CapturedAdapterMember
 from .adapters.codex import (
     CODEX_MESSAGE_SOURCE_EVENT_MSG_FALLBACK,
@@ -15,7 +15,7 @@ from .adapters.codex import (
 )
 from .adapters.common import read_source_bytes
 from .schemas.sessions import SessionSource
-from .store import BundleMemberCapture, CapturedSource, DuckDBStore
+from .store import BundleMemberCapture, DuckDBStore
 
 
 @dataclass
@@ -46,19 +46,6 @@ class IngestSummary:
     skipped_sources: tuple[SkippedSource, ...] = ()
 
 
-@dataclass(frozen=True)
-class CaptureCacheEntry:
-    source_bytes: bytes
-    captured_source: CapturedSource
-    status: str
-    started_at: datetime
-    completed_at: datetime
-    modified_before: datetime | None
-    modified_after: datetime | None
-    signature_before: tuple[int, int] | None
-    signature_after: tuple[int, int] | None
-
-
 def ingest_sources(
     adapter: BaseAdapter,
     sources: list[SessionSource],
@@ -76,7 +63,6 @@ def ingest_sources(
             sorted(Counter(source.source_kind.value for source in sources).items())
         ),
     )
-    capture_cache: dict[str, CaptureCacheEntry] = {}
 
     for session_source in sources:
         captured_parse_source = adapter.source_for_captured_parse(session_source)
@@ -90,51 +76,24 @@ def ingest_sources(
                 agent_display_name=adapter.display_name,
             )
             primary_signature_after = file_capture_signature(primary_path)
-            primary_cache_key = str(primary_path.resolve())
-            cached_primary = capture_cache.get(primary_cache_key)
-            if cached_primary is not None and cached_primary.source_bytes == source_bytes:
-                captured_source = cached_primary.captured_source
-                stored_primary_source = store.load_snapshot_source(captured_source.snapshot_id)
-                if stored_primary_source is None:
-                    raise RuntimeError("cached source snapshot descriptor is missing")
-                captured_parse_source = stored_primary_source
-                primary_started_at = cached_primary.started_at
-                primary_signature_before = cached_primary.signature_before
-                primary_signature_after = cached_primary.signature_after
-            else:
-                captured_source = store.capture_source(
-                    captured_parse_source,
-                    source_bytes,
-                    native_modified_at=primary_before,
-                    captured_at=primary_started_at,
-                )
-                capture_cache[primary_cache_key] = CaptureCacheEntry(
-                    source_bytes=source_bytes,
-                    captured_source=captured_source,
-                    status=(
-                        "changed_during_capture"
-                        if primary_signature_before != primary_signature_after
-                        else "captured"
-                    ),
-                    started_at=primary_started_at,
-                    completed_at=datetime.now(UTC),
-                    modified_before=primary_before,
-                    modified_after=file_modified_at(primary_path),
-                    signature_before=primary_signature_before,
-                    signature_after=primary_signature_after,
-                )
+            captured_source = store.capture_source(
+                captured_parse_source,
+                source_bytes,
+                native_modified_at=primary_before,
+                captured_at=primary_started_at,
+            )
             adapter_members, bundle_members = capture_bundle_members(
                 adapter,
                 captured_parse_source,
                 source_bytes,
                 store,
-                capture_cache,
             )
             prepared_source = adapter.prepare_captured_source(
                 captured_parse_source,
                 adapter_members,
             )
             primary_changed = primary_signature_before != primary_signature_after
+            primary_capture_status = "changed_during_capture" if primary_changed else "captured"
             aggregate_capture_status = (
                 "skewed"
                 if primary_changed
@@ -151,6 +110,10 @@ def ingest_sources(
             )
             try:
                 bundle = adapter.parse_source(prepared_source, source_bytes)
+                if aggregate_capture_status == "complete" and parse_snapshot_incomplete(
+                    bundle, source_bytes
+                ):
+                    aggregate_capture_status = "incomplete"
             except Exception:
                 failed_bundle = store.create_single_source_bundle(
                     captured_parse_source,
@@ -158,6 +121,7 @@ def ingest_sources(
                     f"parse-failed:{captured_parse_source.source_id}",
                     native_identity_status="fallback_parse_failed",
                     capture_status="parse_failed",
+                    primary_capture_status=primary_capture_status,
                     capture_evidence={
                         "primary_signature_before": primary_signature_before,
                         "primary_signature_after": primary_signature_after,
@@ -194,6 +158,7 @@ def ingest_sources(
             captured_source,
             native_session_identity,
             capture_status=aggregate_capture_status,
+            primary_capture_status=primary_capture_status,
             capture_evidence={
                 "primary_signature_before": primary_signature_before,
                 "primary_signature_after": primary_signature_after,
@@ -245,7 +210,6 @@ def capture_bundle_members(
     primary_source: SessionSource,
     primary_bytes: bytes,
     store: DuckDBStore,
-    capture_cache: dict[str, CaptureCacheEntry],
 ) -> tuple[tuple[CapturedAdapterMember, ...], tuple[BundleMemberCapture, ...]]:
     adapter_members: list[CapturedAdapterMember] = [
         CapturedAdapterMember(primary_source, "primary", primary_bytes)
@@ -255,32 +219,6 @@ def capture_bundle_members(
         adapter.bundle_member_sources(primary_source, primary_bytes), start=1
     ):
         path = Path(member_source.source_path).expanduser()
-        cache_key = str(path.resolve())
-        cached = capture_cache.get(cache_key)
-        if cached is not None:
-            adapter_members.append(
-                CapturedAdapterMember(member_source, member_role, cached.source_bytes)
-            )
-            bundle_members.append(
-                BundleMemberCapture(
-                    source_id=member_source.source_id,
-                    source_path=member_source.source_path,
-                    member_role=member_role,
-                    member_capture_status=cached.status,
-                    capture_order=capture_order,
-                    capture_started_at=cached.started_at,
-                    capture_completed_at=cached.completed_at,
-                    captured_source=cached.captured_source,
-                    native_modified_before=cached.modified_before,
-                    native_modified_after=cached.modified_after,
-                    evidence={
-                        "signature_before": cached.signature_before,
-                        "signature_after": cached.signature_after,
-                        "reused_within_ingest": True,
-                    },
-                )
-            )
-            continue
         started_at = datetime.now(UTC)
         signature_before = file_capture_signature(path)
         modified_before = file_modified_at(path)
@@ -305,17 +243,6 @@ def capture_bundle_members(
                 captured_at=started_at,
             )
             adapter_members.append(CapturedAdapterMember(member_source, member_role, member_bytes))
-            capture_cache[cache_key] = CaptureCacheEntry(
-                source_bytes=member_bytes,
-                captured_source=captured,
-                status=status,
-                started_at=started_at,
-                completed_at=completed_at,
-                modified_before=modified_before,
-                modified_after=modified_after,
-                signature_before=signature_before,
-                signature_after=signature_after,
-            )
         bundle_members.append(
             BundleMemberCapture(
                 source_id=member_source.source_id,
@@ -350,3 +277,16 @@ def file_capture_signature(path: Path) -> tuple[int, int] | None:
     except OSError:
         return None
     return stat.st_size, stat.st_mtime_ns
+
+
+def parse_snapshot_incomplete(bundle: ParsedSessionBundle, source_bytes: bytes) -> bool:
+    source_lines = source_bytes.decode("utf-8").splitlines()
+    last_record_index = max(len(source_lines) - 1, 0)
+    last_line = source_lines[-1].rstrip() if source_lines else ""
+    if last_line.endswith(("}", "]")):
+        return False
+    return any(
+        warning.metadata.get("code") == "malformed_json"
+        and warning.record_index == last_record_index
+        for warning in bundle.parse_warnings
+    )

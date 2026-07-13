@@ -297,8 +297,8 @@ CREATE_TABLE_STATEMENTS = (
         native_session_id VARCHAR,
         parent_source_id VARCHAR,
         source_metadata_json VARCHAR NOT NULL DEFAULT '{}',
-        logical_source_id VARCHAR NOT NULL REFERENCES logical_sources(logical_source_id),
-        blob_id VARCHAR NOT NULL REFERENCES source_blobs(blob_id),
+        logical_source_id VARCHAR NOT NULL,
+        blob_id VARCHAR NOT NULL,
         snapshot_content_id VARCHAR NOT NULL,
         capture_sequence BIGINT NOT NULL CHECK (capture_sequence > 0),
         captured_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
@@ -316,7 +316,7 @@ CREATE_TABLE_STATEMENTS = (
         bundle_content_id VARCHAR NOT NULL,
         agent_name VARCHAR NOT NULL,
         native_session_identity VARCHAR NOT NULL,
-        primary_snapshot_id VARCHAR NOT NULL REFERENCES source_snapshots(snapshot_id),
+        primary_snapshot_id VARCHAR NOT NULL,
         native_identity_status VARCHAR NOT NULL
             CHECK (native_identity_status IN ('observed', 'fallback_parse_failed')),
         native_bundle_capture_sequence BIGINT NOT NULL
@@ -329,23 +329,21 @@ CREATE_TABLE_STATEMENTS = (
     """,
     """
     CREATE TABLE IF NOT EXISTS snapshot_bundle_members (
-        snapshot_bundle_id VARCHAR NOT NULL
-            REFERENCES snapshot_bundles(snapshot_bundle_id),
-        logical_source_id VARCHAR NOT NULL REFERENCES logical_sources(logical_source_id),
+        snapshot_bundle_id VARCHAR NOT NULL,
+        logical_source_id VARCHAR NOT NULL,
         snapshot_id VARCHAR NOT NULL,
         capture_order INTEGER NOT NULL CHECK (capture_order >= 0),
         member_role VARCHAR NOT NULL,
-        member_capture_status VARCHAR NOT NULL CHECK (member_capture_status IN ('captured')),
+        member_capture_status VARCHAR NOT NULL CHECK (
+            member_capture_status IN ('captured', 'changed_during_capture')
+        ),
         PRIMARY KEY (snapshot_bundle_id, logical_source_id),
-        UNIQUE (snapshot_bundle_id, capture_order),
-        FOREIGN KEY (snapshot_id, logical_source_id)
-            REFERENCES source_snapshots(snapshot_id, logical_source_id)
+        UNIQUE (snapshot_bundle_id, capture_order)
     )
     """,
     """
     CREATE TABLE IF NOT EXISTS bundle_capture_metadata (
-        snapshot_bundle_id VARCHAR PRIMARY KEY
-            REFERENCES snapshot_bundles(snapshot_bundle_id),
+        snapshot_bundle_id VARCHAR PRIMARY KEY,
         lineage_id VARCHAR NOT NULL,
         lineage_capture_sequence BIGINT NOT NULL CHECK (lineage_capture_sequence > 0),
         previous_lineage_bundle_id VARCHAR,
@@ -360,11 +358,10 @@ CREATE_TABLE_STATEMENTS = (
     """,
     """
     CREATE TABLE IF NOT EXISTS bundle_member_capture_metadata (
-        snapshot_bundle_id VARCHAR NOT NULL
-            REFERENCES snapshot_bundles(snapshot_bundle_id),
+        snapshot_bundle_id VARCHAR NOT NULL,
         capture_order INTEGER NOT NULL CHECK (capture_order >= 0),
-        logical_source_id VARCHAR REFERENCES logical_sources(logical_source_id),
-        snapshot_id VARCHAR REFERENCES source_snapshots(snapshot_id),
+        logical_source_id VARCHAR,
+        snapshot_id VARCHAR,
         source_id VARCHAR NOT NULL,
         source_path VARCHAR NOT NULL,
         member_role VARCHAR NOT NULL,
@@ -388,8 +385,7 @@ CREATE_TABLE_STATEMENTS = (
     """
     CREATE TABLE IF NOT EXISTS lifecycle_observations (
         lifecycle_observation_id VARCHAR PRIMARY KEY,
-        snapshot_bundle_id VARCHAR NOT NULL UNIQUE
-            REFERENCES snapshot_bundles(snapshot_bundle_id),
+        snapshot_bundle_id VARCHAR NOT NULL UNIQUE,
         lifecycle_policy_version VARCHAR NOT NULL,
         state VARCHAR NOT NULL CHECK (
             state IN (
@@ -413,11 +409,7 @@ CREATE_TABLE_STATEMENTS = (
         snapshot_id VARCHAR,
         snapshot_bundle_id VARCHAR,
         CHECK ((snapshot_id IS NULL) = (snapshot_bundle_id IS NULL)),
-        metadata_json VARCHAR NOT NULL DEFAULT '{}',
-        FOREIGN KEY (snapshot_id, source_id)
-            REFERENCES source_snapshots(snapshot_id, source_id),
-        FOREIGN KEY (snapshot_bundle_id, snapshot_id)
-            REFERENCES snapshot_bundles(snapshot_bundle_id, primary_snapshot_id)
+        metadata_json VARCHAR NOT NULL DEFAULT '{}'
     )
     """,
     """

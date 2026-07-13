@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import duckdb
+
 from .connection import read_connection, transaction, write_connection
 from .lifecycle import LIFECYCLE_STATES
 from .writers import delete_source_records
@@ -29,38 +31,121 @@ class PruneResult:
     deleted_bundle_count: int
     deleted_blob_count: int
     dependent_source_ids: tuple[str, ...]
+    dependent_session_ids: tuple[str, ...]
+    dependent_analysis_run_ids: tuple[str, ...]
+    derived_row_counts: dict[str, int]
     forced: bool
+    checkpoint_completed: bool
+
+
+@dataclass(frozen=True)
+class PruneDependencies:
+    bundle_ids: tuple[str, ...]
+    source_ids: tuple[str, ...]
+    session_ids: tuple[str, ...]
+    analysis_run_ids: tuple[str, ...]
+    derived_row_counts: dict[str, int]
 
 
 class SnapshotPruneBlocked(RuntimeError):
-    def __init__(self, snapshot_id: str, dependent_source_ids: tuple[str, ...]) -> None:
+    def __init__(self, snapshot_id: str, dependencies: PruneDependencies) -> None:
         self.snapshot_id = snapshot_id
-        self.dependent_source_ids = dependent_source_ids
+        self.dependencies = dependencies
+        self.dependent_source_ids = dependencies.source_ids
         super().__init__(
             f"snapshot {snapshot_id} has dependent normalized sources: "
-            f"{', '.join(dependent_source_ids)}"
+            f"{', '.join(dependencies.source_ids)}"
         )
 
 
-def snapshot_dependencies(database_path: Path, snapshot_id: str) -> tuple[str, ...]:
+def snapshot_dependencies(database_path: Path, snapshot_id: str) -> PruneDependencies:
     with read_connection(database_path) as connection:
         exists = connection.execute(
             "SELECT 1 FROM source_snapshots WHERE snapshot_id = ?", [snapshot_id]
         ).fetchone()
         if exists is None:
             raise ValueError(f"Snapshot not found: {snapshot_id}")
-        rows = connection.execute(
+        bundle_rows = connection.execute(
             """
-            SELECT DISTINCT ss.source_id
-            FROM session_sources AS ss
-            JOIN snapshot_bundle_members AS m
-              ON m.snapshot_bundle_id = ss.snapshot_bundle_id
-            WHERE m.snapshot_id = ? OR ss.snapshot_id = ?
-            ORDER BY ss.source_id
+            SELECT snapshot_bundle_id FROM snapshot_bundles
+            WHERE primary_snapshot_id = ? ORDER BY snapshot_bundle_id
             """,
-            [snapshot_id, snapshot_id],
+            [snapshot_id],
         ).fetchall()
-    return tuple(str(row[0]) for row in rows)
+        if not bundle_rows:
+            raise ValueError(
+                "Only primary snapshots can be pruned; prune the owning bundle's primary"
+            )
+        bundle_ids = tuple(str(row[0]) for row in bundle_rows)
+        source_rows = connection.execute(
+            """
+            SELECT source_id FROM session_sources
+            WHERE snapshot_bundle_id IN (SELECT unnest(?))
+            ORDER BY source_id
+            """,
+            [list(bundle_ids)],
+        ).fetchall()
+        source_ids = tuple(str(row[0]) for row in source_rows)
+        session_rows = (
+            connection.execute(
+                "SELECT session_id FROM sessions WHERE source_id IN (SELECT unnest(?)) "
+                "ORDER BY session_id",
+                [list(source_ids)],
+            ).fetchall()
+            if source_ids
+            else []
+        )
+        session_ids = tuple(str(row[0]) for row in session_rows)
+        analysis_rows = (
+            connection.execute(
+                "SELECT analysis_run_id FROM analysis_runs "
+                "WHERE session_id IN (SELECT unnest(?)) ORDER BY analysis_run_id",
+                [list(session_ids)],
+            ).fetchall()
+            if session_ids
+            else []
+        )
+        analysis_run_ids = tuple(str(row[0]) for row in analysis_rows)
+        derived_row_counts: dict[str, int] = {
+            "session_sources": len(source_ids),
+            "sessions": len(session_ids),
+        }
+        for table_name in ("raw_events", "parse_warnings"):
+            if not source_ids:
+                derived_row_counts[table_name] = 0
+                continue
+            count_row = connection.execute(
+                f"SELECT count(*) FROM {table_name} WHERE source_id IN (SELECT unnest(?))",
+                [list(source_ids)],
+            ).fetchone()
+            derived_row_counts[table_name] = int(count_row[0]) if count_row else 0
+        for table_name in (
+            "messages",
+            "tool_calls",
+            "tool_results",
+            "command_runs",
+            "file_activities",
+            "model_usage",
+            "analysis_runs",
+            "message_features",
+            "session_features",
+            "session_classifications",
+        ):
+            if not session_ids:
+                derived_row_counts[table_name] = 0
+                continue
+            count_row = connection.execute(
+                f"SELECT count(*) FROM {table_name} WHERE session_id IN (SELECT unnest(?))",
+                [list(session_ids)],
+            ).fetchone()
+            derived_row_counts[table_name] = int(count_row[0]) if count_row else 0
+    return PruneDependencies(
+        bundle_ids=bundle_ids,
+        source_ids=source_ids,
+        session_ids=session_ids,
+        analysis_run_ids=analysis_run_ids,
+        derived_row_counts=derived_row_counts,
+    )
 
 
 def list_snapshots(
@@ -83,23 +168,31 @@ def list_snapshots(
     with read_connection(database_path) as connection:
         rows = connection.execute(
             f"""
-            WITH latest AS (
+            WITH candidate AS (
+                SELECT s.snapshot_id, b.snapshot_bundle_id, s.source_id,
+                    s.agent_name, s.source_path, s.logical_source_id,
+                    s.capture_sequence, s.captured_at, l.state,
+                    c.capture_status, blobs.original_byte_length
+                FROM source_snapshots AS s
+                JOIN snapshot_bundles AS b ON b.primary_snapshot_id = s.snapshot_id
+                JOIN bundle_capture_metadata AS c USING (snapshot_bundle_id)
+                JOIN lifecycle_observations AS l USING (snapshot_bundle_id)
+                JOIN source_blobs AS blobs ON blobs.blob_id = s.blob_id
+                {where}
+            ),
+            latest AS (
                 SELECT logical_source_id, max(capture_sequence) AS capture_sequence
-                FROM source_snapshots
+                FROM candidate
                 GROUP BY logical_source_id
             )
-            SELECT s.snapshot_id, b.snapshot_bundle_id, s.source_id, s.agent_name,
-                s.source_path, s.capture_sequence, s.captured_at, l.state,
-                c.capture_status, blobs.original_byte_length,
-                s.capture_sequence = latest.capture_sequence AS is_latest
-            FROM source_snapshots AS s
-            JOIN snapshot_bundles AS b ON b.primary_snapshot_id = s.snapshot_id
-            JOIN bundle_capture_metadata AS c USING (snapshot_bundle_id)
-            JOIN lifecycle_observations AS l USING (snapshot_bundle_id)
-            JOIN source_blobs AS blobs ON blobs.blob_id = s.blob_id
-            JOIN latest USING (logical_source_id)
-            {where}
-            ORDER BY s.captured_at DESC, s.capture_sequence DESC, s.snapshot_id
+            SELECT candidate.snapshot_id, candidate.snapshot_bundle_id,
+                candidate.source_id, candidate.agent_name, candidate.source_path,
+                candidate.capture_sequence, candidate.captured_at, candidate.state,
+                candidate.capture_status, candidate.original_byte_length,
+                candidate.capture_sequence = latest.capture_sequence AS is_latest
+            FROM candidate JOIN latest USING (logical_source_id)
+            ORDER BY candidate.captured_at DESC, candidate.capture_sequence DESC,
+                candidate.snapshot_id
             """,
             params,
         ).fetchall()
@@ -144,144 +237,99 @@ def latest_snapshot(
 
 
 def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> PruneResult:
-    with read_connection(database_path) as connection:
-        snapshot = connection.execute(
+    dependencies = snapshot_dependencies(database_path, snapshot_id)
+    if dependencies.source_ids and not force:
+        raise SnapshotPruneBlocked(snapshot_id, dependencies)
+
+    bundle_id = dependencies.bundle_ids[0]
+    with write_connection(database_path) as connection, transaction(connection):
+        bundle_row = connection.execute(
             """
-            SELECT logical_source_id, blob_id, previous_snapshot_id
-            FROM source_snapshots WHERE snapshot_id = ?
+            SELECT previous_snapshot_bundle_id FROM snapshot_bundles
+            WHERE snapshot_bundle_id = ?
             """,
-            [snapshot_id],
+            [bundle_id],
         ).fetchone()
-        if snapshot is None:
-            raise ValueError(f"Snapshot not found: {snapshot_id}")
-        bundle_rows = connection.execute(
+        previous_bundle_id = bundle_row[0] if bundle_row else None
+        lineage_row = connection.execute(
             """
-            SELECT DISTINCT b.snapshot_bundle_id, b.previous_snapshot_bundle_id
-            FROM snapshot_bundles AS b
-            JOIN snapshot_bundle_members AS m USING (snapshot_bundle_id)
-            WHERE m.snapshot_id = ? OR b.primary_snapshot_id = ?
-            ORDER BY b.snapshot_bundle_id
+            SELECT previous_lineage_bundle_id FROM bundle_capture_metadata
+            WHERE snapshot_bundle_id = ?
             """,
-            [snapshot_id, snapshot_id],
-        ).fetchall()
-        primary_bundle = connection.execute(
-            "SELECT 1 FROM snapshot_bundles WHERE primary_snapshot_id = ? LIMIT 1",
-            [snapshot_id],
+            [bundle_id],
         ).fetchone()
-        if primary_bundle is None:
-            raise ValueError(
-                "Only primary snapshots can be pruned; prune the owning bundle's primary"
-            )
-        bundle_ids = [str(row[0]) for row in bundle_rows]
+        previous_lineage_bundle_id = lineage_row[0] if lineage_row else None
         member_snapshot_rows = connection.execute(
             """
             SELECT DISTINCT s.snapshot_id, s.logical_source_id, s.blob_id,
                 s.previous_snapshot_id
             FROM snapshot_bundle_members AS m
             JOIN source_snapshots AS s ON s.snapshot_id = m.snapshot_id
-            WHERE m.snapshot_bundle_id IN (SELECT unnest(?))
-            ORDER BY s.snapshot_id
+            WHERE m.snapshot_bundle_id = ? ORDER BY s.snapshot_id
             """,
-            [bundle_ids],
+            [bundle_id],
         ).fetchall()
-        dependent_rows = (
-            connection.execute(
-                """
-                SELECT DISTINCT source_id FROM session_sources
-                WHERE snapshot_id = ? OR snapshot_bundle_id IN (
-                    SELECT unnest(?)
-                )
-                ORDER BY source_id
-                """,
-                [snapshot_id, bundle_ids],
-            ).fetchall()
-            if bundle_ids
-            else []
-        )
-        dependent_source_ids = tuple(str(row[0]) for row in dependent_rows)
-    if dependent_source_ids and not force:
-        raise SnapshotPruneBlocked(snapshot_id, dependent_source_ids)
 
-    with write_connection(database_path) as connection, transaction(connection):
-        for source_id in dependent_source_ids:
+        for source_id in dependencies.source_ids:
             delete_source_records(connection, source_id)
-        for bundle_id, previous_bundle_id in bundle_rows:
-            lineage_row = connection.execute(
-                """
-                SELECT previous_lineage_bundle_id FROM bundle_capture_metadata
-                WHERE snapshot_bundle_id = ?
-                """,
-                [bundle_id],
-            ).fetchone()
-            previous_lineage_bundle_id = lineage_row[0] if lineage_row else None
+        connection.execute(
+            """
+            UPDATE bundle_capture_metadata SET previous_lineage_bundle_id = ?
+            WHERE previous_lineage_bundle_id = ?
+            """,
+            [previous_lineage_bundle_id, bundle_id],
+        )
+        connection.execute(
+            """
+            UPDATE snapshot_bundles SET previous_snapshot_bundle_id = ?
+            WHERE previous_snapshot_bundle_id = ?
+            """,
+            [previous_bundle_id, bundle_id],
+        )
+        for table_name in (
+            "lifecycle_observations",
+            "bundle_member_capture_metadata",
+            "bundle_capture_metadata",
+            "snapshot_bundle_members",
+        ):
             connection.execute(
-                """
-                UPDATE bundle_capture_metadata SET previous_lineage_bundle_id = ?
-                WHERE previous_lineage_bundle_id = ?
-                """,
-                [previous_lineage_bundle_id, bundle_id],
-            )
-            connection.execute(
-                """
-                UPDATE snapshot_bundles SET previous_snapshot_bundle_id = ?
-                WHERE previous_snapshot_bundle_id = ?
-                """,
-                [previous_bundle_id, bundle_id],
-            )
-            connection.execute(
-                "DELETE FROM lifecycle_observations WHERE snapshot_bundle_id = ?",
+                f"DELETE FROM {table_name} WHERE snapshot_bundle_id = ?",
                 [bundle_id],
             )
-            connection.execute(
-                "DELETE FROM bundle_member_capture_metadata WHERE snapshot_bundle_id = ?",
-                [bundle_id],
-            )
-            connection.execute(
-                "DELETE FROM bundle_capture_metadata WHERE snapshot_bundle_id = ?",
-                [bundle_id],
-            )
-            connection.execute(
-                "DELETE FROM snapshot_bundle_members WHERE snapshot_bundle_id = ?",
-                [bundle_id],
-            )
+        connection.execute(
+            "DELETE FROM snapshot_bundles WHERE snapshot_bundle_id = ?",
+            [bundle_id],
+        )
 
-    # DuckDB's foreign-key indexes are updated at transaction boundaries. Parent
-    # bundle and snapshot deletion therefore happens in deliberate committed stages.
-    with write_connection(database_path) as connection, transaction(connection):
-        for bundle_id, _previous_bundle_id in bundle_rows:
-            connection.execute(
-                "DELETE FROM snapshot_bundles WHERE snapshot_bundle_id = ?",
-                [bundle_id],
-            )
-
-    with write_connection(database_path) as connection, transaction(connection):
+        deleted_blob_ids: set[str] = set()
         for (
             member_snapshot_id,
-            _logical_source_id,
-            _blob_id,
+            logical_source_id,
+            blob_id,
             previous_snapshot_id,
         ) in member_snapshot_rows:
+            remaining_bundle_references = connection.execute(
+                "SELECT count(*) FROM snapshot_bundle_members WHERE snapshot_id = ?",
+                [member_snapshot_id],
+            ).fetchone()
+            if remaining_bundle_references != (0,):
+                continue
             connection.execute(
-                """
-                UPDATE source_snapshots SET previous_snapshot_id = ?
-                WHERE previous_snapshot_id = ?
-                """,
+                "UPDATE source_snapshots SET previous_snapshot_id = ? "
+                "WHERE previous_snapshot_id = ?",
                 [previous_snapshot_id, member_snapshot_id],
             )
             connection.execute(
                 "DELETE FROM source_snapshots WHERE snapshot_id = ?",
                 [member_snapshot_id],
             )
-
-    with write_connection(database_path) as connection, transaction(connection):
-        deleted_blob_count = 0
-        for _member_snapshot_id, logical_source_id, blob_id, _previous_id in member_snapshot_rows:
             blob_references = connection.execute(
-                "SELECT count(*) FROM source_snapshots WHERE blob_id = ?", [blob_id]
+                "SELECT count(*) FROM source_snapshots WHERE blob_id = ?",
+                [blob_id],
             ).fetchone()
             if blob_references == (0,):
                 connection.execute("DELETE FROM source_blobs WHERE blob_id = ?", [blob_id])
-                deleted_blob_count += 1
+                deleted_blob_ids.add(str(blob_id))
             source_references = connection.execute(
                 "SELECT count(*) FROM source_snapshots WHERE logical_source_id = ?",
                 [logical_source_id],
@@ -291,12 +339,21 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
                     "DELETE FROM logical_sources WHERE logical_source_id = ?",
                     [logical_source_id],
                 )
-    with write_connection(database_path) as connection:
-        connection.execute("CHECKPOINT")
+
+    checkpoint_completed = True
+    try:
+        with write_connection(database_path) as connection:
+            connection.execute("CHECKPOINT")
+    except duckdb.Error:
+        checkpoint_completed = False
     return PruneResult(
         snapshot_id=snapshot_id,
-        deleted_bundle_count=len(bundle_ids),
-        deleted_blob_count=deleted_blob_count,
-        dependent_source_ids=dependent_source_ids,
+        deleted_bundle_count=1,
+        deleted_blob_count=len(deleted_blob_ids),
+        dependent_source_ids=dependencies.source_ids,
+        dependent_session_ids=dependencies.session_ids,
+        dependent_analysis_run_ids=dependencies.analysis_run_ids,
+        derived_row_counts=dependencies.derived_row_counts,
         forced=force,
+        checkpoint_completed=checkpoint_completed,
     )
