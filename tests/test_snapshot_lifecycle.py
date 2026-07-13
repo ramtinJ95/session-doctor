@@ -278,6 +278,27 @@ def test_unbundled_capture_interrupts_settling(tmp_path) -> None:
     assert observation.evidence["lineage_is_source_consecutive"] is False
 
 
+def test_unbundled_capture_is_visible_replayable_and_prunable(tmp_path) -> None:
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    captured = store.capture_source(
+        source(),
+        b"orphaned",
+        captured_at=datetime(2026, 7, 13, 12, 0, tzinfo=UTC),
+    )
+
+    snapshots = store.list_snapshots()
+    assert len(snapshots) == 1
+    assert snapshots[0].snapshot_bundle_id is None
+    assert snapshots[0].capture_status == "unbundled"
+    assert snapshots[0].lifecycle_state == "snapshot_incomplete"
+    assert store.load_snapshot_bytes(captured.snapshot_id) == b"orphaned"
+
+    result = store.prune_snapshot(captured.snapshot_id)
+
+    assert result.deleted_bundle_count == 0
+    assert store.load_snapshot_bytes(captured.snapshot_id) is None
+
+
 def test_snapshot_history_marks_only_latest_and_supports_explicit_selection(tmp_path) -> None:
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
     started = datetime(2026, 7, 13, 12, 0, tzinfo=UTC)
@@ -577,7 +598,7 @@ def test_schema_v5_history_is_backfilled_without_losing_raw_bytes(tmp_path) -> N
     assert store.load_snapshot_bytes("snapshot-1") == source_bytes
     summary = store.snapshot_summary("snapshot-1")
     assert summary is not None
-    assert summary.lifecycle_state == "possibly_active"
+    assert summary.lifecycle_state == "snapshot_incomplete"
     with duckdb.connect(str(database_path), read_only=True) as connection:
         lineage = connection.execute(
             """
@@ -599,14 +620,14 @@ def test_schema_v5_history_is_backfilled_without_losing_raw_bytes(tmp_path) -> N
         ).fetchall()
     assert lineage == [("bundle-1", 1, None), ("bundle-3", 2, "bundle-1")]
     assert states == [
-        ("possibly_active",),
         ("snapshot_incomplete",),
-        ("possibly_active",),
+        ("snapshot_incomplete",),
+        ("snapshot_incomplete",),
         ("snapshot_incomplete",),
     ]
     assert capture_statuses == [
-        ("complete",),
+        ("incomplete",),
         ("parse_failed",),
-        ("complete",),
+        ("incomplete",),
         ("parse_failed",),
     ]

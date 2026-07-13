@@ -273,10 +273,14 @@ def snapshots_show(
         console.print(f"[red]Snapshot not found:[/red] {snapshot_id}")
         raise typer.Exit(1)
     payload = snapshot_summary_payload(row)
-    payload["members"] = [
-        bundle_member_payload(member)
-        for member in DuckDBStore(database_path).load_bundle_members(row.snapshot_bundle_id)
-    ]
+    payload["members"] = (
+        [
+            bundle_member_payload(member)
+            for member in DuckDBStore(database_path).load_bundle_members(row.snapshot_bundle_id)
+        ]
+        if row.snapshot_bundle_id is not None
+        else []
+    )
     typer.echo(json.dumps(payload, indent=2, sort_keys=True, default=str))
 
 
@@ -308,6 +312,11 @@ def snapshots_replay(
     if not destination.parent.is_dir():
         raise typer.BadParameter("output parent directory must exist", param_hint="--output")
     if bundle_mode:
+        if summary.snapshot_bundle_id is None:
+            raise typer.BadParameter(
+                "unbundled snapshots support single-file replay only",
+                param_hint="--bundle",
+            )
         if destination.exists():
             raise typer.BadParameter(
                 "bundle output directory must not already exist",

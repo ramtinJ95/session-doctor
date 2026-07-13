@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import duckdb
@@ -17,7 +17,7 @@ from .writers import delete_source_records
 @dataclass(frozen=True)
 class SnapshotSummary:
     snapshot_id: str
-    snapshot_bundle_id: str
+    snapshot_bundle_id: str | None
     source_id: str
     agent_name: str
     source_path: str
@@ -87,7 +87,24 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
         [snapshot_id],
     ).fetchall()
     if not bundle_rows:
-        raise ValueError("Only primary snapshots can be pruned; prune the owning bundle's primary")
+        member_owner = connection.execute(
+            "SELECT snapshot_bundle_id FROM snapshot_bundle_members WHERE snapshot_id = ? LIMIT 1",
+            [snapshot_id],
+        ).fetchone()
+        if member_owner is not None:
+            raise ValueError(
+                "Only primary snapshots can be pruned; prune the owning bundle's primary"
+            )
+        return PruneDependencies(
+            bundle_ids=(),
+            source_ids=(),
+            session_ids=(),
+            analysis_run_ids=(),
+            inbound_source_ids=(),
+            inbound_session_ids=(),
+            downstream_lifecycle_bundle_ids=(),
+            derived_row_counts={},
+        )
     if len(bundle_rows) != 1:
         raise RuntimeError(f"Snapshot has multiple owning bundles: {snapshot_id}")
     bundle_ids = tuple(str(row[0]) for row in bundle_rows)
@@ -202,13 +219,17 @@ def list_snapshots(
 ) -> tuple[SnapshotSummary, ...]:
     if lifecycle_state is not None and lifecycle_state not in LIFECYCLE_STATES:
         raise ValueError(f"Unknown lifecycle state: {lifecycle_state}")
-    clauses: list[str] = []
+    clauses: list[str] = [
+        "(b.snapshot_bundle_id IS NOT NULL OR NOT EXISTS ("
+        "SELECT 1 FROM snapshot_bundle_members AS ownership "
+        "WHERE ownership.snapshot_id = s.snapshot_id))"
+    ]
     params: list[object] = []
     if agent_name is not None:
         clauses.append("s.agent_name = ?")
         params.append(agent_name)
     if lifecycle_state is not None:
-        clauses.append("l.state = ?")
+        clauses.append("coalesce(l.state, 'snapshot_incomplete') = ?")
         params.append(lifecycle_state)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     with read_connection(database_path) as connection:
@@ -217,12 +238,14 @@ def list_snapshots(
             WITH candidate AS (
                 SELECT s.snapshot_id, b.snapshot_bundle_id, s.source_id,
                     s.agent_name, s.source_path, s.logical_source_id,
-                    s.capture_sequence, s.captured_at, l.state,
-                    c.capture_status, blobs.original_byte_length
+                    s.capture_sequence, s.captured_at,
+                    coalesce(l.state, 'snapshot_incomplete') AS state,
+                    coalesce(c.capture_status, 'unbundled') AS capture_status,
+                    blobs.original_byte_length
                 FROM source_snapshots AS s
-                JOIN snapshot_bundles AS b ON b.primary_snapshot_id = s.snapshot_id
-                JOIN bundle_capture_metadata AS c USING (snapshot_bundle_id)
-                JOIN lifecycle_observations AS l USING (snapshot_bundle_id)
+                LEFT JOIN snapshot_bundles AS b ON b.primary_snapshot_id = s.snapshot_id
+                LEFT JOIN bundle_capture_metadata AS c USING (snapshot_bundle_id)
+                LEFT JOIN lifecycle_observations AS l USING (snapshot_bundle_id)
                 JOIN source_blobs AS blobs ON blobs.blob_id = s.blob_id
                 {where}
             ),
@@ -245,7 +268,7 @@ def list_snapshots(
     return tuple(
         SnapshotSummary(
             snapshot_id=str(row[0]),
-            snapshot_bundle_id=str(row[1]),
+            snapshot_bundle_id=str(row[1]) if row[1] is not None else None,
             source_id=str(row[2]),
             agent_name=str(row[3]),
             source_path=str(row[4]),
@@ -292,6 +315,81 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
             or dependencies.downstream_lifecycle_bundle_ids
         ) and not force:
             raise SnapshotPruneBlocked(snapshot_id, dependencies)
+        orphan_snapshot = not dependencies.bundle_ids
+        if orphan_snapshot:
+            orphan_row = connection.execute(
+                """
+                SELECT agent_name, logical_source_id, source_id, source_path,
+                    captured_at, native_modified_at, snapshot_content_id
+                FROM source_snapshots WHERE snapshot_id = ?
+                """,
+                [snapshot_id],
+            ).fetchone()
+            if orphan_row is None:
+                raise ValueError(f"Snapshot not found: {snapshot_id}")
+            (
+                orphan_agent,
+                orphan_logical_source_id,
+                orphan_source_id,
+                orphan_source_path,
+                orphan_captured_at,
+                orphan_modified_at,
+                orphan_content_id,
+            ) = orphan_row
+            bundle_id = stable_id("orphan-prune-bundle", snapshot_id)
+            native_identity = f"orphan-prune:{snapshot_id}"
+            connection.execute(
+                """
+                INSERT INTO snapshot_bundles VALUES (
+                    ?, ?, ?, ?, ?, 'fallback_parse_failed', 1, NULL, ?
+                )
+                """,
+                [
+                    bundle_id,
+                    stable_id("orphan-prune-content", orphan_content_id),
+                    orphan_agent,
+                    native_identity,
+                    snapshot_id,
+                    orphan_captured_at,
+                ],
+            )
+            connection.execute(
+                """
+                INSERT INTO bundle_capture_metadata VALUES (
+                    ?, ?, 1, NULL, ?, ?, 'parse_failed', ?
+                )
+                """,
+                [
+                    bundle_id,
+                    stable_id("bundle-lineage", orphan_agent, native_identity),
+                    orphan_captured_at,
+                    orphan_captured_at,
+                    metadata_json({"reason": "orphan_prune"}),
+                ],
+            )
+            connection.execute(
+                """
+                INSERT INTO bundle_member_capture_metadata VALUES (
+                    ?, 0, ?, ?, ?, ?, 'primary', 'captured', ?, ?, ?, ?, '{}'
+                )
+                """,
+                [
+                    bundle_id,
+                    orphan_logical_source_id,
+                    snapshot_id,
+                    orphan_source_id,
+                    orphan_source_path,
+                    orphan_captured_at,
+                    orphan_captured_at,
+                    orphan_modified_at,
+                    orphan_modified_at,
+                ],
+            )
+            connection.execute(
+                "INSERT INTO snapshot_bundle_members VALUES (?, ?, ?, 0, 'primary', 'captured')",
+                [bundle_id, orphan_logical_source_id, snapshot_id],
+            )
+            dependencies = replace(dependencies, bundle_ids=(bundle_id,))
         bundle_id = dependencies.bundle_ids[0]
         bundle_row = connection.execute(
             """
@@ -456,7 +554,7 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
         checkpoint_completed = False
     return PruneResult(
         snapshot_id=snapshot_id,
-        deleted_bundle_count=1,
+        deleted_bundle_count=0 if orphan_snapshot else 1,
         deleted_blob_count=len(deleted_blob_ids),
         dependent_source_ids=dependencies.source_ids,
         dependent_session_ids=dependencies.session_ids,

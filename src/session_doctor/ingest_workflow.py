@@ -96,6 +96,7 @@ def ingest_sources(
             )
             primary_changed = primary_signature_before != primary_signature_after
             primary_capture_status = "changed_during_capture" if primary_changed else "captured"
+            primary_signature_final = primary_signature_after
             bundle_members: tuple[BundleMemberCapture, ...] = ()
             try:
                 adapter_members, bundle_members, topology_changed = capture_bundle_members(
@@ -105,6 +106,10 @@ def ingest_sources(
                     store,
                     member_discovery_source=session_source,
                 )
+                primary_signature_final = file_capture_signature(primary_path)
+                if primary_signature_before != primary_signature_final:
+                    primary_changed = True
+                    primary_capture_status = "changed_during_capture"
                 prepared_source = adapter.prepare_captured_source(
                     captured_parse_source,
                     adapter_members,
@@ -132,6 +137,7 @@ def ingest_sources(
                     capture_evidence={
                         "primary_signature_before": primary_signature_before,
                         "primary_signature_after": primary_signature_after,
+                        "primary_signature_final": primary_signature_final,
                     },
                 )
                 failed_bundle = store.add_bundle_members(failed_bundle, bundle_members)
@@ -171,6 +177,7 @@ def ingest_sources(
             capture_evidence={
                 "primary_signature_before": primary_signature_before,
                 "primary_signature_after": primary_signature_after,
+                "primary_signature_final": primary_signature_final,
             },
         )
         captured_bundle = store.add_bundle_members(captured_bundle, bundle_members)
