@@ -188,6 +188,19 @@ def test_projection_rejects_capture_from_another_source(tmp_path) -> None:
             forged_bundle,
         )
 
+    wrong_session = Session(
+        session_id="session-1",
+        source_id="other-source",
+        agent_name=captured_source.agent_name,
+    )
+    with pytest.raises(CaptureProvenanceError, match="does not belong"):
+        store.insert_parsed_bundle(
+            captured_source,
+            ParsedSessionBundle(session=wrong_session),
+            captured,
+            captured_bundle,
+        )
+
 
 def test_snapshot_manifest_constraints_reject_orphans_and_empty_captures(tmp_path) -> None:
     database_path = tmp_path / "session-doctor.duckdb"
