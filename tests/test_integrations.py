@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -59,54 +60,37 @@ def test_skill_frontmatter_and_version_contract() -> None:
 def test_skill_covers_public_cli_and_rejects_private_shortcuts() -> None:
     skill_text = skill_markdown()
     command_markers = (
-        "session-doctor version",
         "session-doctor doctor",
-        "session-doctor adapters list",
+        "session-doctor adapters",
         "session-doctor db init",
-        "session-doctor db info",
         "session-doctor ingest",
         "session-doctor sessions list",
         "session-doctor analyze",
-        "session-doctor summary",
-        "session-doctor trends",
-        "session-doctor projects list",
-        "session-doctor report",
-        "session-doctor graph",
         "session-doctor integrations path",
-        "session-doctor --install-completion",
-        "session-doctor --show-completion",
     )
 
     assert all(marker in skill_text for marker in command_markers)
-    assert "Never open or query the DuckDB database directly" in skill_text
-    assert "Never read native session transcripts" in skill_text
-    assert "unavailable `explain`, `export`, MCP" in skill_text
+    assert "not read native transcripts or query DuckDB directly" in skill_text
+    assert "no v1 fallback" in skill_text.lower()
+    assert "summary\ntrends\nprojects list\nreport\ngraph" in skill_text
 
 
 def test_skill_has_write_disclosure_and_interpretation_guards() -> None:
     skill_text = skill_markdown()
 
-    assert "Write Confirmation Protocol" in skill_text
-    assert "A request to diagnose, inspect, fix, or review is not write authorization" in skill_text
-    assert "Message-Text Confirmation" in skill_text
-    assert "Write confirmation does not authorize `--show-text`" in skill_text
-    assert "Never turn correlation into causality" in skill_text
-    assert "cite stable report or graph evidence IDs" in skill_text
-    assert "If stale/missing analysis is returned" in skill_text
+    assert "Never add" in skill_text
+    assert "--overwrite" in skill_text
+    assert "--force" in skill_text
+    assert "does not contain v1 labels, risk scores" in skill_text
+    assert "Preserve unknown, ambiguous, active, incomplete" in skill_text
 
 
 def test_skill_classifies_html_as_an_explicit_replacing_write() -> None:
     skill_text = skill_markdown()
 
-    assert "session-doctor report SESSION_ID --format html --output PATH" in skill_text
-    assert "session-doctor trends --format html --output PATH" in skill_text
-    assert "filesystem writes" in skill_text
-    assert "exact output path" in skill_text
-    assert "atomically replaced without another prompt" in skill_text
-    assert "requires both confirmations" in skill_text
-    assert "writes no implicit artifact, directory, cache, or sibling asset" in skill_text
-    assert "does not create directories, sibling assets, database rows, or launch a" in skill_text
-    assert "Success prints the output-path confirmation, not the HTML document" in skill_text
+    assert "report\ngraph" in skill_text
+    assert "must not be invoked or emulated" in skill_text
+    assert "Do not fall back to old scores" in skill_text
 
 
 def test_integrations_path_does_not_create_files(tmp_path, monkeypatch) -> None:
@@ -230,7 +214,6 @@ def test_built_distributions_and_clean_wheel_install_include_skill(tmp_path) -> 
         "--db",
         str(database_path),
     )
-    run_cli("analyze", "--all", "--db", str(database_path), "--format", "json")
     session_id_result = subprocess.run(
         [
             str(python),
@@ -247,35 +230,17 @@ def test_built_distributions_and_clean_wheel_install_include_skill(tmp_path) -> 
         env=subprocess_environment,
     )
     session_id = session_id_result.stdout.strip()
-    report_path = tmp_path / "installed-report.html"
-    trends_path = tmp_path / "installed-trends.html"
-    report_path.write_text("replace me", encoding="utf-8")
-    report_result = run_cli(
-        "report",
+    analysis_result = run_cli(
+        "analyze",
         session_id,
         "--db",
         str(database_path),
         "--format",
-        "html",
-        "--output",
-        str(report_path),
+        "json",
     )
-    trends_result = run_cli(
-        "trends",
-        "--db",
-        str(database_path),
-        "--format",
-        "html",
-        "--output",
-        str(trends_path),
-    )
-
-    assert report_result.stdout.strip() == f"Wrote HTML report: {report_path}"
-    assert trends_result.stdout.strip() == f"Wrote HTML trends dashboard: {trends_path}"
-    assert "<!doctype html>" not in report_result.stdout
-    assert "<!doctype html>" not in trends_result.stdout
-    assert report_path.read_text(encoding="utf-8").startswith("<!doctype html>")
-    assert trends_path.read_text(encoding="utf-8").startswith("<!doctype html>")
+    analysis_payload = json.loads(analysis_result.stdout)
+    assert analysis_payload["session_id"] == session_id
+    assert analysis_payload["episodes"]
     assert not (tmp_path / "artifacts").exists()
     assert not tuple(tmp_path.glob("*.css"))
     assert not tuple(tmp_path.glob("*.js"))

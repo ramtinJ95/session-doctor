@@ -8,67 +8,40 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, NoReturn
 
 import typer
 from rich.console import Console
 
 from . import __version__
 from .adapters import RecoverableSourceError, built_in_adapters
-from .analysis_workflow import (
-    AnalysisArtifactError,
-    AnalysisPersistenceError,
-    AnalysisWorkflowError,
-    SessionAgentMismatchError,
-    SessionNotLoadableError,
-    analyze_session,
-)
-from .artifacts import analysis_payload, artifact_path_for_analysis, write_analysis_artifact
-from .batch_analysis import analyze_all_sessions, batch_analysis_payload
 from .cli_options import (
     adapter_for_ingest,
     agent_name_from_option,
     database_info_for_path,
     database_path_from_option,
     database_path_is_valid,
-    html_output_path_from_options,
     os_access_writable,
     path_can_be_created,
-    project_filters_from_options,
     require_analysis_output_format,
     require_current_database_schema,
     require_existing_database_path,
-    require_graph_output_format,
-    require_positive_limit,
-    require_report_output_format,
-    require_summary_output_format,
-    require_trend_output_format,
     require_valid_database_path,
-    scope_filters_from_options,
     source_selection_for_ingest,
     sources_for_ingest,
-    summary_filters_from_options,
-    trend_filters_from_options,
 )
 from .cli_renderers import (
-    ANALYSIS_SUMMARY_FEATURES,
     render_adapters_table,
-    render_batch_analysis,
     render_database_info,
     render_doctor_table,
-    render_project_report,
     render_sessions_table,
-    render_summary,
-    render_trends,
     scan_adapter_summary,
-)
-from .cli_renderers import (
-    render_analysis_summary as _render_analysis_summary,
 )
 from .cli_renderers import (
     render_ingest_summary as _render_ingest_summary,
 )
 from .config import supports_current_python
+from .episode_workflow import EpisodeAnalysisUnavailable, analyze_session_episodes
 from .evaluation_models import JudgeAnnotation
 from .evaluation_packets import (
     boundary_pilot_corpus_bytes,
@@ -78,22 +51,11 @@ from .evaluation_packets import (
     publish_staged_packet_exports,
     stage_packet_exports,
 )
-from .graph_payload import graph_payload
-from .graph_projection import project_graph
-from .html import (
-    HtmlRenderError,
-    HtmlWriteError,
-    render_report_html,
-    render_trends_html,
-    write_html,
-)
 from .ids import stable_id
 from .ingest_workflow import IngestSummary, ingest_sources
 from .integration_assets import IntegrationAssetError, session_doctor_skill_directory
 from .normalization_workflow import normalize_snapshot
-from .report_payload import build_session_report
-from .report_renderers import render_session_report, render_session_report_markdown
-from .schemas import AgentName, AnalysisRun, SessionClassification, SessionFeature, SessionSource
+from .schemas import AgentName, SessionSource
 from .store import (
     TABLE_NAMES,
     DuckDBStore,
@@ -107,8 +69,6 @@ from .store import (
     register_evaluation_corpus,
     registered_corpus_bundle_id,
 )
-from .summary_payload import summary_payload
-from .trend_payload import project_payload, trend_payload
 
 console = Console()
 
@@ -123,26 +83,18 @@ normalizations_app = typer.Typer(help="Replay and inspect versioned normalizatio
 evaluation_app = typer.Typer(help="Export blinded packets and import offline judgments.")
 
 __all__ = [
-    "ANALYSIS_SUMMARY_FEATURES",
     "IngestSummary",
     "adapter_for_ingest",
-    "analysis_payload",
     "app",
-    "artifact_path_for_analysis",
     "database_path_from_option",
     "database_path_is_valid",
     "os_access_writable",
     "path_can_be_created",
     "require_current_database_schema",
     "require_valid_database_path",
-    "render_summary",
-    "render_analysis_summary",
     "render_ingest_summary",
     "scan_adapter_summary",
     "sources_for_ingest",
-    "summary_filters_from_options",
-    "summary_payload",
-    "write_analysis_artifact",
 ]
 
 
@@ -589,7 +541,7 @@ def snapshots_prune(
                         "bundles": dependencies.bundle_ids,
                         "sources": dependencies.source_ids,
                         "sessions": dependencies.session_ids,
-                        "analysis_runs": dependencies.analysis_run_ids,
+                        "semantic_analysis_runs": dependencies.analysis_run_ids,
                         "normalization_runs": dependencies.normalization_run_ids,
                         "evaluation_packets": dependencies.evaluation_packet_ids,
                         "evaluation_corpora": dependencies.evaluation_corpus_ids,
@@ -728,332 +680,66 @@ def ingest(
 
 @app.command()
 def analyze(
-    session_id: Annotated[
-        str | None,
-        typer.Argument(help="Ingested session ID to analyze."),
-    ] = None,
-    db: Annotated[
-        Path | None,
-        typer.Option(
-            "--db",
-            help="DuckDB path to inspect. Defaults to SESSION_DOCTOR_DB or app data.",
-        ),
-    ] = None,
+    session_id: Annotated[str, typer.Argument(help="Normalized session ID to segment.")],
+    db: Annotated[Path | None, typer.Option("--db", help="DuckDB path to inspect.")] = None,
     output_format: Annotated[
-        str,
-        typer.Option(
-            "--format",
-            help="Output format: terminal or json.",
-        ),
+        str, typer.Option("--format", help="Output format: terminal or json.")
     ] = "terminal",
-    artifact: Annotated[
-        Path | None,
-        typer.Option(
-            "--artifact",
-            help="Path for the machine-readable JSON artifact.",
-        ),
-    ] = None,
-    no_artifact: Annotated[
-        bool,
-        typer.Option(
-            "--no-artifact",
-            help="Skip writing the default JSON artifact.",
-        ),
-    ] = False,
-    all_sessions: Annotated[
-        bool,
-        typer.Option("--all", help="Analyze all matching stale or missing sessions."),
-    ] = False,
-    project: Annotated[
-        Path | None,
-        typer.Option(
-            "--project",
-            help="Only include sessions whose project_path or cwd is under this path.",
-        ),
-    ] = None,
-    agent: Annotated[
-        str | None,
-        typer.Option(
-            "--agent",
-            help=("Require this agent for one session, or filter --all: codex, claude, or pi."),
-        ),
-    ] = None,
-    force: Annotated[
-        bool,
-        typer.Option("--force", help="Reanalyze already-current matching sessions."),
-    ] = False,
-    write_artifacts: Annotated[
-        bool,
-        typer.Option(
-            "--write-artifacts",
-            help="Write normal per-session artifacts during batch analysis.",
-        ),
-    ] = False,
 ) -> None:
-    """Analyze one session or restore analysis coverage in bulk."""
+    """Produce deterministic task episodes, boundaries, lifecycle, and observations."""
     require_analysis_output_format(output_format)
-    require_analysis_mode(
-        session_id=session_id,
-        all_sessions=all_sessions,
-        artifact=artifact,
-        no_artifact=no_artifact,
-        project=project,
-        force=force,
-        write_artifacts=write_artifacts,
-    )
     database_path = database_path_from_option(db)
     require_valid_database_path(database_path)
     require_existing_database_path(database_path)
     require_current_database_schema(database_path)
-
-    store = DuckDBStore(database_path)
-    if all_sessions:
-        filters = scope_filters_from_options(agent, project)
-        batch_result = analyze_all_sessions(
-            store,
-            database_path,
-            filters,
-            force=force,
-            write_artifacts=write_artifacts,
-        )
-        if output_format == "json":
-            typer.echo(json.dumps(batch_analysis_payload(batch_result), indent=2, sort_keys=True))
-        else:
-            render_batch_analysis(batch_result, console)
-        if batch_result.failures:
-            raise typer.Exit(1)
-        return
-
-    assert session_id is not None
-    expected_agent_name = agent_name_from_option(agent)
     try:
-        result = analyze_session(
-            store,
-            session_id,
-            database_path,
-            artifact,
-            no_artifact,
-            expected_agent_name=expected_agent_name,
-        )
-    except SessionAgentMismatchError as exc:
-        render_agent_mismatch(exc.actual_agent, exc.expected_agent)
+        analysis = analyze_session_episodes(DuckDBStore(database_path), session_id, database_path)
+    except EpisodeAnalysisUnavailable as exc:
+        console.print(f"[red]Episode analysis unavailable:[/red] {exc}")
         raise typer.Exit(1) from exc
-    except SessionNotLoadableError as exc:
-        if exc.not_found:
-            console.print(f"[red]Session not found:[/red] {session_id}")
-        else:
-            console.print("[red]Session could not be loaded.[/red]")
-        raise typer.Exit(1) from exc
-    except AnalysisArtifactError as exc:
-        console.print("[red]Could not write analysis artifact.[/red]")
-        raise typer.Exit(1) from exc
-    except AnalysisPersistenceError as exc:
-        console.print("[red]Could not persist analysis results.[/red]")
-        raise typer.Exit(1) from exc
-    except AnalysisWorkflowError as exc:
-        console.print(f"[red]{exc.safe_message}.[/red]")
-        raise typer.Exit(1) from exc
-
+    payload = analysis.model_dump(mode="json")
     if output_format == "json":
-        typer.echo(json.dumps(result.payload, indent=2, sort_keys=True, default=str))
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
         return
-
-    render_analysis_summary(
-        session_id,
-        result.analysis_run,
-        result.session_features,
-        result.classifications,
+    console.print(
+        f"[bold]Episode analysis[/bold] {session_id}: "
+        f"{len(analysis.episodes)} episodes, {len(analysis.boundaries)} boundaries, "
+        f"lifecycle={analysis.lifecycle_state}"
     )
-
-
-def require_analysis_mode(
-    *,
-    session_id: str | None,
-    all_sessions: bool,
-    artifact: Path | None,
-    no_artifact: bool,
-    project: Path | None,
-    force: bool,
-    write_artifacts: bool,
-) -> None:
-    if (session_id is None and not all_sessions) or (session_id is not None and all_sessions):
-        console.print("[red]Choose exactly one:[/red] SESSION_ID or --all")
-        raise typer.Exit(2)
-    if all_sessions and (artifact is not None or no_artifact):
-        console.print("[red]Batch mode rejects --artifact and --no-artifact.[/red]")
-        raise typer.Exit(2)
-    if not all_sessions and (project is not None or force or write_artifacts):
+    for episode in analysis.episodes:
         console.print(
-            "[red]Single-session mode rejects --project, --force, and --write-artifacts.[/red]"
+            f"- {episode.episode_id} users={len(episode.user_anchor_ids)} "
+            f"provisional={str(episode.provisional).lower()}"
         )
-        raise typer.Exit(2)
+
+
+UNAVAILABLE_REBUILD_MESSAGE = (
+    "{command} is unavailable during the deterministic analysis v2 rebuild; "
+    "see docs/deterministic-analysis-v2-plan.md."
+)
+
+
+def unavailable_during_v2_rebuild(command: str) -> NoReturn:
+    typer.echo(UNAVAILABLE_REBUILD_MESSAGE.format(command=command))
+    raise typer.Exit(1)
 
 
 @app.command()
-def summary(
-    db: Annotated[
-        Path | None,
-        typer.Option(
-            "--db",
-            help="DuckDB path to inspect. Defaults to SESSION_DOCTOR_DB or app data.",
-        ),
-    ] = None,
-    project: Annotated[
-        Path | None,
-        typer.Option(
-            "--project",
-            help="Only include sessions whose project_path or cwd is under this path.",
-        ),
-    ] = None,
-    agent: Annotated[
-        str | None,
-        typer.Option(
-            "--agent",
-            help="Only include sessions from this agent, for example codex, claude, or pi.",
-        ),
-    ] = None,
-    limit: Annotated[
-        int,
-        typer.Option(
-            "--limit",
-            help="Maximum rows for ranked/detail sections.",
-        ),
-    ] = 10,
-    output_format: Annotated[
-        str,
-        typer.Option(
-            "--format",
-            help="Output format: terminal or json.",
-        ),
-    ] = "terminal",
-) -> None:
-    """Summarize aggregate session and analysis data in DuckDB."""
-    require_summary_output_format(output_format)
-    database_path = database_path_from_option(db)
-    require_valid_database_path(database_path)
-    require_existing_database_path(database_path)
-    require_current_database_schema(database_path)
-
-    filters = summary_filters_from_options(agent, project, limit)
-    aggregate = DuckDBStore(database_path).aggregate_summary(filters)
-
-    if output_format == "json":
-        typer.echo(json.dumps(summary_payload(aggregate), indent=2, sort_keys=True, default=str))
-        return
-
-    render_summary(aggregate, database_path, console)
+def summary() -> None:
+    """Fail explicitly while the v2 summary projection is rebuilt."""
+    unavailable_during_v2_rebuild("summary")
 
 
 @app.command()
-def trends(
-    db: Annotated[
-        Path | None,
-        typer.Option(
-            "--db",
-            help="DuckDB path to inspect. Defaults to SESSION_DOCTOR_DB or app data.",
-        ),
-    ] = None,
-    project: Annotated[
-        Path | None,
-        typer.Option(
-            "--project",
-            help="Only include sessions whose project_path or cwd is under this path.",
-        ),
-    ] = None,
-    agent: Annotated[
-        str | None,
-        typer.Option(
-            "--agent",
-            help="Only include sessions from this agent, for example codex, claude, or pi.",
-        ),
-    ] = None,
-    bucket: Annotated[
-        str,
-        typer.Option("--bucket", help="Calendar bucket size: week or month."),
-    ] = "week",
-    periods: Annotated[
-        int,
-        typer.Option("--periods", help="Number of aligned buckets, from 1 to 120."),
-    ] = 12,
-    limit: Annotated[
-        int,
-        typer.Option("--limit", help="Maximum rows for ranked/detail sections."),
-    ] = 10,
-    output_format: Annotated[
-        str,
-        typer.Option("--format", help="Output format: terminal, json, or html."),
-    ] = "terminal",
-    output: Annotated[
-        Path | None,
-        typer.Option(
-            "--output",
-            help="HTML destination to replace atomically. Required only for --format html.",
-        ),
-    ] = None,
-) -> None:
-    """Show deterministic project-level session trends."""
-    require_trend_output_format(output_format)
-    html_output = html_output_path_from_options(output_format, output)
-    filters = trend_filters_from_options(agent, project, bucket, periods, limit)
-    database_path = database_path_from_option(db)
-    require_valid_database_path(database_path)
-    require_existing_database_path(database_path)
-    require_current_database_schema(database_path)
-    report = DuckDBStore(database_path).trends(filters)
-
-    if output_format == "html":
-        assert html_output is not None
-        try:
-            html_document = render_trends_html(report)
-            write_html(html_output, html_document)
-        except (HtmlRenderError, HtmlWriteError):
-            console.print("[red]Could not write HTML trends dashboard.[/red]")
-            raise typer.Exit(1) from None
-        typer.echo(f"Wrote HTML trends dashboard: {html_output}")
-        return
-    if output_format == "json":
-        typer.echo(json.dumps(trend_payload(report), indent=2, sort_keys=True))
-        return
-    render_trends(report, database_path, console)
+def trends() -> None:
+    """Fail explicitly while the v2 trends projection is rebuilt."""
+    unavailable_during_v2_rebuild("trends")
 
 
 @projects_app.command("list")
-def projects_list(
-    db: Annotated[
-        Path | None,
-        typer.Option(
-            "--db",
-            help="DuckDB path to inspect. Defaults to SESSION_DOCTOR_DB or app data.",
-        ),
-    ] = None,
-    agent: Annotated[
-        str | None,
-        typer.Option(
-            "--agent",
-            help="Only include sessions from this agent, for example codex, claude, or pi.",
-        ),
-    ] = None,
-    limit: Annotated[
-        int,
-        typer.Option("--limit", help="Maximum observed project rows."),
-    ] = 10,
-    output_format: Annotated[
-        str,
-        typer.Option("--format", help="Output format: terminal or json."),
-    ] = "terminal",
-) -> None:
-    """List exact observed project_path/CWD hints."""
-    require_summary_output_format(output_format)
-    filters = project_filters_from_options(agent, limit)
-    database_path = database_path_from_option(db)
-    require_valid_database_path(database_path)
-    require_existing_database_path(database_path)
-    require_current_database_schema(database_path)
-    report = DuckDBStore(database_path).projects(filters)
-    if output_format == "json":
-        typer.echo(json.dumps(project_payload(report), indent=2, sort_keys=True))
-        return
-    render_project_report(report, console)
+def projects_list() -> None:
+    """Fail explicitly while the v2 project projection is rebuilt."""
+    unavailable_during_v2_rebuild("projects list")
 
 
 @integrations_app.command("path")
@@ -1068,119 +754,15 @@ def integration_path() -> None:
 
 
 @app.command()
-def report(
-    session_id: str,
-    db: Annotated[
-        Path | None,
-        typer.Option(
-            "--db",
-            help="DuckDB path to inspect. Defaults to SESSION_DOCTOR_DB or app data.",
-        ),
-    ] = None,
-    output_format: Annotated[
-        str,
-        typer.Option("--format", help="Output format: terminal, markdown, json, or html."),
-    ] = "terminal",
-    output: Annotated[
-        Path | None,
-        typer.Option(
-            "--output",
-            help="HTML destination to replace atomically. Required only for --format html.",
-        ),
-    ] = None,
-    limit: Annotated[
-        int,
-        typer.Option("--limit", help="Maximum rows per bounded evidence section."),
-    ] = 10,
-    show_text: Annotated[
-        bool,
-        typer.Option("--show-text", help="Include text for displayed evidence messages only."),
-    ] = False,
-    agent: Annotated[
-        str | None,
-        typer.Option(
-            "--agent",
-            help="Require the session to belong to this agent: codex, claude, or pi.",
-        ),
-    ] = None,
-) -> None:
-    """Generate a privacy-safe exact-session diagnostic report."""
-    require_report_output_format(output_format)
-    require_positive_limit(limit)
-    html_output = html_output_path_from_options(output_format, output)
-    database_path = database_path_from_option(db)
-    require_valid_database_path(database_path)
-    require_existing_database_path(database_path)
-    require_current_database_schema(database_path)
-    expected_agent_name = agent_name_from_option(agent)
-    store = DuckDBStore(database_path)
-    require_stored_session_agent(store, session_id, expected_agent_name)
-    snapshot = store.load_diagnostic_snapshot(session_id)
-    if snapshot is None:
-        console.print(f"[red]Session not found:[/red] {session_id}")
-        raise typer.Exit(1)
-    require_matching_session_agent(
-        snapshot.normalized.session.agent_name.value, expected_agent_name
-    )
-    payload = build_session_report(snapshot, limit=limit, show_text=show_text)
-    if output_format == "html":
-        assert html_output is not None
-        try:
-            html_document = render_report_html(payload)
-            write_html(html_output, html_document)
-        except (HtmlRenderError, HtmlWriteError):
-            console.print("[red]Could not write HTML report.[/red]")
-            raise typer.Exit(1) from None
-        typer.echo(f"Wrote HTML report: {html_output}")
-        return
-    if output_format == "json":
-        typer.echo(payload.model_dump_json(indent=2))
-        return
-    if output_format == "markdown":
-        typer.echo(render_session_report_markdown(payload), nl=False)
-        return
-    render_session_report(payload, console)
+def report() -> None:
+    """Fail explicitly while the v2 report projection is rebuilt."""
+    unavailable_during_v2_rebuild("report")
 
 
 @app.command()
-def graph(
-    session_id: str,
-    db: Annotated[
-        Path | None,
-        typer.Option(
-            "--db",
-            help="DuckDB path to inspect. Defaults to SESSION_DOCTOR_DB or app data.",
-        ),
-    ] = None,
-    output_format: Annotated[
-        str,
-        typer.Option("--format", help="Output format: json."),
-    ] = "json",
-    agent: Annotated[
-        str | None,
-        typer.Option(
-            "--agent",
-            help="Require the session to belong to this agent: codex, claude, or pi.",
-        ),
-    ] = None,
-) -> None:
-    """Project a complete conservative exact-session evidence graph."""
-    require_graph_output_format(output_format)
-    database_path = database_path_from_option(db)
-    require_valid_database_path(database_path)
-    require_existing_database_path(database_path)
-    require_current_database_schema(database_path)
-    expected_agent_name = agent_name_from_option(agent)
-    store = DuckDBStore(database_path)
-    require_stored_session_agent(store, session_id, expected_agent_name)
-    snapshot = store.load_diagnostic_snapshot(session_id)
-    if snapshot is None:
-        console.print(f"[red]Session not found:[/red] {session_id}")
-        raise typer.Exit(1)
-    require_matching_session_agent(
-        snapshot.normalized.session.agent_name.value, expected_agent_name
-    )
-    typer.echo(json.dumps(graph_payload(project_graph(snapshot)), indent=2, sort_keys=True))
+def graph() -> None:
+    """Fail explicitly while the v2 graph projection is rebuilt."""
+    unavailable_during_v2_rebuild("graph")
 
 
 def require_matching_session_agent(actual_agent: str, expected_agent: str | None) -> None:
@@ -1222,18 +804,3 @@ app.add_typer(evaluation_app, name="evaluation")
 
 def render_ingest_summary(summary: IngestSummary, database_path: Path) -> None:
     _render_ingest_summary(summary, database_path, console)
-
-
-def render_analysis_summary(
-    session_id: str,
-    analysis_run: AnalysisRun,
-    session_features: list[SessionFeature],
-    classifications: list[SessionClassification],
-) -> None:
-    _render_analysis_summary(
-        session_id,
-        analysis_run,
-        session_features,
-        classifications,
-        console,
-    )

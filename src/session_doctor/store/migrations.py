@@ -6,7 +6,7 @@ import duckdb
 
 from session_doctor.ids import stable_id
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 BASE_DURABLE_TABLE_NAMES = (
     "source_blobs",
@@ -47,6 +47,9 @@ DERIVED_TABLE_NAMES = (
     "file_activities",
     "model_usage",
     "parse_warnings",
+)
+
+LEGACY_V1_ANALYSIS_TABLE_NAMES = (
     "analysis_runs",
     "message_features",
     "session_features",
@@ -106,7 +109,7 @@ def initialize_schema(connection: duckdb.DuckDBPyConnection) -> None:
 def rebuild_derived_schema(connection: duckdb.DuckDBPyConnection, actual_version: int) -> None:
     connection.execute("BEGIN TRANSACTION")
     try:
-        for table_name in reversed(DERIVED_TABLE_NAMES):
+        for table_name in reversed((*DERIVED_TABLE_NAMES, *LEGACY_V1_ANALYSIS_TABLE_NAMES)):
             connection.execute(f"DROP TABLE IF EXISTS {table_name}")
         snapshot_rows: list[tuple[object, ...]] = []
         bundle_rows: list[tuple[object, ...]] = []
@@ -744,56 +747,6 @@ CREATE_TABLE_STATEMENTS = (
         record_index INTEGER,
         severity VARCHAR NOT NULL,
         message VARCHAR NOT NULL,
-        metadata_json VARCHAR NOT NULL DEFAULT '{}'
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS analysis_runs (
-        analysis_run_id VARCHAR PRIMARY KEY,
-        session_id VARCHAR NOT NULL,
-        started_at TIMESTAMP,
-        completed_at TIMESTAMP,
-        analyzer_version VARCHAR NOT NULL,
-        artifact_path VARCHAR,
-        metadata_json VARCHAR NOT NULL DEFAULT '{}'
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS message_features (
-        message_feature_id VARCHAR PRIMARY KEY,
-        analysis_run_id VARCHAR NOT NULL,
-        session_id VARCHAR NOT NULL,
-        message_id VARCHAR NOT NULL,
-        source_event_id VARCHAR,
-        feature_name VARCHAR NOT NULL,
-        feature_value VARCHAR NOT NULL,
-        score DOUBLE NOT NULL,
-        evidence_json VARCHAR NOT NULL DEFAULT '{}',
-        metadata_json VARCHAR NOT NULL DEFAULT '{}'
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS session_features (
-        session_feature_id VARCHAR PRIMARY KEY,
-        analysis_run_id VARCHAR NOT NULL,
-        session_id VARCHAR NOT NULL,
-        feature_name VARCHAR NOT NULL,
-        feature_value VARCHAR NOT NULL,
-        score DOUBLE NOT NULL,
-        evidence_json VARCHAR NOT NULL DEFAULT '{}',
-        metadata_json VARCHAR NOT NULL DEFAULT '{}'
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS session_classifications (
-        session_classification_id VARCHAR PRIMARY KEY,
-        analysis_run_id VARCHAR NOT NULL,
-        session_id VARCHAR NOT NULL,
-        label VARCHAR NOT NULL,
-        score DOUBLE NOT NULL,
-        confidence DOUBLE NOT NULL,
-        evidence_event_ids_json VARCHAR NOT NULL DEFAULT '[]',
-        evidence_summary VARCHAR NOT NULL,
         metadata_json VARCHAR NOT NULL DEFAULT '{}'
     )
     """,

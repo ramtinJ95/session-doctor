@@ -68,21 +68,18 @@ def test_dogfood_issue_template_requires_privacy_safe_evidence() -> None:
     assert template.count("required: true") >= 8
 
 
-def test_public_docs_describe_html_write_and_privacy_contract() -> None:
+def test_public_docs_describe_v2_command_downtime_and_privacy_contract() -> None:
     readme = (ROOT / "README.md").read_text()
     design = (ROOT / "docs" / "session-doctor-design.md").read_text()
 
     required_readme = (
-        "--format html --output report.html",
-        "--format html --output trends.html",
-        "database-read-only",
-        "atomically replaces",
-        "parent directory must already exist",
-        "one self-contained offline file",
-        "no remote resources",
-        "generated HTML as private",
+        "Temporary command availability",
+        "There is no v1 fallback",
+        "summary",
+        "projects list",
+        "Production analysis is deterministic and local",
     )
     assert all(marker in readme for marker in required_readme)
-    assert "Phase 11: Standalone Visual Reports And Trend Dashboards" in design
-    assert "renderers consume typed projections only" in design
-    assert "Graph remains JSON-only" in design
+    assert "Schema version 10" in design
+    assert "segmentation-v1" in design
+    assert "no command falls back to v1" in design
