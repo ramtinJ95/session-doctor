@@ -503,7 +503,7 @@ def test_schema_v5_history_is_backfilled_without_losing_raw_bytes(tmp_path) -> N
         connection.execute(
             "INSERT INTO snapshot_bundles VALUES "
             "('bundle-2', 'bundle-content-1', 'pi', 'parse-failed:source-1', 'snapshot-2', "
-            "'observed', 2, 'bundle-1', ?)",
+            "'fallback_parse_failed', 2, 'bundle-1', ?)",
             [captured_at - timedelta(hours=1)],
         )
         connection.execute(
@@ -530,6 +530,26 @@ def test_schema_v5_history_is_backfilled_without_losing_raw_bytes(tmp_path) -> N
             "INSERT INTO snapshot_bundle_members VALUES "
             "('bundle-3', 'logical-1', 'snapshot-3', 0, 'primary', 'captured')"
         )
+        connection.execute(
+            """
+            INSERT INTO source_snapshots VALUES (
+                'snapshot-4', 'source-1', 'pi', 'root_session',
+                '/sessions/source-1.jsonl', NULL, NULL, NULL, '{}', 'logical-1',
+                'blob-1', 'content-1', 4, ?, NULL, 'captured', 'snapshot-3'
+            )
+            """,
+            [captured_at + timedelta(hours=2)],
+        )
+        connection.execute(
+            "INSERT INTO snapshot_bundles VALUES "
+            "('bundle-4', 'bundle-content-1', 'pi', 'parse-failed:source-1', 'snapshot-4', "
+            "'fallback_parse_failed', 4, 'bundle-3', ?)",
+            [captured_at + timedelta(hours=2)],
+        )
+        connection.execute(
+            "INSERT INTO snapshot_bundle_members VALUES "
+            "('bundle-4', 'logical-1', 'snapshot-4', 0, 'primary', 'captured')"
+        )
 
     store = DuckDBStore(database_path)
     store.initialize()
@@ -554,9 +574,19 @@ def test_schema_v5_history_is_backfilled_without_losing_raw_bytes(tmp_path) -> N
         states = connection.execute(
             "SELECT state FROM lifecycle_observations ORDER BY snapshot_bundle_id"
         ).fetchall()
+        capture_statuses = connection.execute(
+            "SELECT capture_status FROM bundle_capture_metadata ORDER BY snapshot_bundle_id"
+        ).fetchall()
     assert lineage == [("bundle-1", 1, None), ("bundle-3", 2, "bundle-1")]
     assert states == [
         ("possibly_active",),
+        ("snapshot_incomplete",),
         ("possibly_active",),
-        ("possibly_active",),
+        ("snapshot_incomplete",),
+    ]
+    assert capture_statuses == [
+        ("complete",),
+        ("parse_failed",),
+        ("complete",),
+        ("parse_failed",),
     ]
