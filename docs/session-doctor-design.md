@@ -162,6 +162,15 @@ Normalization runs are immutable and versioned. Multiple parser versions may
 coexist over the same exact bundle content. Historical reprocessing is explicit
 and additive.
 
+Schema version 7 stores immutable run metadata in `normalization_runs`, links
+runs to capture observations through `normalization_run_bundles`, and keys each
+canonical serialized normalized entity by run in `normalized_entities`.
+Ordinary ingest records only the current parser run for the new capture.
+`normalizations replay` is the only historical write path; status and selection
+queries are read-only and report current, stale, or missing coverage. The v1
+normalized tables remain a rebuildable current compatibility projection until
+the v2 query cutover.
+
 ### Identity And Ordering
 
 - Source record order is authoritative within one captured source.

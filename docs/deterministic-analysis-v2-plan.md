@@ -895,10 +895,10 @@ Implementation decisions:
   and support exact single-file replay and direct pruning;
 - pruning accepts only a bundle's primary snapshot, blocks normalized
   dependencies unless `--force`, reports affected bundles, sources, sessions,
-  analysis runs, inbound topology references, and derived-row counts, removes
-  that bundle capture atomically, clears inbound references to deleted
-  provenance, downgrades settlement that depended on a deleted predecessor,
-  and runs DuckDB `CHECKPOINT` after commit;
+  normalization runs, analysis runs, inbound topology references, and
+  derived-row counts, removes that bundle capture atomically, clears inbound
+  references to deleted provenance, downgrades settlement that depended on a
+  deleted predecessor, and runs DuckDB `CHECKPOINT` after commit;
 - Claude bundles capture transcripts, subagent metadata, persisted tool
   results, and related session files before parsing; topology and sidecar
   evidence are reconstructed only from captured bytes.
@@ -949,6 +949,19 @@ Tests:
 Gate:
 
 - parser drift can be measured independently from analysis drift.
+
+Implementation contract:
+
+- schema version 7 stores immutable `normalization_runs`, additive
+  `normalization_run_bundles`, and run-keyed `normalized_entities`;
+- normalization identity follows the component hash declared above;
+- ordinary ingest writes the current parser run only for its new bundle;
+- `normalizations replay SNAPSHOT_ID` reparses stored bundle bytes explicitly
+  and is idempotent for an existing semantic identity;
+- `normalizations status SNAPSHOT_ID` is read-only and reports current, stale,
+  or missing coverage against the running adapter version;
+- the existing normalized tables are a rebuildable current compatibility
+  projection until the v2 query cutover, never a historical replay target.
 
 ### PR 5: Ordering, Capabilities, Identity, Project, Model, And Usage Semantics
 
