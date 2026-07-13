@@ -55,6 +55,13 @@ At PR 7:
 `projects list` remains available because it lists observed metadata rather
 than interpreting analytical results.
 
+Until PR 7 removes the dependent v1 projections, the implemented historical
+**Phase 11: Standalone Visual Reports And Trend Dashboards** contract remains
+in force: HTML renderers consume typed projections only, write one
+self-contained offline file, and do not query DuckDB. Graph remains JSON-only.
+The v2 report/graph/trend replacements inherit those output-safety constraints
+when PRs 20-22 restore them.
+
 ## Architecture
 
 ```text
