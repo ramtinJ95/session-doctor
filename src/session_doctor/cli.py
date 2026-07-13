@@ -377,6 +377,8 @@ def snapshots_prune(
                         "sources": dependencies.source_ids,
                         "sessions": dependencies.session_ids,
                         "analysis_runs": dependencies.analysis_run_ids,
+                        "inbound_source_references": dependencies.inbound_source_ids,
+                        "inbound_session_references": dependencies.inbound_session_ids,
                         "derived_rows": dependencies.derived_row_counts,
                     },
                     indent=2,

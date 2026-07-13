@@ -34,6 +34,8 @@ class PruneResult:
     dependent_source_ids: tuple[str, ...]
     dependent_session_ids: tuple[str, ...]
     dependent_analysis_run_ids: tuple[str, ...]
+    inbound_source_ids: tuple[str, ...]
+    inbound_session_ids: tuple[str, ...]
     derived_row_counts: dict[str, int]
     forced: bool
     checkpoint_completed: bool
@@ -45,6 +47,8 @@ class PruneDependencies:
     source_ids: tuple[str, ...]
     session_ids: tuple[str, ...]
     analysis_run_ids: tuple[str, ...]
+    inbound_source_ids: tuple[str, ...]
+    inbound_session_ids: tuple[str, ...]
     derived_row_counts: dict[str, int]
 
 
@@ -101,6 +105,26 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
         else []
     )
     session_ids = tuple(str(row[0]) for row in session_rows)
+    inbound_source_rows = (
+        connection.execute(
+            "SELECT source_id FROM session_sources "
+            "WHERE parent_source_id IN (SELECT unnest(?)) ORDER BY source_id",
+            [list(source_ids)],
+        ).fetchall()
+        if source_ids
+        else []
+    )
+    inbound_source_ids = tuple(str(row[0]) for row in inbound_source_rows)
+    inbound_session_rows = (
+        connection.execute(
+            "SELECT session_id FROM sessions "
+            "WHERE parent_session_id IN (SELECT unnest(?)) ORDER BY session_id",
+            [list(session_ids)],
+        ).fetchall()
+        if session_ids
+        else []
+    )
+    inbound_session_ids = tuple(str(row[0]) for row in inbound_session_rows)
     analysis_rows = (
         connection.execute(
             "SELECT analysis_run_id FROM analysis_runs "
@@ -149,6 +173,8 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
         source_ids=source_ids,
         session_ids=session_ids,
         analysis_run_ids=analysis_run_ids,
+        inbound_source_ids=inbound_source_ids,
+        inbound_session_ids=inbound_session_ids,
         derived_row_counts=derived_row_counts,
     )
 
@@ -244,7 +270,11 @@ def latest_snapshot(
 def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> PruneResult:
     with write_connection(database_path) as connection, transaction(connection):
         dependencies = _snapshot_dependencies(connection, snapshot_id)
-        if dependencies.source_ids and not force:
+        if (
+            dependencies.source_ids
+            or dependencies.inbound_source_ids
+            or dependencies.inbound_session_ids
+        ) and not force:
             raise SnapshotPruneBlocked(snapshot_id, dependencies)
         bundle_id = dependencies.bundle_ids[0]
         bundle_row = connection.execute(
@@ -276,6 +306,18 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
 
         for source_id in dependencies.source_ids:
             delete_source_records(connection, source_id)
+        if dependencies.inbound_source_ids:
+            connection.execute(
+                "UPDATE session_sources SET parent_source_id = NULL "
+                "WHERE source_id IN (SELECT unnest(?))",
+                [list(dependencies.inbound_source_ids)],
+            )
+        if dependencies.inbound_session_ids:
+            connection.execute(
+                "UPDATE sessions SET parent_session_id = NULL "
+                "WHERE session_id IN (SELECT unnest(?))",
+                [list(dependencies.inbound_session_ids)],
+            )
         connection.execute(
             """
             UPDATE bundle_capture_metadata SET previous_lineage_bundle_id = ?
@@ -357,6 +399,8 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
         dependent_source_ids=dependencies.source_ids,
         dependent_session_ids=dependencies.session_ids,
         dependent_analysis_run_ids=dependencies.analysis_run_ids,
+        inbound_source_ids=dependencies.inbound_source_ids,
+        inbound_session_ids=dependencies.inbound_session_ids,
         derived_row_counts=dependencies.derived_row_counts,
         forced=force,
         checkpoint_completed=checkpoint_completed,

@@ -766,11 +766,25 @@ def test_claude_multifile_bundle_replays_without_live_files(tmp_path) -> None:
     assert any(row["member_role"] == "tool_result" for row in manifest)
     with pytest.raises(SnapshotPruneBlocked):
         store.prune_snapshot(root_summary.snapshot_id)
+    dependencies = store.snapshot_dependencies(root_summary.snapshot_id)
+    assert dependencies.inbound_source_ids
+    assert dependencies.inbound_session_ids
     prune_result = store.prune_snapshot(root_summary.snapshot_id, force=True)
     assert len(prune_result.dependent_source_ids) == 1
     assert store.table_count("snapshot_bundles") == 2
     assert store.table_count("sessions") == 2
     assert store.snapshot_summary(root_summary.snapshot_id) is None
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        remaining_parent_references = connection.execute(
+            "SELECT count(*) FROM session_sources WHERE parent_source_id IN (SELECT unnest(?))",
+            [list(dependencies.source_ids)],
+        ).fetchone()
+        remaining_session_parent_references = connection.execute(
+            "SELECT count(*) FROM sessions WHERE parent_session_id IN (SELECT unnest(?))",
+            [list(dependencies.session_ids)],
+        ).fetchone()
+    assert remaining_parent_references == (0,)
+    assert remaining_session_parent_references == (0,)
 
 
 def test_ingest_single_file_fails_immediately_on_recoverable_source_error(

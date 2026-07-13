@@ -109,6 +109,8 @@ Capture stores exact bytes before parsing them. Identical bytes share one
 compressed content-addressed blob, while every ingest observation retains its
 own immutable capture identity and time. Multi-file sessions use ordered bundle
 manifests; they do not claim an atomic directory snapshot.
+Claude manifests are limited to required transcripts, their metadata, and
+referenced sidecars; bytes used to select evidence are verified during capture.
 
 Schema version 6 stores blobs with SHA-256 content identity and deterministic
 zlib level-6 compression in `source_blobs`; the other durable capture tables are
@@ -120,8 +122,10 @@ History is exposed through `session-doctor snapshots list`, `show`, `replay`,
 and `prune`. Replay requires an explicit output path, refuses accidental
 replacement, and can export a complete ordered multi-file bundle. Non-terminal
 complete bundles settle only after a consecutive identical capture in the same
-lineage at least 30 seconds later. Prune reports structured dependent loss and
-commits relational deletion atomically before checkpointing DuckDB.
+lineage at least 30 seconds later. Prune reports structured dependent loss,
+including inbound topology references, clears references to deleted
+provenance, and commits relational deletion atomically before checkpointing
+DuckDB.
 
 The parser consumes only stored bytes. A source mutation after capture cannot
 change that normalization run.
