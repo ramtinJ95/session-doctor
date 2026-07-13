@@ -84,8 +84,8 @@ def record_lifecycle_observation(
             immediately_previous = connection.execute(
                 """
                 SELECT b.snapshot_bundle_id
-                FROM snapshot_bundles AS b
-                JOIN source_snapshots AS s ON s.snapshot_id = b.primary_snapshot_id
+                FROM source_snapshots AS s
+                LEFT JOIN snapshot_bundles AS b ON b.primary_snapshot_id = s.snapshot_id
                 WHERE s.logical_source_id = ? AND s.capture_sequence < ?
                 ORDER BY s.capture_sequence DESC LIMIT 1
                 """,

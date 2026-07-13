@@ -258,6 +258,26 @@ def test_incomplete_capture_interrupts_settling_across_identity_fallback(tmp_pat
     assert observation.state == "possibly_active"
 
 
+def test_unbundled_capture_interrupts_settling(tmp_path) -> None:
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    started = datetime(2026, 7, 13, 12, 0, tzinfo=UTC)
+    capture_bundle(store, source(), b"same", started)
+    store.capture_source(
+        source(),
+        b"unbundled",
+        captured_at=started + timedelta(seconds=31),
+    )
+    _, _, observation = capture_bundle(
+        store,
+        source(),
+        b"same",
+        started + timedelta(seconds=62),
+    )
+
+    assert observation.state == "possibly_active"
+    assert observation.evidence["lineage_is_source_consecutive"] is False
+
+
 def test_snapshot_history_marks_only_latest_and_supports_explicit_selection(tmp_path) -> None:
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
     started = datetime(2026, 7, 13, 12, 0, tzinfo=UTC)
