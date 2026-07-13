@@ -30,13 +30,27 @@ from session_doctor.evaluation_packets import (
 )
 from session_doctor.ids import stable_id
 
-from .connection import transaction, write_connection
+from .connection import read_connection, transaction, write_connection
 from .json_values import duckdb_value, parse_string_list
 from .normalization_runs import load_normalization, load_semantic_foundation
 
 
 class EvaluationImportError(ValueError):
     pass
+
+
+def registered_corpus_bundle_id(database_path: Path, evaluation_corpus_id: str) -> str | None:
+    with read_connection(database_path) as connection:
+        rows = connection.execute(
+            "SELECT DISTINCT snapshot_bundle_id FROM evaluation_packets "
+            "WHERE evaluation_corpus_id = ? ORDER BY snapshot_bundle_id",
+            [evaluation_corpus_id],
+        ).fetchall()
+    if not rows:
+        return None
+    if len(rows) != 1:
+        raise EvaluationImportError("registered corpus has inconsistent snapshot provenance")
+    return str(rows[0][0])
 
 
 def register_boundary_pilot(

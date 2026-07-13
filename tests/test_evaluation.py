@@ -510,7 +510,7 @@ def test_identity_exposed_packet_is_ineligible_for_audit(tmp_path) -> None:
 
 
 def test_pilot_manifest_has_stratified_preseal_cases() -> None:
-    manifest_path = Path("evaluation/boundary-pilot-v1.json")
+    manifest_path = Path("src/session_doctor/evaluation_data/boundary-pilot-v1.json")
     manifest = json.loads(manifest_path.read_text())
     cases = manifest["cases"]
     assert 20 <= len(cases) <= 30
@@ -627,6 +627,20 @@ def test_evaluation_cli_exports_and_imports_without_episode_generation(tmp_path)
     )
     assert pilot_exported.exit_code == 0
     assert len(list(pilot_output.glob("*.judge.json"))) == 24
+    bundle_count = store.table_count("snapshot_bundles")
+    repeated_pilot = runner.invoke(
+        app,
+        [
+            "evaluation",
+            "export-pilot",
+            "--output",
+            str(tmp_path / "pilot-packets-repeat"),
+            "--db",
+            str(store.database_path),
+        ],
+    )
+    assert repeated_pilot.exit_code == 0
+    assert store.table_count("snapshot_bundles") == bundle_count
     pilot_protocol = freeze_audit_protocol(
         store.database_path,
         "boundary-pilot-v1",

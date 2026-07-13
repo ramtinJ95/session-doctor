@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import tempfile
+from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -350,14 +351,10 @@ def digest_json(value: object) -> str:
     return hashlib.sha256(canonical_json(value).encode()).hexdigest()
 
 
-CANONICAL_PILOT_MANIFEST = Path(__file__).parents[2] / "evaluation/boundary-pilot-v1.json"
-
-
 def boundary_pilot_corpus_bytes() -> bytes:
-    manifest = json.loads(CANONICAL_PILOT_MANIFEST.read_text())
-    sources = json.loads(
-        (CANONICAL_PILOT_MANIFEST.parent / str(manifest["source_corpus"])).read_text()
-    )
+    data_root = files("session_doctor.evaluation_data")
+    manifest = json.loads(data_root.joinpath("boundary-pilot-v1.json").read_text())
+    sources = json.loads(data_root.joinpath(str(manifest["source_corpus"])).read_text())
     if (
         manifest.get("manifest_version") != "boundary-pilot-v1"
         or manifest.get("annotation_protocol_version") != ANNOTATION_PROTOCOL_VERSION

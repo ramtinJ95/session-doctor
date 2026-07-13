@@ -399,11 +399,13 @@ before any panel resolution. The immutable audit record stores the complete
 cohort, eligible subset, ranked nearest-20% selection, and one seed. Panel
 resolution requires that frozen corpus record. No packet may be added afterward.
 
-The checked-in `evaluation/boundary-pilot-v1.json` preregisters 24 stratified
+The packaged `src/session_doctor/evaluation_data/boundary-pilot-v1.json`
+preregisters 24 stratified
 development regions across adapters, lengths, successes, blockers,
 active/incomplete cases, and prior ambiguity. Family identity remains unknown
 or ambiguous before PR 12, so this pilot makes no checkpoint or final-test
-claim. `evaluation/boundary-pilot-sources-v1.json` supplies the ordered source
+claim. `src/session_doctor/evaluation_data/boundary-pilot-sources-v1.json`
+supplies the ordered source
 turns and intervening structures; the loader rejects missing, duplicate, or
 non-adjacent regions and derives 24 unique packet identities. Judge packets
 contain only those normalized events; selection strata stay in the private

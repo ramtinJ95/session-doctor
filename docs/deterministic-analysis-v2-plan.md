@@ -1024,7 +1024,8 @@ Implementation contract:
   cohort, then ranks that cohort and selects the nearest 20%; exposed or
   unverifiable packets remain ineligible for blinded quality claims and final
   references;
-- `evaluation/boundary-pilot-v1.json` contains 24 stratified development
+- packaged `src/session_doctor/evaluation_data/boundary-pilot-v1.json` contains
+  24 stratified development
   regions with family identity unknown/ambiguous before PR 12;
 - `evaluation export-pilot` captures the exact checked manifest/source corpus,
   registers all 24 packets under one corpus identity, and exports only opaque
