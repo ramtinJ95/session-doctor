@@ -457,6 +457,40 @@ def test_truncated_claude_child_keeps_root_bundle_incomplete(tmp_path) -> None:
     assert root_snapshot.lifecycle_state == "snapshot_incomplete"
 
 
+def test_invalid_utf8_claude_child_is_retained_as_incomplete_member(tmp_path) -> None:
+    source_root = tmp_path / "topology"
+    copytree(CLAUDE_TOPOLOGY_FIXTURE_DIR, source_root)
+    child_path = source_root / "project/session-root/subagents/agent-a.jsonl"
+    child_path.write_bytes(b"\xff")
+    database_path = tmp_path / "session-doctor.duckdb"
+
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "claude",
+            "--source",
+            str(source_root),
+            "--db",
+            str(database_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    store = DuckDBStore(database_path)
+    root_snapshot = next(
+        row for row in store.list_snapshots() if row.source_path.endswith("session-root.jsonl")
+    )
+    child_member = next(
+        member
+        for member in store.load_bundle_members(root_snapshot.snapshot_bundle_id)
+        if member.source_path == str(child_path)
+    )
+    assert root_snapshot.capture_status == "incomplete"
+    assert child_member.source_bytes == b"\xff"
+
+
 def test_ingest_resolves_source_path_before_deriving_ids(tmp_path) -> None:
     with runner.isolated_filesystem(temp_dir=tmp_path):
         fixture_path = CODEX_FIXTURE_DIR / "basic-session.jsonl"
@@ -788,6 +822,7 @@ def test_claude_multifile_bundle_replays_without_live_files(tmp_path) -> None:
     assert sidecar_correlated
     assert "subagent_transcript" in roles_by_kind["root_session"]
     assert not any(path.endswith("orphan.txt") for path in root_member_paths)
+    assert any(path.endswith("agent-orphan.meta.json") for path in root_member_paths)
     assert len(roles_by_kind["subsession"] & {"related_transcript", "subagent_transcript"}) <= 1
 
     root_snapshot = next(

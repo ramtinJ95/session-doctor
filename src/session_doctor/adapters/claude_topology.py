@@ -176,6 +176,9 @@ def enrich_subagent(
             candidates, status = root_candidates, "ambiguous"
     facts.source.metadata["claude_parent_link_status"] = status
     facts.source.metadata["claude_parent_candidate_count"] = len(candidates)
+    facts.source.metadata["claude_parent_candidate_source_ids"] = sorted(
+        transcripts[path].source.source_id for path in candidates
+    )
     if len(candidates) != 1 or status != "linked":
         facts.source.parent_source_id = None
         return
