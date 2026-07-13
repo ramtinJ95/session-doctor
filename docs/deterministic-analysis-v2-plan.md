@@ -329,8 +329,9 @@ Lifecycle precedence is:
    `snapshot_incomplete`;
 2. complete bundle with trustworthy native terminal evidence ->
    `terminal_observed`;
-3. later complete capture with the same `bundle_content_id` after the settling
-   interval -> `settled_unknown`;
+3. two consecutive complete captures of the same native bundle identity with
+   the same `bundle_content_id`, no intervening differing capture, and capture
+   times spanning the settling interval -> `settled_unknown`;
 4. otherwise -> `possibly_active`.
 
 For sources without terminal markers, one capture produces a
