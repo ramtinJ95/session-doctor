@@ -8,13 +8,18 @@ import pytest
 from typer.testing import CliRunner
 
 from session_doctor.adapters import ParsedSessionBundle
+from session_doctor.adapters.codex import CodexAdapter
 from session_doctor.cli import UNAVAILABLE_REBUILD_MESSAGE, app
+from session_doctor.episode_workflow import analyze_session_episodes
 from session_doctor.schemas import (
     AgentName,
     BoundaryDecision,
     Message,
     NormalizedRole,
+    RawEvent,
     Session,
+    SessionSource,
+    ToolCall,
 )
 from session_doctor.segmentation import broad_goal_similarity, segment_session
 from session_doctor.store import DuckDBStore
@@ -79,6 +84,13 @@ def test_explicit_new_task_splits_without_closure() -> None:
     )
 
 
+def test_separate_question_is_an_explicit_split_marker() -> None:
+    result = segment_session(
+        bundle("Fix parser tests", "Separate question: how is this packaged?"), lifecycle()
+    )
+    assert result.boundaries[0].decision is BoundaryDecision.SPLIT
+
+
 @pytest.mark.parametrize(
     "follow_up",
     [
@@ -116,6 +128,38 @@ def test_closure_and_strong_topic_shift_split() -> None:
     )
     assert len(result.episodes) == 2
     assert result.boundaries[0].decision is BoundaryDecision.SPLIT
+    assert "event-a-0" in result.boundaries[0].evidence_anchor_ids
+    assert "event-a-0" in result.episodes[0].event_anchor_ids
+
+
+def test_pending_tool_work_prevents_closure_split() -> None:
+    pending = bundle(
+        "Repair parser regression",
+        "Draft launch announcement",
+        closed_after={0},
+    )
+    pending.raw_events = [
+        RawEvent(
+            event_id=f"event-{index}",
+            source_id="source-s1",
+            agent_name=AgentName.CODEX,
+            record_index=index,
+        )
+        for index in range(4)
+    ]
+    pending.messages[0].source_event_id = "event-0"
+    pending.messages[1].source_event_id = "event-1"
+    pending.messages[2].source_event_id = "event-3"
+    pending.tool_calls = [
+        ToolCall(
+            tool_call_id="pending-call",
+            session_id="s1",
+            source_event_id="event-2",
+            name="shell",
+        )
+    ]
+    result = segment_session(pending, lifecycle())
+    assert result.boundaries[0].decision is BoundaryDecision.AMBIGUOUS
 
 
 def test_sessions_never_merge_and_active_lifecycle_is_provisional() -> None:
@@ -130,16 +174,17 @@ def test_sessions_never_merge_and_active_lifecycle_is_provisional() -> None:
 
 def test_broad_goal_similarity_is_unicode_aware() -> None:
     assert broad_goal_similarity("Ｆｉｘ Café parser", "fix café parser") == 1.0
+    assert broad_goal_similarity("✨", "✨") is None
 
 
 @pytest.mark.parametrize(
     ("arguments", "command"),
     [
-        (["summary"], "summary"),
-        (["trends"], "trends"),
-        (["report"], "report"),
-        (["graph"], "graph"),
-        (["projects", "list"], "projects list"),
+        (["summary", "--db", "ignored.duckdb"], "summary"),
+        (["trends", "--format", "html"], "trends"),
+        (["report", "session-1", "--db", "ignored.duckdb"], "report"),
+        (["graph", "session-1"], "graph"),
+        (["projects", "list", "--agent", "codex"], "projects list"),
     ],
 )
 def test_downstream_commands_are_explicitly_unavailable(arguments, command) -> None:
@@ -175,7 +220,15 @@ def test_episode_analysis_json_contains_no_v1_scores(tmp_path) -> None:
 
 def test_schema_v10_rebuild_drops_legacy_analysis_tables(tmp_path) -> None:
     database = tmp_path / "legacy-v9.duckdb"
-    DuckDBStore(database).initialize()
+    store = DuckDBStore(database)
+    source = SessionSource(
+        source_id="migration-source",
+        agent_name=AgentName.CODEX,
+        source_path="/sessions/migration.jsonl",
+    )
+    captured = store.capture_source(source, b"durable migration bytes")
+    bundle_row = store.create_single_source_bundle(source, captured, "migration-native")
+    lifecycle_row = store.record_lifecycle(bundle_row.snapshot_bundle_id, terminal_observed=True)
     with duckdb.connect(str(database)) as connection:
         for table in (
             "analysis_runs",
@@ -186,7 +239,7 @@ def test_schema_v10_rebuild_drops_legacy_analysis_tables(tmp_path) -> None:
             connection.execute(f"CREATE TABLE {table} (id VARCHAR)")
         connection.execute("DELETE FROM schema_migrations")
         connection.execute("INSERT INTO schema_migrations (version) VALUES (9)")
-    DuckDBStore(database).initialize()
+    store.initialize()
     with duckdb.connect(str(database), read_only=True) as connection:
         tables = {row[0] for row in connection.execute("SHOW TABLES").fetchall()}
     assert (
@@ -198,3 +251,81 @@ def test_schema_v10_rebuild_drops_legacy_analysis_tables(tmp_path) -> None:
         }
         & tables
     )
+    assert store.load_snapshot_bytes(captured.snapshot_id) == b"durable migration bytes"
+    migrated_lifecycle = store.lifecycle_for_bundle(bundle_row.snapshot_bundle_id)
+    assert migrated_lifecycle is not None
+    assert migrated_lifecycle.lifecycle_observation_id == lifecycle_row.lifecycle_observation_id
+
+
+def test_latest_capture_bundle_is_used_for_a_b_a_history(tmp_path) -> None:
+    store = DuckDBStore(tmp_path / "history.duckdb")
+    source = SessionSource(
+        source_id="source-history",
+        agent_name=AgentName.CODEX,
+        source_path="/sessions/history.jsonl",
+    )
+    latest_bundle_id = ""
+    for content, event_id in ((b"A", "event-a"), (b"B", "event-b"), (b"A", "event-a")):
+        captured = store.capture_source(source, content)
+        captured_bundle = store.create_single_source_bundle(source, captured, "native-history")
+        latest_bundle_id = captured_bundle.snapshot_bundle_id
+        parsed = ParsedSessionBundle(
+            session=Session(
+                session_id="session-history",
+                source_id=source.source_id,
+                agent_name=AgentName.CODEX,
+                native_session_id="native-history",
+            ),
+            raw_events=[
+                RawEvent(
+                    event_id=event_id,
+                    source_id=source.source_id,
+                    agent_name=AgentName.CODEX,
+                    record_index=0,
+                )
+            ],
+            messages=[
+                Message(
+                    message_id=f"message-{event_id}",
+                    session_id="session-history",
+                    source_event_id=event_id,
+                    role=NormalizedRole.USER,
+                    text=content.decode(),
+                )
+            ],
+        )
+        store.insert_parsed_bundle(
+            source,
+            parsed,
+            captured,
+            captured_bundle,
+            adapter_version=CodexAdapter.version,
+            capability_declarations=CodexAdapter.capabilities,
+        )
+        store.record_lifecycle(captured_bundle.snapshot_bundle_id, terminal_observed=False)
+    analysis = analyze_session_episodes(store, "session-history", store.database_path)
+    latest_lifecycle = store.lifecycle_for_bundle(latest_bundle_id)
+    assert latest_lifecycle is not None
+    assert analysis.episodes[0].first_user_anchor_id == "event-a"
+    assert analysis.lifecycle_observation_id == latest_lifecycle.lifecycle_observation_id
+
+
+def test_v1_payload_and_producer_modules_are_absent() -> None:
+    from pathlib import Path
+
+    source_root = Path("src/session_doctor")
+    forbidden_modules = (
+        "analysis_workflow.py",
+        "report_models.py",
+        "report_payload.py",
+        "graph_projection.py",
+        "summary_payload.py",
+        "trend_payload.py",
+    )
+    assert all(not (source_root / name).exists() for name in forbidden_modules)
+    forbidden_terms = ("friction_score", "stuckness_score", "user_stuck")
+    for path in source_root.rglob("*.py"):
+        if path.name == "migrations.py":
+            continue
+        text = path.read_text()
+        assert not any(term in text for term in forbidden_terms), path

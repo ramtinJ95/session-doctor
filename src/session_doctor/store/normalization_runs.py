@@ -443,19 +443,27 @@ def versions_compatible(
 
 
 def load_normalization(
-    database_path: Path, normalization_run_id: str
+    database_path: Path,
+    normalization_run_id: str,
+    snapshot_bundle_id: str | None = None,
 ) -> StoredNormalization | None:
     with read_connection(database_path) as connection:
+        bundle_clause = " AND b.snapshot_bundle_id = ?" if snapshot_bundle_id is not None else ""
+        params = (
+            [normalization_run_id, snapshot_bundle_id]
+            if snapshot_bundle_id is not None
+            else [normalization_run_id]
+        )
         run_row = connection.execute(
-            """
+            f"""
             SELECT r.bundle_content_id, b.snapshot_bundle_id, r.adapter_name,
                 r.adapter_version, r.normalization_version, r.configuration_hash
             FROM normalization_runs AS r
             JOIN normalization_run_bundles AS b USING (normalization_run_id)
-            WHERE r.normalization_run_id = ?
+            WHERE r.normalization_run_id = ? {bundle_clause}
             ORDER BY b.snapshot_bundle_id LIMIT 1
             """,
-            [normalization_run_id],
+            params,
         ).fetchone()
         if run_row is None:
             return None
