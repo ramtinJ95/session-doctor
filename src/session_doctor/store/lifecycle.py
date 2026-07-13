@@ -70,6 +70,31 @@ def record_lifecycle_observation(
                 """,
                 [previous_bundle_id],
             ).fetchone()
+        primary = connection.execute(
+            """
+            SELECT s.logical_source_id, s.capture_sequence
+            FROM snapshot_bundles AS b
+            JOIN source_snapshots AS s ON s.snapshot_id = b.primary_snapshot_id
+            WHERE b.snapshot_bundle_id = ?
+            """,
+            [snapshot_bundle_id],
+        ).fetchone()
+        immediately_previous_bundle_id = None
+        if primary is not None:
+            immediately_previous = connection.execute(
+                """
+                SELECT b.snapshot_bundle_id
+                FROM snapshot_bundles AS b
+                JOIN source_snapshots AS s ON s.snapshot_id = b.primary_snapshot_id
+                WHERE s.logical_source_id = ? AND s.capture_sequence < ?
+                ORDER BY s.capture_sequence DESC LIMIT 1
+                """,
+                [primary[0], primary[1]],
+            ).fetchone()
+            immediately_previous_bundle_id = (
+                immediately_previous[0] if immediately_previous else None
+            )
+        lineage_is_consecutive = immediately_previous_bundle_id == previous_bundle_id
 
         if capture_status != "complete":
             state = "snapshot_incomplete"
@@ -77,7 +102,7 @@ def record_lifecycle_observation(
         elif terminal_observed:
             state = "terminal_observed"
             reason = "native_terminal_evidence"
-        elif _qualifies_as_settled(current, previous):
+        elif _qualifies_as_settled(current, previous, lineage_is_consecutive):
             state = "settled_unknown"
             reason = "consecutive_identical_complete_bundles"
         else:
@@ -94,6 +119,7 @@ def record_lifecycle_observation(
             "previous_snapshot_bundle_id": (
                 str(previous_bundle_id) if previous_bundle_id is not None else None
             ),
+            "lineage_is_source_consecutive": lineage_is_consecutive,
         }
         observation_id = stable_id(
             "lifecycle-observation",
@@ -126,8 +152,12 @@ def record_lifecycle_observation(
     )
 
 
-def _qualifies_as_settled(current: tuple[object, ...], previous: tuple[object, ...] | None) -> bool:
-    if previous is None:
+def _qualifies_as_settled(
+    current: tuple[object, ...],
+    previous: tuple[object, ...] | None,
+    lineage_is_consecutive: bool,
+) -> bool:
+    if previous is None or not lineage_is_consecutive:
         return False
     current_content_id = current[0]
     current_sequence = int(str(current[3]))

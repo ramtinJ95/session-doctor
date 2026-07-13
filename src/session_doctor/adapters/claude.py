@@ -200,26 +200,31 @@ class ClaudeCodeAdapter(BaseAdapter):
             key: value for key, value in source.metadata.items() if not key.startswith("claude_")
         }
         metadata["claude_multifile_evidence_status"] = "unavailable_until_bundle_capture"
-        return source.model_copy(update={"parent_source_id": None, "metadata": metadata})
+        return source.model_copy(update={"metadata": metadata})
 
     def bundle_member_sources(
         self, source: SessionSource, source_bytes: bytes
     ) -> tuple[tuple[SessionSource, str], ...]:
         source_path = Path(source.source_path).expanduser()
         session_dir = claude_session_directory(source_path)
-        candidates = (
-            [candidate for candidate in session_dir.rglob("*") if candidate.is_file()]
-            if session_dir.is_dir()
-            else []
-        )
-        root_path = session_dir.parent / f"{session_dir.name}.jsonl"
-        if root_path.is_file():
-            candidates.append(root_path)
-        for candidate in tuple(candidates):
-            if candidate.parent.name == "subagents" and candidate.suffix == ".jsonl":
-                candidates.append(candidate.with_suffix(".meta.json"))
-        if source_path.parent.name == "subagents":
+        candidates: list[Path] = []
+        if source.source_kind is SourceKind.ROOT_SESSION and session_dir.is_dir():
+            candidates.extend(
+                candidate for candidate in session_dir.rglob("*") if candidate.is_file()
+            )
+            for candidate in tuple(candidates):
+                if candidate.parent.name == "subagents" and candidate.suffix == ".jsonl":
+                    candidates.append(candidate.with_suffix(".meta.json"))
+        elif source.source_kind is SourceKind.SUBSESSION:
             candidates.append(source_path.with_suffix(".meta.json"))
+            root_path = session_dir.parent / f"{session_dir.name}.jsonl"
+            parent_candidates = [root_path]
+            parent_candidates.extend(sorted((session_dir / "subagents").glob("*.jsonl")))
+            candidates.extend(
+                candidate
+                for candidate in parent_candidates
+                if source.parent_source_id == source_id_for_path(self.name, candidate)
+            )
         for line in source_bytes.decode("utf-8").splitlines():
             try:
                 record = json.loads(line)
@@ -271,6 +276,8 @@ class ClaudeCodeAdapter(BaseAdapter):
         }
         enrich_claude_sources(sources, source_bytes_by_path)
         prepared = next(row for row in sources if row.source_id == source.source_id)
+        if source.parent_source_id is not None:
+            prepared.parent_source_id = source.parent_source_id
         prepared.metadata.pop("claude_multifile_evidence_status", None)
         prepared.metadata["claude_captured_tool_results"] = {
             str(Path(member.source.source_path).resolve()): summarize_sidecar_bytes(

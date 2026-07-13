@@ -456,6 +456,7 @@ def add_bundle_members(
         identity_rows = connection.execute(
             """
             SELECT m.capture_order, m.member_role, m.member_capture_status,
+                m.source_id, m.source_path, coalesce(m.logical_source_id, ''),
                 coalesce(s.snapshot_content_id, '')
             FROM bundle_member_capture_metadata AS m
             LEFT JOIN source_snapshots AS s ON s.snapshot_id = m.snapshot_id

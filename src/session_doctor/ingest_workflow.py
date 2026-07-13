@@ -46,6 +46,17 @@ class IngestSummary:
     skipped_sources: tuple[SkippedSource, ...] = ()
 
 
+class BundleMemberCaptureError(RuntimeError):
+    def __init__(
+        self,
+        cause: Exception,
+        members: tuple[BundleMemberCapture, ...],
+    ) -> None:
+        self.cause = cause
+        self.members = members
+        super().__init__(str(cause))
+
+
 def ingest_sources(
     adapter: BaseAdapter,
     sources: list[SessionSource],
@@ -82,39 +93,31 @@ def ingest_sources(
                 native_modified_at=primary_before,
                 captured_at=primary_started_at,
             )
-            adapter_members, bundle_members = capture_bundle_members(
-                adapter,
-                captured_parse_source,
-                source_bytes,
-                store,
-            )
-            prepared_source = adapter.prepare_captured_source(
-                captured_parse_source,
-                adapter_members,
-            )
             primary_changed = primary_signature_before != primary_signature_after
             primary_capture_status = "changed_during_capture" if primary_changed else "captured"
-            aggregate_capture_status = (
-                "skewed"
-                if primary_changed
-                or any(
-                    member.member_capture_status == "changed_during_capture"
-                    for member in bundle_members
-                )
-                else "incomplete"
-                if any(
-                    member.member_capture_status in {"missing", "unreadable"}
-                    for member in bundle_members
-                )
-                else "complete"
-            )
+            bundle_members: tuple[BundleMemberCapture, ...] = ()
             try:
+                adapter_members, bundle_members = capture_bundle_members(
+                    adapter,
+                    captured_parse_source,
+                    source_bytes,
+                    store,
+                )
+                prepared_source = adapter.prepare_captured_source(
+                    captured_parse_source,
+                    adapter_members,
+                )
+                aggregate_capture_status = capture_status(primary_changed, bundle_members)
                 bundle = adapter.parse_source(prepared_source, source_bytes)
-                if aggregate_capture_status == "complete" and parse_snapshot_incomplete(
-                    bundle, source_bytes
-                ):
+                if aggregate_capture_status == "complete" and parse_snapshot_incomplete(bundle):
                     aggregate_capture_status = "incomplete"
-            except Exception:
+                terminal_observed = adapter.terminal_observed(
+                    captured_parse_source,
+                    source_bytes,
+                )
+            except Exception as exc:
+                if isinstance(exc, BundleMemberCaptureError):
+                    bundle_members = exc.members
                 failed_bundle = store.create_single_source_bundle(
                     captured_parse_source,
                     captured_source,
@@ -132,6 +135,8 @@ def ingest_sources(
                     failed_bundle.snapshot_bundle_id,
                     terminal_observed=False,
                 )
+                if isinstance(exc, BundleMemberCaptureError):
+                    raise exc.cause from exc
                 raise
         except RecoverableSourceError as exc:
             if not continue_on_source_error:
@@ -167,10 +172,7 @@ def ingest_sources(
         captured_bundle = store.add_bundle_members(captured_bundle, bundle_members)
         store.record_lifecycle(
             captured_bundle.snapshot_bundle_id,
-            terminal_observed=adapter.terminal_observed(
-                captured_parse_source,
-                source_bytes,
-            ),
+            terminal_observed=terminal_observed,
         )
         store.insert_parsed_bundle(
             captured_parse_source,
@@ -215,53 +217,69 @@ def capture_bundle_members(
         CapturedAdapterMember(primary_source, "primary", primary_bytes)
     ]
     bundle_members: list[BundleMemberCapture] = []
-    for capture_order, (member_source, member_role) in enumerate(
-        adapter.bundle_member_sources(primary_source, primary_bytes), start=1
-    ):
-        path = Path(member_source.source_path).expanduser()
-        started_at = datetime.now(UTC)
-        signature_before = file_capture_signature(path)
-        modified_before = file_modified_at(path)
-        try:
-            member_bytes = path.read_bytes()
-        except FileNotFoundError:
-            status = "missing"
-            member_bytes = None
-        except OSError:
-            status = "unreadable"
-            member_bytes = None
-        completed_at = datetime.now(UTC)
-        modified_after = file_modified_at(path)
-        signature_after = file_capture_signature(path)
-        captured = None
-        if member_bytes is not None:
-            status = "changed_during_capture" if signature_before != signature_after else "captured"
-            captured = store.capture_source(
-                member_source,
-                member_bytes,
-                native_modified_at=modified_before,
-                captured_at=started_at,
+    try:
+        member_sources = adapter.bundle_member_sources(primary_source, primary_bytes)
+        for capture_order, (member_source, member_role) in enumerate(member_sources, start=1):
+            path = Path(member_source.source_path).expanduser()
+            started_at = datetime.now(UTC)
+            signature_before = file_capture_signature(path)
+            modified_before = file_modified_at(path)
+            try:
+                member_bytes = path.read_bytes()
+            except FileNotFoundError:
+                status = "missing"
+                member_bytes = None
+            except OSError:
+                status = "unreadable"
+                member_bytes = None
+            completed_at = datetime.now(UTC)
+            modified_after = file_modified_at(path)
+            signature_after = file_capture_signature(path)
+            captured = None
+            if member_bytes is not None:
+                status = (
+                    "changed_during_capture" if signature_before != signature_after else "captured"
+                )
+                captured = store.capture_source(
+                    member_source,
+                    member_bytes,
+                    native_modified_at=modified_before,
+                    captured_at=started_at,
+                )
+                adapter_members.append(
+                    CapturedAdapterMember(member_source, member_role, member_bytes)
+                )
+            bundle_members.append(
+                BundleMemberCapture(
+                    source_id=member_source.source_id,
+                    source_path=member_source.source_path,
+                    member_role=member_role,
+                    member_capture_status=status,
+                    capture_order=capture_order,
+                    capture_started_at=started_at,
+                    capture_completed_at=completed_at,
+                    captured_source=captured,
+                    native_modified_before=modified_before,
+                    native_modified_after=modified_after,
+                    evidence={
+                        "signature_before": signature_before,
+                        "signature_after": signature_after,
+                    },
+                )
             )
-            adapter_members.append(CapturedAdapterMember(member_source, member_role, member_bytes))
-        bundle_members.append(
-            BundleMemberCapture(
-                source_id=member_source.source_id,
-                source_path=member_source.source_path,
-                member_role=member_role,
-                member_capture_status=status,
-                capture_order=capture_order,
-                capture_started_at=started_at,
-                capture_completed_at=completed_at,
-                captured_source=captured,
-                native_modified_before=modified_before,
-                native_modified_after=modified_after,
-                evidence={
-                    "signature_before": signature_before,
-                    "signature_after": signature_after,
-                },
-            )
-        )
+    except Exception as exc:
+        raise BundleMemberCaptureError(exc, tuple(bundle_members)) from exc
     return tuple(adapter_members), tuple(bundle_members)
+
+
+def capture_status(primary_changed: bool, members: tuple[BundleMemberCapture, ...]) -> str:
+    if primary_changed or any(
+        member.member_capture_status == "changed_during_capture" for member in members
+    ):
+        return "skewed"
+    if any(member.member_capture_status in {"missing", "unreadable"} for member in members):
+        return "incomplete"
+    return "complete"
 
 
 def file_modified_at(path: Path) -> datetime | None:
@@ -279,14 +297,11 @@ def file_capture_signature(path: Path) -> tuple[int, int] | None:
     return stat.st_size, stat.st_mtime_ns
 
 
-def parse_snapshot_incomplete(bundle: ParsedSessionBundle, source_bytes: bytes) -> bool:
-    source_lines = source_bytes.decode("utf-8").splitlines()
-    last_record_index = max(len(source_lines) - 1, 0)
-    last_line = source_lines[-1].rstrip() if source_lines else ""
-    if last_line.endswith(("}", "]")):
-        return False
-    return any(
-        warning.metadata.get("code") == "malformed_json"
-        and warning.record_index == last_record_index
+def parse_snapshot_incomplete(bundle: ParsedSessionBundle) -> bool:
+    malformed_indexes = {
+        warning.record_index
         for warning in bundle.parse_warnings
-    )
+        if warning.metadata.get("code") == "malformed_json" and warning.record_index is not None
+    }
+    observed_indexes = malformed_indexes | {event.record_index for event in bundle.raw_events}
+    return bool(observed_indexes and max(observed_indexes) in malformed_indexes)
