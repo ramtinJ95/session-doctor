@@ -58,11 +58,11 @@ identity view with no derived-analysis dependency.
 
 ### Phase 11: Standalone Visual Reports And Trend Dashboards
 
-Until PR 7 removes the dependent v1 projections, HTML renderers consume typed
-projections only, write one self-contained offline file, and do not query
-DuckDB. Graph remains JSON-only. These are current output-safety requirements,
-not references to the historical phase document. The v2 report/graph/trend
-replacements inherit them when PRs 20-22 restore those surfaces.
+Until PR 7 removes the dependent v1 projections, renderers consume typed projections only.
+HTML writes one self-contained offline file and does not query DuckDB. Graph remains JSON-only.
+These are current output-safety requirements, not references to the historical
+phase document. The v2 report/graph/trend replacements inherit them when PRs 20-22 restore
+those surfaces.
 
 ## Architecture
 
