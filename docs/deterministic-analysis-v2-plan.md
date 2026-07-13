@@ -1127,13 +1127,13 @@ Implementation contract:
 - `segmentation-v2` adds only narrow anaphoric continuation markers accepted by
   development calibration and preserves ambiguity for generic imperatives or
   unsupported split evidence;
-- five `episode-evidence-input-v1` identities freeze the adjudicated pilot
+- three `episode-evidence-input-v1` identities freeze the adjudicated pilot
   episode inputs, while task-specific packet IDs remain unassigned until each
   owning rubric and answer set is versioned;
 - the target-model-unverifiable synthetic pilot remains development-only: its
-  22 no-split and two split references make no blinded, checkpoint, final, or
-  family-partition quality claim; the provisional candidate keeps nine cases
-  ambiguous and makes no unsupported split prediction.
+  22 no-split and two ambiguous references make no blinded, checkpoint, final,
+  or family-partition quality claim; the provisional candidate keeps nine cases
+  ambiguous and has no adjudicated split support.
 
 Deliverables:
 

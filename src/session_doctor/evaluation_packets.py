@@ -16,11 +16,15 @@ from session_doctor.evaluation_models import (
     EVALUATION_SCHEMA_VERSION,
     BoundaryPacket,
     EvaluationPacketExport,
+    HumanAdjudication,
     IdentityExposureStatus,
+    JudgeAnnotation,
+    JudgePanelResolution,
     PacketEvent,
     PacketKind,
     RoutingEnvelope,
 )
+from session_doctor.ids import stable_id
 from session_doctor.schemas import NormalizedRole, SemanticFoundation
 
 if TYPE_CHECKING:
@@ -478,6 +482,7 @@ def load_segmentation_calibration() -> dict[str, Any]:
         raise ValueError("segmentation calibration boundary references are incomplete")
     reference_packet_ids: set[str] = set()
     reference_ids: set[str] = set()
+    judge_annotation_ids: set[str] = set()
     for reference in references:
         if not isinstance(reference, dict):
             raise ValueError("segmentation calibration boundary reference is invalid")
@@ -511,10 +516,11 @@ def load_segmentation_calibration() -> dict[str, Any]:
         annotations = reference.get("judge_annotations")
         if not isinstance(annotations, list) or len(annotations) != 3:
             raise ValueError("segmentation calibration requires three judges per packet")
+        parsed_annotations = [
+            JudgeAnnotation.model_validate(annotation) for annotation in annotations
+        ]
         judge_identities = {
-            (annotation.get("judge_provider"), annotation.get("judge_model"))
-            for annotation in annotations
-            if isinstance(annotation, dict)
+            (annotation.judge_provider, annotation.judge_model) for annotation in parsed_annotations
         }
         if len(judge_identities) != 3:
             raise ValueError("segmentation calibration panel judges must be distinct")
@@ -528,18 +534,29 @@ def load_segmentation_calibration() -> dict[str, Any]:
             for value in (event.evidence_id, event.source_event_id)
             if value is not None
         }
-        for annotation in annotations:
-            if not isinstance(annotation, dict):
-                raise ValueError("segmentation calibration judge annotation is invalid")
-            evidence_ids = annotation.get("evidence_ids")
+        for annotation in parsed_annotations:
+            evidence_ids = annotation.evidence_ids
+            expected_annotation_id = digest_json(
+                {
+                    "packet_id": packet_id,
+                    "provider": annotation.judge_provider,
+                    "model": annotation.judge_model,
+                    "prompt": "boundary-calibration-prompt-v1",
+                    "answer": annotation.answer,
+                    "evidence_ids": evidence_ids,
+                }
+            )
             if (
-                annotation.get("answer") not in packet.allowed_answers
-                or not isinstance(evidence_ids, list)
-                or not evidence_ids
+                annotation.packet_id != packet_id
+                or annotation.judge_prompt_version != "boundary-calibration-prompt-v1"
+                or annotation.judge_annotation_id != expected_annotation_id
+                or annotation.answer not in packet.allowed_answers
                 or not set(evidence_ids) <= citable_ids
+                or annotation.model_dump(mode="json")["created_at"] != document.get("frozen_at")
             ):
-                raise ValueError("segmentation calibration judge evidence is invalid")
-        answers = {annotation["answer"] for annotation in annotations}
+                raise ValueError("segmentation calibration judge provenance is invalid")
+            judge_annotation_ids.add(annotation.judge_annotation_id)
+        answers = {annotation.answer for annotation in parsed_annotations}
         panel_status = "unanimous" if len(answers) == 1 else "disputed"
         panel_answer = next(iter(answers)) if panel_status == "unanimous" else None
         if (
@@ -547,10 +564,29 @@ def load_segmentation_calibration() -> dict[str, Any]:
             or reference.get("panel_answer") != panel_answer
         ):
             raise ValueError("segmentation calibration panel resolution is invalid")
+        panel = JudgePanelResolution.model_validate(reference.get("judge_panel_resolution"))
+        expected_panel_id = stable_id(
+            "judge-panel",
+            packet_id,
+            *sorted(annotation.judge_annotation_id for annotation in parsed_annotations),
+        )
+        if (
+            panel.judge_panel_resolution_id != expected_panel_id
+            or panel.packet_id != packet_id
+            or panel.judge_annotation_ids
+            != sorted(annotation.judge_annotation_id for annotation in parsed_annotations)
+            or panel.consensus_status.value != panel_status
+            or panel.unanimous_answer != panel_answer
+            or reference.get("source_judge_panel_resolution_id") != expected_panel_id
+            or panel.model_dump(mode="json")["resolved_at"] != document.get("frozen_at")
+        ):
+            raise ValueError("segmentation calibration panel provenance is invalid")
         reference_packet_ids.add(packet_id)
         reference_ids.add(expected_reference_id)
     if reference_packet_ids != set(packets) or len(reference_ids) != len(references):
         raise ValueError("segmentation calibration references are duplicated or missing")
+    if len(judge_annotation_ids) != len(references) * 3:
+        raise ValueError("segmentation calibration judge annotations are duplicated")
 
     unanimous = sorted(
         reference["packet_id"]
@@ -569,6 +605,25 @@ def load_segmentation_calibration() -> dict[str, Any]:
             ),
         )[: round(len(unanimous) * 0.2)]
     )
+    development_audit_protocol_id = stable_id(
+        "development-audit-protocol",
+        ANNOTATION_PROTOCOL_VERSION,
+        "boundary-pilot-v1",
+        seed,
+    )
+    expected_audit_protocol = {
+        "development_audit_protocol_id": development_audit_protocol_id,
+        "annotation_protocol_version": ANNOTATION_PROTOCOL_VERSION,
+        "evaluation_corpus_id": "boundary-pilot-v1",
+        "selection_seed_id": seed,
+        "cohort_packet_ids": sorted(packets),
+        "unanimous_packet_ids": unanimous,
+        "selected_packet_ids": sorted(selected),
+        "frozen_at": document.get("frozen_at"),
+        "claim_eligibility": "ineligible_target_identity_unverifiable",
+    }
+    if document.get("development_audit_protocol") != expected_audit_protocol:
+        raise ValueError("segmentation calibration development audit protocol is invalid")
     candidate_rows: list[tuple[str, str]] = []
     for reference in references:
         packet_id = reference["packet_id"]
@@ -584,19 +639,62 @@ def load_segmentation_calibration() -> dict[str, Any]:
         else:
             expected_review_kind = None
         if expected_review_kind is None:
-            if human_review is not None:
+            if (
+                human_review is not None
+                or reference.get("source_human_adjudication_id") is not None
+                or reference.get("development_audit_selection_id") is not None
+                or reference.get("development_audit_selection") is not None
+            ):
                 raise ValueError("segmentation calibration has an unexpected human review")
             resolved_answer = reference["panel_answer"]
             resolution_status = "judge_consensus"
         else:
+            human = HumanAdjudication.model_validate(human_review)
+            expected_audit_id = (
+                stable_id("development-audit-selection", seed, packet_id)
+                if packet_id in selected
+                else None
+            )
+            expected_human_id = stable_id(
+                "human-adjudication",
+                reference["source_judge_panel_resolution_id"],
+                human.reviewer_identity,
+                human.answer,
+                *human.evidence_ids,
+            )
+            expected_audit_selection = (
+                {
+                    "development_audit_selection_id": expected_audit_id,
+                    "development_audit_protocol_id": development_audit_protocol_id,
+                    "packet_id": packet_id,
+                    "judge_panel_resolution_id": reference["source_judge_panel_resolution_id"],
+                    "selection_seed_id": seed,
+                    "selection_reason": "frozen_nearest_twenty_percent_development_sample",
+                    "selected_at": document.get("frozen_at"),
+                }
+                if expected_audit_id is not None
+                else None
+            )
             if (
-                not isinstance(human_review, dict)
-                or human_review.get("review_kind") != expected_review_kind
-                or human_review.get("answer") not in packets[packet_id].allowed_answers
+                human.review_kind.value != expected_review_kind
+                or human.packet_id != packet_id
+                or human.judge_panel_resolution_id != reference["source_judge_panel_resolution_id"]
+                or human.audit_selection_id != expected_audit_id
+                or human.human_adjudication_id != expected_human_id
+                or human.answer not in packets[packet_id].allowed_answers
+                or not set(human.evidence_ids)
+                <= {
+                    packets[packet_id].left_user_event_id,
+                    packets[packet_id].right_user_event_id,
+                }
+                or reference.get("source_human_adjudication_id") != human.human_adjudication_id
+                or reference.get("development_audit_selection_id") != expected_audit_id
+                or reference.get("development_audit_selection") != expected_audit_selection
+                or human.model_dump(mode="json")["reviewed_at"] != document.get("frozen_at")
             ):
                 raise ValueError("segmentation calibration human review is invalid")
-            resolved_answer = human_review["answer"]
-            resolution_status = "human_resolved"
+            resolved_answer = human.answer
+            resolution_status = "ambiguous" if human.answer == "ambiguous" else "human_resolved"
         if (
             reference.get("answer") != resolved_answer
             or reference.get("resolution_status") != resolution_status
@@ -639,6 +737,8 @@ def load_segmentation_calibration() -> dict[str, Any]:
         "split_recall": (
             f"{sum(candidate == answer == 'split' for candidate, answer in candidate_rows)}/"
             f"{true_split}"
+            if true_split
+            else "unavailable_no_references"
         ),
         "ambiguity_coverage": (
             f"{sum(candidate == 'ambiguous' for candidate, _ in candidate_rows)}/"

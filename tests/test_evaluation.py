@@ -659,17 +659,17 @@ def test_segmentation_calibration_freezes_references_and_episode_inputs() -> Non
         "audited_unanimous_rate": "5/23",
         "candidate": {
             "ambiguity_coverage": "9/24",
-            "exact_agreement": "15/24",
+            "exact_agreement": "17/24",
             "no_split_precision": "15/15",
             "no_split_recall": "15/22",
             "prediction_counts": {"ambiguous": 9, "no_split": 15, "split": 0},
             "split_precision": "unavailable_no_predictions",
-            "split_recall": "0/2",
+            "split_recall": "unavailable_no_references",
         },
         "disputed_panel_count": 1,
         "judge_count_per_packet": 3,
         "packet_count": 24,
-        "reference_answer_counts": {"ambiguous": 0, "no_split": 22, "split": 2},
+        "reference_answer_counts": {"ambiguous": 2, "no_split": 22, "split": 0},
         "unanimous_panel_count": 23,
     }
     references = calibration["boundary_references"]
@@ -677,7 +677,7 @@ def test_segmentation_calibration_freezes_references_and_episode_inputs() -> Non
     assert len({row["boundary_reference_id"] for row in references}) == 24
     assert sum(row["audit_selection"] == "selected" for row in references) == 5
     assert sum(row["human_review"] is not None for row in references) == 6
-    assert {row["answer"] for row in references} == {"no_split", "split"}
+    assert {row["answer"] for row in references} == {"ambiguous", "no_split"}
     assert {
         (annotation["judge_provider"], annotation["judge_model"])
         for row in references
@@ -697,7 +697,7 @@ def test_segmentation_calibration_freezes_references_and_episode_inputs() -> Non
     }
     episode_inputs = calibration["episode_evidence_inputs"]
     assert isinstance(episode_inputs, list)
-    assert len({row["episode_evidence_input_id"] for row in episode_inputs}) == 5
+    assert len({row["episode_evidence_input_id"] for row in episode_inputs}) == 3
     for source_id, expected in expected_user_events.items():
         actual = [
             event_id

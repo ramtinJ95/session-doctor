@@ -426,16 +426,21 @@ the PR 8 development calibration. Three distinct external judge models produced
 23 unanimous panels and one disputed panel. A maintainer resolved the dispute
 and audited the frozen nearest five of the 23 unanimous panels; one audited
 answer differed. The resulting 24 development references contain 22
-`no_split`, two `split`, and no `ambiguous` answers. These low-support,
+`no_split`, no `split`, and two `ambiguous` answers. These low-support,
 target-identity-unverifiable data stabilize `segmentation-v2` and synthetic
 regressions only. They make no checkpoint, final, or blinded quality claim.
-The conservative candidate exactly matches 15 of 24 references, emits nine
-explicit ambiguities, and makes no split prediction on the two-reference split
-stratum. Its 15 no-split predictions all match a development reference, but
+The conservative candidate exactly matches 17 of 24 references, emits nine
+explicit ambiguities, and has no adjudicated split support. Its 15 no-split
+predictions all match a development reference, but
 that observation is not a quality estimate.
-The same artifact freezes five deterministic episode-evidence inputs across the
+The same artifact freezes three deterministic episode-evidence inputs across the
 three pilot sources. It deliberately contains no task-specific episode packet
 IDs.
+Judge annotations, panel resolutions, human adjudications, prompt/input hashes,
+and deterministic linkage IDs are validated with the evaluation models. The
+nearest-20% sample is recorded as a separate development-audit protocol because
+target identity is unverifiable; it is deliberately not represented as a
+durable blinded `AuditSelection` or final `ReferenceResolution`.
 
 Normal production packets retain normalization-run plus
 snapshot-bundle provenance and reconstruct private target identities from the
