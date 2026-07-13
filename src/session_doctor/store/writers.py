@@ -41,6 +41,7 @@ def insert_parsed_bundle(
     captured_source: CapturedSource,
     captured_bundle: CapturedBundle,
 ) -> None:
+    validate_bundle_ownership(source, bundle)
     with write_connection(database_path) as connection, transaction(connection):
         provenance = connection.execute(
             """
@@ -151,6 +152,34 @@ class CaptureProvenanceError(RuntimeError):
     def __init__(self, source_id: str) -> None:
         self.source_id = source_id
         super().__init__(f"capture provenance does not belong to source {source_id}")
+
+
+def validate_bundle_ownership(source: SessionSource, bundle: ParsedSessionBundle) -> None:
+    session = bundle.session
+    if session is not None and (
+        session.source_id != source.source_id or session.agent_name is not source.agent_name
+    ):
+        raise CaptureProvenanceError(source.source_id)
+    if any(
+        event.source_id != source.source_id or event.agent_name is not source.agent_name
+        for event in bundle.raw_events
+    ) or any(warning.source_id != source.source_id for warning in bundle.parse_warnings):
+        raise CaptureProvenanceError(source.source_id)
+
+    session_scoped_rows = (
+        *bundle.messages,
+        *bundle.tool_calls,
+        *bundle.tool_results,
+        *bundle.command_runs,
+        *bundle.file_activities,
+        *bundle.model_usage,
+    )
+    if session is None:
+        if session_scoped_rows:
+            raise CaptureProvenanceError(source.source_id)
+        return
+    if any(row.session_id != session.session_id for row in session_scoped_rows):
+        raise CaptureProvenanceError(source.source_id)
 
 
 def replace_analysis_rows(
