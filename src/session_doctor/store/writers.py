@@ -31,16 +31,18 @@ from .row_mappers import (
     tool_call_rows,
     tool_result_rows,
 )
+from .snapshots import CapturedSource
 
 
 def insert_parsed_bundle(
     database_path: Path,
     source: SessionSource,
     bundle: ParsedSessionBundle,
+    captured_source: CapturedSource | None = None,
 ) -> None:
     with write_connection(database_path) as connection, transaction(connection):
         delete_source_records(connection, source.source_id)
-        insert_session_source(connection, source, bundle)
+        insert_session_source(connection, source, bundle, captured_source)
         if bundle.session:
             insert_rows(connection, "sessions", session_rows(bundle))
         insert_rows(connection, "raw_events", raw_event_rows(bundle))
@@ -115,6 +117,7 @@ def insert_session_source(
     connection: duckdb.DuckDBPyConnection,
     source: SessionSource,
     bundle: ParsedSessionBundle,
+    captured_source: CapturedSource | None,
 ) -> None:
     native_session_id = source.native_session_id
     if bundle.session and bundle.session.native_session_id:
@@ -129,9 +132,11 @@ def insert_session_source(
             discovered_at,
             native_session_id,
             parent_source_id,
+            snapshot_id,
+            snapshot_bundle_id,
             metadata_json
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             source.source_id,
@@ -141,6 +146,8 @@ def insert_session_source(
             duckdb_value(source.discovered_at),
             native_session_id,
             source.parent_source_id,
+            captured_source.snapshot_id if captured_source else None,
+            captured_source.snapshot_bundle_id if captured_source else None,
             metadata_json(source.metadata),
         ],
     )

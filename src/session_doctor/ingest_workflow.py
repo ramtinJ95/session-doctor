@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from rich.console import Console
 
@@ -10,6 +11,7 @@ from .adapters.codex import (
     CODEX_MESSAGE_SOURCE_EVENT_MSG_FALLBACK,
     CODEX_MESSAGE_SOURCE_RESPONSE_ITEM,
 )
+from .adapters.common import read_source_bytes
 from .schemas.sessions import SessionSource
 from .store import DuckDBStore
 
@@ -62,7 +64,12 @@ def ingest_sources(
 
     for session_source in sources:
         try:
-            bundle = adapter.parse_source(session_source)
+            source_bytes = read_source_bytes(
+                Path(session_source.source_path).expanduser(),
+                agent_display_name=adapter.display_name,
+            )
+            captured_source = store.capture_source(session_source, source_bytes)
+            bundle = adapter.parse_source(session_source, source_bytes)
         except RecoverableSourceError as exc:
             if not continue_on_source_error:
                 raise
@@ -78,7 +85,7 @@ def ingest_sources(
                 f"(category={skipped_source.category}) {skipped_source.detail}"
             )
             continue
-        store.insert_parsed_bundle(session_source, bundle)
+        store.insert_parsed_bundle(session_source, bundle, captured_source)
 
         source_kind = session_source.source_kind.value
         summary.parsed_source_counts[source_kind] = (

@@ -29,6 +29,7 @@ from session_doctor.schemas import (
     ToolResult,
 )
 from session_doctor.store import (
+    DURABLE_TABLE_NAMES,
     SCHEMA_VERSION,
     TABLE_NAMES,
     AnalysisCompatibility,
@@ -53,6 +54,13 @@ def test_store_initialize_creates_expected_tables(tmp_path) -> None:
     assert set(TABLE_NAMES).issubset(set(info.tables))
     assert "graph_nodes" not in info.tables
     assert "graph_edges" not in info.tables
+    assert set(DURABLE_TABLE_NAMES) == {
+        "source_blobs",
+        "logical_sources",
+        "source_snapshots",
+        "snapshot_bundles",
+        "snapshot_bundle_members",
+    }
 
 
 def test_store_info_handles_missing_database(tmp_path) -> None:
@@ -75,6 +83,37 @@ def test_store_initialize_records_current_internal_schema_version(tmp_path) -> N
         row = connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
 
     assert row == (SCHEMA_VERSION,)
+
+
+def test_source_snapshots_round_trip_exact_bytes_and_deduplicate_blobs(tmp_path) -> None:
+    database_path = tmp_path / "session-doctor.duckdb"
+    store = DuckDBStore(database_path)
+    source = SessionSource(
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+        source_path="/sessions/source-1.jsonl",
+    )
+
+    first = store.capture_source(source, b'{"type":"first"}\n\x00')
+    second = store.capture_source(source, b'{"type":"first"}\n\x00')
+    third = store.capture_source(source, b'{"type":"first"}\n{"type":"second"}\n')
+
+    assert first.blob_id == second.blob_id
+    assert first.snapshot_content_id == second.snapshot_content_id
+    assert first.snapshot_id != second.snapshot_id
+    assert second.snapshot_id != third.snapshot_id
+    assert second.capture_sequence == 2
+    assert third.capture_sequence == 3
+    assert store.load_snapshot_bytes(first.snapshot_id) == b'{"type":"first"}\n\x00'
+    assert store.load_snapshot_bytes(third.snapshot_id) == (
+        b'{"type":"first"}\n{"type":"second"}\n'
+    )
+
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        assert connection.execute("SELECT count(*) FROM source_blobs").fetchone() == (2,)
+        assert connection.execute("SELECT count(*) FROM source_snapshots").fetchone() == (3,)
+        assert connection.execute("SELECT count(*) FROM snapshot_bundles").fetchone() == (3,)
+        assert connection.execute("SELECT count(*) FROM snapshot_bundle_members").fetchone() == (3,)
 
 
 def test_store_classifies_filtered_analysis_targets_and_orders_untimed_last(tmp_path) -> None:
@@ -176,7 +215,10 @@ def test_store_initialize_rejects_stale_schema_without_modifying_it(tmp_path) ->
 
     store = DuckDBStore(database_path)
 
-    with pytest.raises(SchemaMismatchError, match="version is 2; expected 4"):
+    with pytest.raises(
+        SchemaMismatchError,
+        match=rf"version is 2; expected {SCHEMA_VERSION}",
+    ):
         store.initialize()
     with pytest.raises(SchemaMismatchError, match="Rebuild the database"):
         store.aggregate_summary(SummaryFilters())

@@ -73,9 +73,11 @@ class CodexAdapter(BaseAdapter):
             if path.is_file()
         ]
 
-    def parse_source(self, source: SessionSource) -> ParsedSessionBundle:
+    def parse_source(
+        self, source: SessionSource, source_bytes: bytes | None = None
+    ) -> ParsedSessionBundle:
         source_path = Path(source.source_path).expanduser()
-        valid_records, malformed_warnings = read_codex_jsonl(source, source_path)
+        valid_records, malformed_warnings = read_codex_jsonl(source, source_path, source_bytes)
         session_metadata = extract_session_metadata(source, source_path, valid_records)
         bundle = ParsedSessionBundle(
             session=session_metadata.session,

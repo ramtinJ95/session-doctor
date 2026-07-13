@@ -41,6 +41,15 @@ from .row_mappers import (
     tool_call_rows,
     tool_result_rows,
 )
+from .snapshots import (
+    CapturedSource,
+)
+from .snapshots import (
+    capture_source as write_source_capture,
+)
+from .snapshots import (
+    load_snapshot_bytes as read_snapshot_bytes,
+)
 from .summary_readers import aggregate_summary as read_aggregate_summary
 from .trend_models import ProjectFilters, ProjectReport, TrendFilters, TrendReport
 from .trend_readers import read_trends
@@ -93,8 +102,15 @@ class DuckDBStore:
         self,
         source: SessionSource,
         bundle: ParsedSessionBundle,
+        captured_source: CapturedSource | None = None,
     ) -> None:
-        write_parsed_bundle(self.database_path, source, bundle)
+        write_parsed_bundle(self.database_path, source, bundle, captured_source)
+
+    def capture_source(self, source: SessionSource, source_bytes: bytes) -> CapturedSource:
+        return write_source_capture(self.database_path, source, source_bytes)
+
+    def load_snapshot_bytes(self, snapshot_id: str) -> bytes | None:
+        return read_snapshot_bytes(self.database_path, snapshot_id)
 
     def replace_analysis_rows(
         self,

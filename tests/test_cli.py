@@ -45,7 +45,9 @@ class RecoverableFailureAdapter(BaseAdapter):
             for path in sorted(root.glob("*.jsonl"))
         ]
 
-    def parse_source(self, source: SessionSource) -> ParsedSessionBundle:
+    def parse_source(
+        self, source: SessionSource, source_bytes: bytes | None = None
+    ) -> ParsedSessionBundle:
         source_path = Path(source.source_path)
         if source_path.stem.startswith("bad"):
             raise SourceReadError(source_path, "synthetic read failure")
@@ -157,7 +159,7 @@ def test_stale_database_is_inspectable_but_operational_commands_require_rebuild(
         result = runner.invoke(app, command)
         assert result.exit_code == 1
         assert "Incompatible database" in result.stdout
-        assert "expected 4" in result.stdout
+        assert f"expected {SCHEMA_VERSION}" in result.stdout
         assert "Delete it and recreate it" in result.stdout
         assert "BinderException" not in result.stdout
 
@@ -245,6 +247,14 @@ def test_ingest_codex_fixture_writes_database_and_prints_summary(tmp_path) -> No
     store = DuckDBStore(database_path)
     assert store.table_count("sessions") == 1
     assert store.table_count("messages") == 2
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        snapshot_row = connection.execute(
+            "SELECT snapshot_id, snapshot_bundle_id FROM session_sources"
+        ).fetchone()
+    assert snapshot_row is not None
+    assert snapshot_row[0] is not None
+    assert snapshot_row[1] is not None
+    assert store.load_snapshot_bytes(str(snapshot_row[0])) == fixture_path.read_bytes()
 
 
 def test_ingest_resolves_source_path_before_deriving_ids(tmp_path) -> None:
@@ -676,12 +686,13 @@ def test_ingest_unexpected_parser_failure_aborts_without_skipping(
     source_path.touch()
     adapter = RecoverableFailureAdapter()
 
-    def fail_parse(source: SessionSource) -> ParsedSessionBundle:
+    def fail_parse(source: SessionSource, source_bytes: bytes | None = None) -> ParsedSessionBundle:
         raise RuntimeError("synthetic parser bug")
 
     monkeypatch.setattr(adapter, "parse_source", fail_parse)
     monkeypatch.setattr("session_doctor.cli.adapter_for_ingest", lambda agent: adapter)
 
+    database_path = tmp_path / "session-doctor.duckdb"
     result = runner.invoke(
         app,
         [
@@ -691,7 +702,7 @@ def test_ingest_unexpected_parser_failure_aborts_without_skipping(
             "--source",
             str(source_path),
             "--db",
-            str(tmp_path / "session-doctor.duckdb"),
+            str(database_path),
         ],
     )
 
@@ -699,6 +710,8 @@ def test_ingest_unexpected_parser_failure_aborts_without_skipping(
     assert isinstance(result.exception, RuntimeError)
     assert "Skipped source" not in result.stdout
     assert "Source failed" not in result.stdout
+    assert DuckDBStore(database_path).table_count("source_blobs") == 1
+    assert DuckDBStore(database_path).table_count("source_snapshots") == 1
 
 
 def test_ingest_pi_fixture_writes_database_and_prints_summary(tmp_path) -> None:

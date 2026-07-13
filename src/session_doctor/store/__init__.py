@@ -11,7 +11,8 @@ from .duckdb import (
     StoreInfo,
     SummaryFilters,
 )
-from .migrations import SCHEMA_VERSION, TABLE_NAMES, SchemaMismatchError
+from .migrations import DURABLE_TABLE_NAMES, SCHEMA_VERSION, TABLE_NAMES, SchemaMismatchError
+from .snapshots import CapturedSource
 from .trend_models import (
     ProjectFilters,
     ProjectReport,
@@ -25,8 +26,10 @@ __all__ = [
     "AggregateSummary",
     "AnalysisCompatibility",
     "AnalysisTarget",
+    "CapturedSource",
     "DatabaseOpenError",
     "DuckDBStore",
+    "DURABLE_TABLE_NAMES",
     "SCHEMA_VERSION",
     "SchemaMismatchError",
     "ProjectFilters",

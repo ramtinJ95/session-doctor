@@ -2,10 +2,19 @@ from __future__ import annotations
 
 import duckdb
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
+
+DURABLE_TABLE_NAMES = (
+    "source_blobs",
+    "logical_sources",
+    "source_snapshots",
+    "snapshot_bundles",
+    "snapshot_bundle_members",
+)
 
 TABLE_NAMES = (
     "schema_migrations",
+    *DURABLE_TABLE_NAMES,
     "session_sources",
     "sessions",
     "raw_events",
@@ -103,6 +112,65 @@ def database_schema_version(
 
 CREATE_TABLE_STATEMENTS = (
     """
+    CREATE TABLE IF NOT EXISTS source_blobs (
+        blob_id VARCHAR PRIMARY KEY,
+        content_hash VARCHAR NOT NULL UNIQUE,
+        codec VARCHAR NOT NULL CHECK (codec IN ('zlib')),
+        compressed_bytes BLOB NOT NULL,
+        original_byte_length BIGINT NOT NULL CHECK (original_byte_length >= 0),
+        created_at TIMESTAMP NOT NULL DEFAULT current_timestamp
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS logical_sources (
+        logical_source_id VARCHAR PRIMARY KEY,
+        agent_name VARCHAR NOT NULL,
+        source_kind VARCHAR NOT NULL,
+        source_path VARCHAR NOT NULL,
+        first_seen_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+        metadata_json VARCHAR NOT NULL DEFAULT '{}'
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS source_snapshots (
+        snapshot_id VARCHAR PRIMARY KEY,
+        logical_source_id VARCHAR NOT NULL,
+        blob_id VARCHAR NOT NULL,
+        snapshot_content_id VARCHAR NOT NULL,
+        capture_sequence BIGINT NOT NULL CHECK (capture_sequence > 0),
+        captured_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+        native_modified_at TIMESTAMP,
+        capture_status VARCHAR NOT NULL CHECK (capture_status IN ('captured')),
+        previous_snapshot_id VARCHAR,
+        UNIQUE (logical_source_id, capture_sequence)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS snapshot_bundles (
+        snapshot_bundle_id VARCHAR PRIMARY KEY,
+        bundle_content_id VARCHAR NOT NULL,
+        agent_name VARCHAR NOT NULL,
+        native_session_identity VARCHAR NOT NULL,
+        native_bundle_capture_sequence BIGINT NOT NULL
+            CHECK (native_bundle_capture_sequence > 0),
+        previous_snapshot_bundle_id VARCHAR,
+        captured_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+        UNIQUE (agent_name, native_session_identity, native_bundle_capture_sequence)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS snapshot_bundle_members (
+        snapshot_bundle_id VARCHAR NOT NULL,
+        logical_source_id VARCHAR NOT NULL,
+        snapshot_id VARCHAR,
+        capture_order INTEGER NOT NULL CHECK (capture_order >= 0),
+        member_role VARCHAR NOT NULL,
+        member_capture_status VARCHAR NOT NULL CHECK (member_capture_status IN ('captured')),
+        PRIMARY KEY (snapshot_bundle_id, logical_source_id),
+        UNIQUE (snapshot_bundle_id, capture_order)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS session_sources (
         source_id VARCHAR PRIMARY KEY,
         agent_name VARCHAR NOT NULL,
@@ -111,6 +179,8 @@ CREATE_TABLE_STATEMENTS = (
         discovered_at TIMESTAMP,
         native_session_id VARCHAR,
         parent_source_id VARCHAR,
+        snapshot_id VARCHAR,
+        snapshot_bundle_id VARCHAR,
         metadata_json VARCHAR NOT NULL DEFAULT '{}'
     )
     """,
