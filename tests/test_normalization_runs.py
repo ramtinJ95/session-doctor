@@ -122,6 +122,12 @@ def test_latest_compatible_selection_uses_parsed_versions(tmp_path) -> None:
     assert coverage.current_normalization_run_id is None
     assert coverage.selected_normalization_run_id == version_ten.normalization_run_id
     assert coverage.selected_normalization_run_id != version_nine.normalization_run_id
+    equivalent = store.normalization_coverage(
+        summary.snapshot_bundle_id,
+        adapter_name="codex",
+        adapter_version="10",
+    )
+    assert equivalent.selected_normalization_run_id == version_ten.normalization_run_id
 
 
 def test_coverage_selection_is_deterministic_and_read_only(tmp_path) -> None:
