@@ -482,6 +482,7 @@ def test_invalid_utf8_claude_child_is_retained_as_incomplete_member(tmp_path) ->
     root_snapshot = next(
         row for row in store.list_snapshots() if row.source_path.endswith("session-root.jsonl")
     )
+    assert root_snapshot.snapshot_bundle_id is not None
     child_member = next(
         member
         for member in store.load_bundle_members(root_snapshot.snapshot_bundle_id)
@@ -518,6 +519,40 @@ def test_malformed_claude_metadata_keeps_root_bundle_incomplete(tmp_path) -> Non
         if row.source_path.endswith("session-root.jsonl")
     )
     assert root_snapshot.capture_status == "incomplete"
+
+
+def test_primary_change_during_member_capture_marks_bundle_skewed(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_path = tmp_path / "session.jsonl"
+    copyfile(CLAUDE_FIXTURE_DIR / "basic-session.jsonl", source_path)
+    original_members = ClaudeCodeAdapter.bundle_member_sources
+
+    def mutate_after_discovery(self, source, source_bytes):
+        members = original_members(self, source, source_bytes)
+        Path(source.source_path).write_bytes(source_bytes + b"\n")
+        return members
+
+    monkeypatch.setattr(ClaudeCodeAdapter, "bundle_member_sources", mutate_after_discovery)
+    database_path = tmp_path / "session-doctor.duckdb"
+
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "claude",
+            "--source",
+            str(source_path),
+            "--db",
+            str(database_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    snapshot = DuckDBStore(database_path).list_snapshots()[0]
+    assert snapshot.capture_status == "skewed"
+    assert snapshot.lifecycle_state == "snapshot_incomplete"
 
 
 def test_ingest_resolves_source_path_before_deriving_ids(tmp_path) -> None:

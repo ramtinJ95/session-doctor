@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from datetime import timedelta
 
 import duckdb
 
@@ -191,7 +190,7 @@ def backfill_capture_history(connection: duckdb.DuckDBPyConnection) -> None:
         sequence = previous[3] + 1 if previous else 1
         previous_bundle_id = previous[0] if previous else None
         capture_status = (
-            "parse_failed" if native_identity_status == "fallback_parse_failed" else "complete"
+            "parse_failed" if native_identity_status == "fallback_parse_failed" else "incomplete"
         )
         connection.execute(
             """
@@ -212,14 +211,7 @@ def backfill_capture_history(connection: duckdb.DuckDBPyConnection) -> None:
                 json.dumps({"migration": "schema-v5-to-v6"}),
             ],
         )
-        state = "snapshot_incomplete" if capture_status == "parse_failed" else "possibly_active"
-        if capture_status == "complete" and (
-            previous
-            and previous[1] == content_id
-            and int(_source_capture_sequence) == previous[4] + 1
-            and captured_at - previous[2] >= timedelta(seconds=30)
-        ):
-            state = "settled_unknown"
+        state = "snapshot_incomplete"
         observation_id = stable_id("lifecycle-observation", bundle_id, "lifecycle-v1", state)
         connection.execute(
             """

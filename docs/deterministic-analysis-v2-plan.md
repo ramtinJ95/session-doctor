@@ -891,6 +891,8 @@ Implementation decisions:
   surface; raw replay requires an explicit non-existing output path unless
   `--overwrite` is supplied, and `--bundle` exports an ordered manifest plus
   every captured member to a new directory;
+- interrupted, unbundled source captures remain visible as incomplete history
+  and support exact single-file replay and direct pruning;
 - pruning accepts only a bundle's primary snapshot, blocks normalized
   dependencies unless `--force`, reports affected bundles, sources, sessions,
   analysis runs, inbound topology references, and derived-row counts, removes
