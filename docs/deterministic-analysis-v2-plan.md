@@ -881,6 +881,21 @@ Gate:
 
 ### PR 3: Snapshot Bundles, Lifecycle, Time Travel, And Pruning
 
+Implementation decisions:
+
+- DuckDB schema version 6 adds durable bundle/member capture metadata and
+  immutable lifecycle observations while preserving schema-v5 raw history;
+- non-terminal sources settle only after consecutive identical complete bundle
+  captures in the same lineage spanning 30 seconds;
+- `session-doctor snapshots list|show|replay|prune` is the public history
+  surface; raw replay requires an explicit output path;
+- pruning accepts only a bundle's primary snapshot, blocks normalized
+  dependencies unless `--force`, reports forced dependency loss, removes the
+  complete bundle capture, and runs DuckDB `CHECKPOINT`;
+- Claude bundles capture transcripts, subagent metadata, persisted tool
+  results, and related session files before parsing; topology and sidecar
+  evidence are reconstructed only from captured bytes.
+
 Deliverables:
 
 - support multi-file bundle manifests and capture skew evidence;
@@ -1424,10 +1439,8 @@ No implementation PR is committed or opened without explicit user direction.
 These are deliberately deferred until their owning PR:
 
 - remaining derived table names, constraints, and indexes;
-- exact settling interval;
 - built-in validator command registry;
 - initial tier thresholds after pilot annotation;
 - active-time derivation by adapter;
-- snapshot/prune CLI names;
 - report/trend schema version numbers;
 - exact support thresholds after pilot distributions.
