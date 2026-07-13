@@ -50,6 +50,7 @@ class OrderingProjection(SessionDoctorModel):
     causal_edges: list[CausalOrderEdge] = Field(default_factory=list)
     ambiguous_native_event_ids: list[str] = Field(default_factory=list)
     unresolved_parent_event_ids: list[str] = Field(default_factory=list)
+    invalid_causal_event_ids: list[str] = Field(default_factory=list)
     cross_source_order: str = "partial_order"
 
 
@@ -72,9 +73,14 @@ class ModelIdentityState(StrEnum):
     UNKNOWN = "unknown"
 
 
+class ModelReference(SessionDoctorModel):
+    provider: str | None = None
+    model: str
+
+
 class ModelIdentity(SessionDoctorModel):
     state: ModelIdentityState
-    models: list[str] = Field(default_factory=list)
+    models: list[ModelReference] = Field(default_factory=list)
 
 
 class UsageSemantics(StrEnum):

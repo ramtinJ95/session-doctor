@@ -46,6 +46,9 @@ def extract_session_metadata(
     session_id = stable_id("session", AgentName.CODEX.value, source.source_path, native_session_id)
     cwd = string_value(latest_turn.get("cwd")) or string_value(session_meta.get("cwd"))
     model = string_value(latest_turn.get("model")) or string_value(session_meta.get("model"))
+    model_provider = string_value(latest_turn.get("model_provider")) or string_value(
+        session_meta.get("model_provider")
+    )
     model_changes = [
         {
             "provider": string_value(turn.get("model_provider"))
@@ -73,7 +76,7 @@ def extract_session_metadata(
         cwd=cwd,
         project_path=cwd,
         agent_version=string_value(session_meta.get("cli_version")),
-        model_provider=string_value(session_meta.get("model_provider")),
+        model_provider=model_provider,
         model=model,
         metadata={
             "source_path": source.source_path,

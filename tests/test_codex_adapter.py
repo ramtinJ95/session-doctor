@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from session_doctor.adapters import ParsedSessionBundle
 from session_doctor.adapters.codex import (
     CODEX_MESSAGE_SOURCE_EVENT_MSG_FALLBACK,
     CODEX_MESSAGE_SOURCE_RESPONSE_ITEM,
     CodexAdapter,
 )
 from session_doctor.adapters.codex_files import file_activities_from_patch_event
+from session_doctor.adapters.codex_metadata import extract_session_metadata
 from session_doctor.adapters.codex_tools import model_usage_from_token_count
 from session_doctor.ids import source_id_for_path, stable_id
 from session_doctor.schemas import (
@@ -18,6 +20,7 @@ from session_doctor.schemas import (
     SessionSource,
     UsageSemantics,
 )
+from session_doctor.semantic_foundations import derive_model_identity
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "codex"
 
@@ -69,6 +72,38 @@ def test_codex_empty_token_count_is_aggregation_unavailable() -> None:
     usage = model_usage_from_token_count("session-1", event, {"info": {}})
 
     assert usage.aggregation_semantics is UsageSemantics.AGGREGATION_UNAVAILABLE
+
+
+def test_codex_provider_transition_preserves_latest_pair_and_mixed_identity(tmp_path) -> None:
+    source_path = tmp_path / "session.jsonl"
+    source = source_for_fixture(source_path)
+    records = [
+        (0, {"type": "session_meta", "payload": {"id": "native", "model_provider": "old"}}),
+        (
+            1,
+            {
+                "type": "turn_context",
+                "payload": {"model_provider": "old", "model": "model-a"},
+            },
+        ),
+        (
+            2,
+            {
+                "type": "turn_context",
+                "payload": {"model_provider": "new", "model": "model-a"},
+            },
+        ),
+    ]
+
+    metadata = extract_session_metadata(source, source_path, records)
+    identity = derive_model_identity(ParsedSessionBundle(session=metadata.session))
+
+    assert metadata.session.model_provider == "new"
+    assert metadata.session.model == "model-a"
+    assert [(row.provider, row.model) for row in identity.models] == [
+        ("new", "model-a"),
+        ("old", "model-a"),
+    ]
 
 
 def test_codex_parse_source_normalizes_core_records() -> None:

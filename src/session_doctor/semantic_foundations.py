@@ -15,6 +15,7 @@ from session_doctor.schemas import (
     InstrumentationStatus,
     ModelIdentity,
     ModelIdentityState,
+    ModelReference,
     OrderingProjection,
     ProjectIdentity,
     ProjectIdentityState,
@@ -74,6 +75,7 @@ def derive_ordering(bundle: ParsedSessionBundle) -> OrderingProjection:
     native_ids = {
         key: event_ids[0] for key, event_ids in native_id_groups.items() if len(event_ids) == 1
     }
+    record_index_by_event_id = {event.event_id: event.record_index for event in ordered_events}
     ambiguous_native_ids = sorted(
         native_id
         for (_source_id, native_id), event_ids in native_id_groups.items()
@@ -85,6 +87,14 @@ def derive_ordering(bundle: ParsedSessionBundle) -> OrderingProjection:
         if event.native_parent_id is not None
         and (event.source_id, event.native_parent_id) not in native_ids
     )
+    invalid_causal_event_ids = sorted(
+        event.event_id
+        for event in ordered_events
+        if event.native_parent_id is not None
+        and (parent_event_id := native_ids.get((event.source_id, event.native_parent_id)))
+        is not None
+        and record_index_by_event_id[parent_event_id] >= event.record_index
+    )
     edges = sorted(
         (
             CausalOrderEdge(
@@ -94,6 +104,8 @@ def derive_ordering(bundle: ParsedSessionBundle) -> OrderingProjection:
             for event in ordered_events
             if event.native_parent_id is not None
             and (event.source_id, event.native_parent_id) in native_ids
+            and record_index_by_event_id[native_ids[(event.source_id, event.native_parent_id)]]
+            < event.record_index
         ),
         key=lambda edge: (edge.parent_event_id, edge.child_event_id),
     )
@@ -110,6 +122,7 @@ def derive_ordering(bundle: ParsedSessionBundle) -> OrderingProjection:
         causal_edges=edges,
         ambiguous_native_event_ids=ambiguous_native_ids,
         unresolved_parent_event_ids=unresolved_parent_event_ids,
+        invalid_causal_event_ids=invalid_causal_event_ids,
     )
 
 
@@ -213,10 +226,10 @@ def observe_vcs_root(cwd: str | None) -> str | None:
 
 
 def derive_model_identity(bundle: ParsedSessionBundle) -> ModelIdentity:
-    models: set[str] = set()
+    models: set[tuple[str | None, str]] = set()
     if bundle.session is not None:
         if bundle.session.model:
-            models.add(model_identity_key(bundle.session.model_provider, bundle.session.model))
+            models.add((bundle.session.model_provider, bundle.session.model))
         metadata_models = bundle.session.metadata.get("models")
         if isinstance(metadata_models, list):
             for value in metadata_models:
@@ -225,25 +238,16 @@ def derive_model_identity(bundle: ParsedSessionBundle) -> ModelIdentity:
         if isinstance(model_changes, list):
             for value in model_changes:
                 add_model_value(models, value)
-    models.update(
-        model_identity_key(row.provider, row.model) for row in bundle.model_usage if row.model
-    )
+    models.update((row.provider, row.model) for row in bundle.model_usage if row.model)
     for message in bundle.messages:
         model = message.metadata.get("model")
         provider = message.metadata.get("provider")
         if isinstance(model, str) and model:
-            models.add(
-                model_identity_key(
-                    provider if isinstance(provider, str) else None,
-                    model,
-                )
-            )
-    models = {
-        value
-        for value in models
-        if "/" in value or not any(other.endswith(f"/{value}") for other in models)
-    }
-    ordered_models = sorted(models)
+            models.add((provider if isinstance(provider, str) else None, model))
+    ordered_models = [
+        ModelReference(provider=provider, model=model)
+        for provider, model in sorted(models, key=lambda row: (row[1], row[0] or ""))
+    ]
     state = (
         ModelIdentityState.UNKNOWN
         if not ordered_models
@@ -254,9 +258,9 @@ def derive_model_identity(bundle: ParsedSessionBundle) -> ModelIdentity:
     return ModelIdentity(state=state, models=ordered_models)
 
 
-def add_model_value(models: set[str], value: object) -> None:
+def add_model_value(models: set[tuple[str | None, str]], value: object) -> None:
     if isinstance(value, str) and value:
-        models.add(value)
+        models.add((None, value))
         return
     if not isinstance(value, Mapping):
         return
@@ -264,16 +268,7 @@ def add_model_value(models: set[str], value: object) -> None:
     model = mapping.get("model")
     provider = mapping.get("provider")
     if isinstance(model, str) and model:
-        models.add(
-            model_identity_key(
-                provider if isinstance(provider, str) else None,
-                model,
-            )
-        )
-
-
-def model_identity_key(provider: str | None, model: str) -> str:
-    return f"{provider}/{model}" if provider else model
+        models.add((provider if isinstance(provider, str) else None, model))
 
 
 def derive_usage_projection(bundle: ParsedSessionBundle) -> UsageProjection:
