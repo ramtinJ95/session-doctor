@@ -1,0 +1,308 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import shutil
+import tempfile
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from session_doctor.evaluation_models import (
+    ANNOTATION_PROTOCOL_VERSION,
+    EVALUATION_SCHEMA_VERSION,
+    BoundaryPacket,
+    EvaluationPacketExport,
+    IdentityExposureStatus,
+    PacketEvent,
+    PacketKind,
+    RoutingEnvelope,
+)
+from session_doctor.schemas import NormalizedRole, SemanticFoundation
+
+if TYPE_CHECKING:
+    from session_doctor.store.normalization_runs import StoredNormalization
+
+BOUNDARY_CAPABILITIES = {"delegation_topology", "native_causal_links"}
+
+
+def export_boundary_packets(
+    stored: StoredNormalization,
+    foundation: SemanticFoundation,
+) -> tuple[EvaluationPacketExport, ...]:
+    events = packet_events(stored)
+    user_positions = [
+        index for index, event in enumerate(events) if event.role == NormalizedRole.USER.value
+    ]
+    exports: list[EvaluationPacketExport] = []
+    for left_position, right_position in zip(user_positions, user_positions[1:], strict=False):
+        exports.append(
+            boundary_packet(
+                stored,
+                foundation,
+                events,
+                left_position,
+                right_position,
+            )
+        )
+    return tuple(exports)
+
+
+def boundary_packet(
+    stored: StoredNormalization,
+    foundation: SemanticFoundation,
+    events: list[PacketEvent],
+    left_position: int,
+    right_position: int,
+) -> EvaluationPacketExport:
+    left = events[left_position]
+    right = events[right_position]
+    packet_id = digest_json(
+        {
+            "kind": PacketKind.BOUNDARY,
+            "normalization_run_id": stored.run.normalization_run_id,
+            "left": left.source_event_id or left.evidence_id,
+            "right": right.source_event_id or right.evidence_id,
+            "schema": EVALUATION_SCHEMA_VERSION,
+            "protocol": ANNOTATION_PROTOCOL_VERSION,
+        }
+    )
+    targets, redaction_terms = routing_identities(stored, foundation)
+    packet = BoundaryPacket(
+        packet_id=packet_id,
+        left_user_event_id=left.source_event_id or left.evidence_id,
+        right_user_event_id=right.source_event_id or right.evidence_id,
+        adjacent_user_turns=[
+            blind_event(left, redaction_terms),
+            blind_event(right, redaction_terms),
+        ],
+        intervening_normalized_events=[
+            blind_event(event, redaction_terms)
+            for event in events[left_position + 1 : right_position]
+        ],
+        bounded_context_events=[
+            blind_event(events[index], redaction_terms)
+            for index in (left_position - 1, right_position + 1)
+            if 0 <= index < len(events)
+        ],
+        anonymized_capability_support=[
+            {
+                "capability": row.capability,
+                "support": row.support.value,
+                "evidence_status": row.evidence_status.value,
+            }
+            for row in foundation.capabilities
+            if row.capability in BOUNDARY_CAPABILITIES
+        ],
+    )
+    judge_json = canonical_json(packet.model_dump(mode="json"))
+    exposure = identity_exposure_status(judge_json, targets)
+    routing = RoutingEnvelope(
+        packet_id=packet_id,
+        packet_kind=PacketKind.BOUNDARY,
+        target_model_identities=targets,
+        excluded_judge_identities=targets,
+        identity_exposure_status=exposure,
+        judge_packet_hash=hashlib.sha256(judge_json.encode()).hexdigest(),
+    )
+    return EvaluationPacketExport(routing=routing, judge_packet=packet)
+
+
+def packet_events(stored: StoredNormalization) -> list[PacketEvent]:
+    bundle = stored.bundle
+    record_indexes = {event.event_id: event.record_index for event in bundle.raw_events}
+    rows: list[tuple[int, int, str, PacketEvent]] = []
+
+    def add(
+        evidence_id: str,
+        entity_kind: str,
+        source_event_id: str | None,
+        entity_order: int,
+        *,
+        role: str | None = None,
+        text: str | None = None,
+        text_hash: str | None = None,
+        text_length: int | None = None,
+        structure: dict[str, object] | None = None,
+    ) -> None:
+        rows.append(
+            (
+                record_indexes.get(source_event_id or "", 2**31 - 1),
+                entity_order,
+                evidence_id,
+                PacketEvent(
+                    evidence_id=evidence_id,
+                    source_event_id=source_event_id,
+                    entity_kind=entity_kind,
+                    role=role,
+                    text=text,
+                    text_hash=text_hash,
+                    text_length=text_length,
+                    structure=structure or {},
+                ),
+            )
+        )
+
+    for index, message in enumerate(bundle.messages):
+        add(
+            message.message_id,
+            "message",
+            message.source_event_id,
+            index,
+            role=message.role.value,
+            text=message.text,
+            text_hash=message.text_hash,
+            text_length=message.text_length,
+            structure={"content_block_types": message.content_block_types},
+        )
+    for index, call in enumerate(bundle.tool_calls):
+        add(
+            call.tool_call_id,
+            "tool_call",
+            call.source_event_id,
+            index,
+            structure={"name": call.name},
+        )
+    for index, result in enumerate(bundle.tool_results):
+        add(
+            result.tool_result_id,
+            "tool_result",
+            result.source_event_id,
+            index,
+            structure={"is_error": result.is_error, "output_length": result.output_length},
+        )
+    for index, command in enumerate(bundle.command_runs):
+        add(
+            command.command_run_id,
+            "command_run",
+            command.source_event_id,
+            index,
+            structure={"exit_code": command.exit_code, "output_length": command.output_length},
+        )
+    for index, activity in enumerate(bundle.file_activities):
+        add(
+            activity.file_activity_id,
+            "file_activity",
+            activity.source_event_id,
+            index,
+            structure={"operation": activity.operation},
+        )
+    return [row[3] for row in sorted(rows, key=lambda row: row[:3])]
+
+
+def routing_identities(
+    stored: StoredNormalization,
+    foundation: SemanticFoundation,
+) -> tuple[list[str], tuple[str, ...]]:
+    targets = sorted(
+        {
+            canonical_json(model.model_dump(mode="json"))
+            for model in foundation.model_identity.models
+        }
+    )
+    terms: set[str] = {stored.run.adapter_name}
+    for model in foundation.model_identity.models:
+        terms.add(model.model)
+        if model.provider:
+            terms.add(model.provider)
+    return targets, tuple(
+        sorted(
+            (term for term in terms if len(term) >= 3),
+            key=lambda term: len(term),
+            reverse=True,
+        )
+    )
+
+
+def blind_event(event: PacketEvent, redaction_terms: tuple[str, ...]) -> PacketEvent:
+    text = event.text
+    if text is not None:
+        for term in redaction_terms:
+            text = replace_case_insensitive(text, term, "[identity_redacted]")
+    structure = redact_value(event.structure, redaction_terms)
+    return event.model_copy(update={"text": text, "structure": structure})
+
+
+def redact_value(value: object, terms: tuple[str, ...]) -> object:
+    if isinstance(value, str):
+        redacted = value
+        for term in terms:
+            redacted = replace_case_insensitive(redacted, term, "[identity_redacted]")
+        return redacted
+    if isinstance(value, list):
+        return [redact_value(row, terms) for row in value]
+    if isinstance(value, dict):
+        return {str(key): redact_value(row, terms) for key, row in value.items()}
+    return value
+
+
+def replace_case_insensitive(value: str, target: str, replacement: str) -> str:
+    lower_value = value.casefold()
+    lower_target = target.casefold()
+    output: list[str] = []
+    cursor = 0
+    while (index := lower_value.find(lower_target, cursor)) >= 0:
+        output.append(value[cursor:index])
+        output.append(replacement)
+        cursor = index + len(target)
+    output.append(value[cursor:])
+    return "".join(output)
+
+
+def identity_exposure_status(
+    judge_packet_json: str,
+    target_identities: list[str],
+) -> IdentityExposureStatus:
+    if not target_identities:
+        return IdentityExposureStatus.TARGET_IDENTITY_UNVERIFIABLE
+    lowered = judge_packet_json.casefold()
+    target_parts = [
+        part
+        for identity in target_identities
+        for part in json.loads(identity).values()
+        if isinstance(part, str)
+    ]
+    exposed_parts = [part for part in target_parts if len(part) < 3 or part.casefold() in lowered]
+    return (
+        IdentityExposureStatus.IDENTITY_EXPOSED
+        if exposed_parts
+        else IdentityExposureStatus.BLIND_ELIGIBLE
+    )
+
+
+def write_packet_exports(
+    exports: tuple[EvaluationPacketExport, ...], output_directory: Path
+) -> None:
+    if output_directory.exists():
+        raise ValueError("evaluation output directory already exists")
+    if not output_directory.parent.is_dir():
+        raise ValueError("evaluation output parent directory does not exist")
+    temporary = Path(
+        tempfile.mkdtemp(prefix=f".{output_directory.name}.", dir=output_directory.parent)
+    )
+    try:
+        for packet_export in exports:
+            packet_id = packet_export.routing.packet_id
+            (temporary / f"{packet_id}.routing.json").write_text(
+                canonical_json(packet_export.routing.model_dump(mode="json")) + "\n"
+            )
+            (temporary / f"{packet_id}.judge.json").write_text(
+                canonical_json(packet_export.judge_packet.model_dump(mode="json")) + "\n"
+            )
+        os.replace(temporary, output_directory)
+    except Exception:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
+
+
+def canonical_json(value: object) -> str:
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+
+
+def digest_json(value: object) -> str:
+    return hashlib.sha256(canonical_json(value).encode()).hexdigest()

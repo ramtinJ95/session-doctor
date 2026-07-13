@@ -68,6 +68,8 @@ from .cli_renderers import (
     render_ingest_summary as _render_ingest_summary,
 )
 from .config import supports_current_python
+from .evaluation_models import JudgeAnnotation
+from .evaluation_packets import export_boundary_packets, write_packet_exports
 from .graph_payload import graph_payload
 from .graph_projection import project_graph
 from .html import (
@@ -86,10 +88,13 @@ from .schemas import AnalysisRun, SessionClassification, SessionFeature
 from .store import (
     TABLE_NAMES,
     DuckDBStore,
+    EvaluationImportError,
     LoadedBundleMember,
     NormalizationConflictError,
     SnapshotPruneBlocked,
     SnapshotSummary,
+    import_judge_annotation,
+    register_evaluation_packet,
 )
 from .summary_payload import summary_payload
 from .trend_payload import project_payload, trend_payload
@@ -104,6 +109,7 @@ projects_app = typer.Typer(help="Inspect observed project path hints.")
 integrations_app = typer.Typer(help="Locate optional agent integration assets.")
 snapshots_app = typer.Typer(help="Inspect and prune exact captured source history.")
 normalizations_app = typer.Typer(help="Replay and inspect versioned normalization.")
+evaluation_app = typer.Typer(help="Export blinded packets and import offline judgments.")
 
 __all__ = [
     "ANALYSIS_SUMMARY_FEATURES",
@@ -340,6 +346,65 @@ def normalization_status(
     typer.echo(json.dumps(status_payload, indent=2, sort_keys=True))
 
 
+@evaluation_app.command("export-boundaries")
+def evaluation_export_boundaries(
+    normalization_run_id: str,
+    output: Annotated[Path, typer.Option("--output", help="New packet directory.")],
+    db: Annotated[Path | None, typer.Option("--db", help="DuckDB path to inspect.")] = None,
+) -> None:
+    """Export deterministic blinded boundary packets without provider calls."""
+    database_path = database_path_from_option(db)
+    require_valid_database_path(database_path)
+    require_current_database_schema(database_path)
+    store = DuckDBStore(database_path)
+    stored = store.load_normalization(normalization_run_id)
+    foundation = store.load_semantic_foundation(normalization_run_id)
+    if stored is None or foundation is None:
+        console.print(f"[red]Normalization not found:[/red] {normalization_run_id}")
+        raise typer.Exit(1)
+    exports = export_boundary_packets(stored, foundation)
+    try:
+        for packet_export in exports:
+            register_evaluation_packet(
+                database_path,
+                normalization_run_id,
+                packet_export,
+            )
+        write_packet_exports(exports, output.expanduser())
+    except (ValueError, EvaluationImportError) as exc:
+        console.print(f"[red]Evaluation export failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    typer.echo(f"Exported {len(exports)} boundary packets: {output.expanduser()}")
+
+
+@evaluation_app.command("export-episodes")
+def evaluation_export_episodes() -> None:
+    """Reject episode export until adjudicated boundaries are frozen after PR 8."""
+    console.print(
+        "[red]Episode packet generation is unavailable until boundary references "
+        "are frozen after PR 8.[/red]"
+    )
+    raise typer.Exit(1)
+
+
+@evaluation_app.command("import-judge")
+def evaluation_import_judge(
+    input_path: Annotated[Path, typer.Option("--input", help="Judge annotation JSON.")],
+    db: Annotated[Path | None, typer.Option("--db", help="DuckDB path to modify.")] = None,
+) -> None:
+    """Import one schema-validated judgment produced outside Session Doctor."""
+    database_path = database_path_from_option(db)
+    require_valid_database_path(database_path)
+    require_current_database_schema(database_path)
+    try:
+        annotation = JudgeAnnotation.model_validate_json(input_path.read_text())
+        import_judge_annotation(database_path, annotation)
+    except (OSError, ValueError, EvaluationImportError) as exc:
+        console.print(f"[red]Judge import failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    typer.echo(f"Imported judge annotation: {annotation.judge_annotation_id}")
+
+
 @snapshots_app.command("show")
 def snapshots_show(
     snapshot_id: str,
@@ -468,6 +533,7 @@ def snapshots_prune(
                         "sessions": dependencies.session_ids,
                         "analysis_runs": dependencies.analysis_run_ids,
                         "normalization_runs": dependencies.normalization_run_ids,
+                        "evaluation_packets": dependencies.evaluation_packet_ids,
                         "inbound_source_references": dependencies.inbound_source_ids,
                         "inbound_session_references": dependencies.inbound_session_ids,
                         "downstream_lifecycle_bundles": (
@@ -1089,6 +1155,7 @@ app.add_typer(projects_app, name="projects")
 app.add_typer(integrations_app, name="integrations")
 app.add_typer(snapshots_app, name="snapshots")
 app.add_typer(normalizations_app, name="normalizations")
+app.add_typer(evaluation_app, name="evaluation")
 
 
 def render_ingest_summary(summary: IngestSummary, database_path: Path) -> None:

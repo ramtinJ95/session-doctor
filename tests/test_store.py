@@ -66,6 +66,12 @@ def test_store_initialize_creates_expected_tables(tmp_path) -> None:
         "bundle_capture_metadata",
         "bundle_member_capture_metadata",
         "lifecycle_observations",
+        "evaluation_packets",
+        "judge_annotations",
+        "judge_panel_resolutions",
+        "audit_selections",
+        "human_adjudications",
+        "reference_resolutions",
     }
 
 

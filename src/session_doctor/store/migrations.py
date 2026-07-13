@@ -6,7 +6,7 @@ import duckdb
 
 from session_doctor.ids import stable_id
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 BASE_DURABLE_TABLE_NAMES = (
     "source_blobs",
@@ -21,6 +21,12 @@ DURABLE_TABLE_NAMES = (
     "bundle_capture_metadata",
     "bundle_member_capture_metadata",
     "lifecycle_observations",
+    "evaluation_packets",
+    "judge_annotations",
+    "judge_panel_resolutions",
+    "audit_selections",
+    "human_adjudications",
+    "reference_resolutions",
 )
 
 DERIVED_TABLE_NAMES = (
@@ -339,6 +345,92 @@ CREATE_TABLE_STATEMENTS = (
         started_at TIMESTAMP,
         completed_at TIMESTAMP,
         metadata_json VARCHAR NOT NULL DEFAULT '{}'
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS evaluation_packets (
+        packet_id VARCHAR PRIMARY KEY,
+        schema_version VARCHAR NOT NULL,
+        annotation_protocol_version VARCHAR NOT NULL,
+        packet_kind VARCHAR NOT NULL,
+        normalization_run_id VARCHAR NOT NULL,
+        routing_json VARCHAR NOT NULL,
+        judge_packet_json VARCHAR NOT NULL,
+        judge_packet_hash VARCHAR NOT NULL,
+        evidence_ids_json VARCHAR NOT NULL,
+        allowed_answers_json VARCHAR NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT current_timestamp
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS judge_annotations (
+        judge_annotation_id VARCHAR PRIMARY KEY,
+        schema_version VARCHAR NOT NULL,
+        annotation_protocol_version VARCHAR NOT NULL,
+        packet_id VARCHAR NOT NULL,
+        judge_model VARCHAR NOT NULL,
+        judge_provider VARCHAR NOT NULL,
+        judge_prompt_version VARCHAR NOT NULL,
+        answer VARCHAR NOT NULL,
+        evidence_ids_json VARCHAR NOT NULL,
+        rationale VARCHAR NOT NULL,
+        created_at TIMESTAMP NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS judge_panel_resolutions (
+        judge_panel_resolution_id VARCHAR PRIMARY KEY,
+        schema_version VARCHAR NOT NULL,
+        annotation_protocol_version VARCHAR NOT NULL,
+        packet_id VARCHAR NOT NULL,
+        judge_annotation_ids_json VARCHAR NOT NULL,
+        consensus_status VARCHAR NOT NULL,
+        unanimous_answer VARCHAR,
+        resolved_at TIMESTAMP NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS audit_selections (
+        audit_selection_id VARCHAR PRIMARY KEY,
+        schema_version VARCHAR NOT NULL,
+        annotation_protocol_version VARCHAR NOT NULL,
+        packet_id VARCHAR NOT NULL,
+        judge_panel_resolution_id VARCHAR NOT NULL UNIQUE,
+        eligibility_status VARCHAR NOT NULL,
+        selection_status VARCHAR NOT NULL,
+        selection_seed_id VARCHAR NOT NULL,
+        selection_reason VARCHAR NOT NULL,
+        selected_at TIMESTAMP NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS human_adjudications (
+        human_adjudication_id VARCHAR PRIMARY KEY,
+        schema_version VARCHAR NOT NULL,
+        annotation_protocol_version VARCHAR NOT NULL,
+        packet_id VARCHAR NOT NULL,
+        judge_panel_resolution_id VARCHAR NOT NULL,
+        audit_selection_id VARCHAR,
+        review_kind VARCHAR NOT NULL,
+        reviewer_identity VARCHAR NOT NULL,
+        answer VARCHAR NOT NULL,
+        evidence_ids_json VARCHAR NOT NULL,
+        rationale VARCHAR NOT NULL,
+        reviewed_at TIMESTAMP NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS reference_resolutions (
+        reference_resolution_id VARCHAR PRIMARY KEY,
+        schema_version VARCHAR NOT NULL,
+        annotation_protocol_version VARCHAR NOT NULL,
+        packet_id VARCHAR NOT NULL,
+        resolution_status VARCHAR NOT NULL,
+        answer VARCHAR NOT NULL,
+        source_judge_panel_resolution_id VARCHAR NOT NULL,
+        source_audit_selection_id VARCHAR,
+        source_human_adjudication_id VARCHAR,
+        resolved_at TIMESTAMP NOT NULL
     )
     """,
     """
