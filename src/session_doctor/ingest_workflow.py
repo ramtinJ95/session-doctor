@@ -279,10 +279,13 @@ def capture_bundle_members(
                         "signature_before": signature_before,
                         "signature_after": signature_after,
                         "discovery_bytes_changed": discovery_bytes_changed,
+                        "parse_incomplete": bool(
+                            member_source.metadata.get("capture_parse_incomplete")
+                        ),
                     },
                 )
             )
-        if topology_inputs_changed(member_sources):
+        if topology_inputs_changed(member_sources, member_discovery_source):
             bundle_members = [
                 replace(
                     member,
@@ -305,29 +308,36 @@ def capture_bundle_members(
 
 def topology_inputs_changed(
     member_sources: tuple[tuple[SessionSource, str], ...],
+    validation_source: SessionSource | None = None,
 ) -> bool:
     topology_source = next(
         (
             source
-            for source, _role in member_sources
-            if source.metadata.get("capture_topology_input_sha256") is not None
+            for source in (
+                *((row[0]) for row in member_sources),
+                validation_source,
+            )
+            if source is not None
+            and (
+                source.metadata.get("capture_topology_input_sha256") is not None
+                or source.metadata.get("capture_topology_directory") is not None
+            )
         ),
         None,
     )
     if topology_source is None:
         return False
     topology_inputs = topology_source.metadata.get("capture_topology_input_sha256")
-    if not isinstance(topology_inputs, dict):
-        return False
-    for raw_path, expected_hash in topology_inputs.items():
-        if not isinstance(raw_path, str):
-            return True
-        try:
-            current_hash = hashlib.sha256(Path(raw_path).read_bytes()).hexdigest()
-        except OSError:
-            current_hash = None
-        if current_hash != expected_hash:
-            return True
+    if isinstance(topology_inputs, dict):
+        for raw_path, expected_hash in topology_inputs.items():
+            if not isinstance(raw_path, str):
+                return True
+            try:
+                current_hash = hashlib.sha256(Path(raw_path).read_bytes()).hexdigest()
+            except OSError:
+                current_hash = None
+            if current_hash != expected_hash:
+                return True
     raw_directory = topology_source.metadata.get("capture_topology_directory")
     expected_members = topology_source.metadata.get("capture_topology_directory_members")
     if isinstance(raw_directory, str) and isinstance(expected_members, list):
@@ -346,6 +356,8 @@ def capture_status(primary_changed: bool, members: tuple[BundleMemberCapture, ..
     ):
         return "skewed"
     if any(member.member_capture_status in {"missing", "unreadable"} for member in members):
+        return "incomplete"
+    if any(bool((member.evidence or {}).get("parse_incomplete")) for member in members):
         return "incomplete"
     return "complete"
 

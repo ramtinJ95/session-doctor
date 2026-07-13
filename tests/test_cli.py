@@ -402,6 +402,61 @@ def test_failed_multifile_preparation_keeps_every_snapshot_owned(tmp_path) -> No
     assert unowned == (0,)
 
 
+def test_claude_directory_skips_invalid_utf8_and_keeps_valid_capture(tmp_path) -> None:
+    source_dir = tmp_path / "sources"
+    source_dir.mkdir()
+    copyfile(CLAUDE_FIXTURE_DIR / "basic-session.jsonl", source_dir / "valid.jsonl")
+    (source_dir / "invalid.jsonl").write_bytes(b"\xff")
+    database_path = tmp_path / "session-doctor.duckdb"
+
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "claude",
+            "--source",
+            str(source_dir),
+            "--db",
+            str(database_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Skipped source" in result.stdout
+    assert DuckDBStore(database_path).table_count("sessions") == 1
+
+
+def test_truncated_claude_child_keeps_root_bundle_incomplete(tmp_path) -> None:
+    source_root = tmp_path / "topology"
+    copytree(CLAUDE_TOPOLOGY_FIXTURE_DIR, source_root)
+    child_path = source_root / "project/session-root/subagents/agent-a.jsonl"
+    child_path.write_bytes(child_path.read_bytes() + b'\n{"truncated":')
+    database_path = tmp_path / "session-doctor.duckdb"
+
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "claude",
+            "--source",
+            str(source_root),
+            "--db",
+            str(database_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    root_snapshot = next(
+        row
+        for row in DuckDBStore(database_path).list_snapshots()
+        if row.source_path.endswith("session-root.jsonl")
+    )
+    assert root_snapshot.capture_status == "incomplete"
+    assert root_snapshot.lifecycle_state == "snapshot_incomplete"
+
+
 def test_ingest_resolves_source_path_before_deriving_ids(tmp_path) -> None:
     with runner.isolated_filesystem(temp_dir=tmp_path):
         fixture_path = CODEX_FIXTURE_DIR / "basic-session.jsonl"
