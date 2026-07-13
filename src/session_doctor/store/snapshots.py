@@ -160,19 +160,21 @@ def create_single_source_bundle(
     with write_connection(database_path) as connection, transaction(connection):
         snapshot_row = connection.execute(
             """
-            SELECT logical_source_id, blob_id, snapshot_content_id, capture_sequence
+            SELECT logical_source_id, blob_id, snapshot_content_id, capture_sequence,
+                captured_at
             FROM source_snapshots
             WHERE snapshot_id = ?
             """,
             [captured_source.snapshot_id],
         ).fetchone()
-        if snapshot_row != (
+        if snapshot_row is None or snapshot_row[:4] != (
             captured_source.logical_source_id,
             captured_source.blob_id,
             captured_source.snapshot_content_id,
             captured_source.capture_sequence,
         ):
             raise SnapshotSourceMismatchError("captured source identity does not match storage")
+        stored_captured_at = snapshot_row[4]
         previous_bundle = connection.execute(
             """
             SELECT snapshot_bundle_id, native_bundle_capture_sequence
@@ -219,7 +221,7 @@ def create_single_source_bundle(
                 native_identity_status,
                 bundle_sequence,
                 previous_bundle_id,
-                captured_source.captured_at,
+                stored_captured_at,
             ],
         )
         connection.execute(
