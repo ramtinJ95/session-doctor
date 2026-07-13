@@ -126,13 +126,17 @@ def test_adapters_replay_committed_bytes_without_original_source(
     source_path = tmp_path / fixture_path.name
     source_bytes = fixture_path.read_bytes()
     source_path.write_bytes(source_bytes)
-    source = adapter.source_for_path(source_path)
+    source = adapter.source_for_captured_parse(adapter.source_for_path(source_path))
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
     captured = store.capture_source(source, source_bytes)
+    expected_bundle = adapter.parse_source(source, source_bytes)
     source_path.unlink()
 
     replay_bytes = store.load_snapshot_bytes(captured.snapshot_id)
+    replay_source = store.load_snapshot_source(captured.snapshot_id)
 
     assert replay_bytes is not None
+    assert replay_source is not None
+    assert replay_source == source
     assert replay_bytes == source_bytes
-    assert adapter.parse_source(source, replay_bytes).session is not None
+    assert adapter.parse_source(replay_source, replay_bytes) == expected_bundle

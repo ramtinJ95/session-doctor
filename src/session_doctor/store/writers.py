@@ -42,6 +42,27 @@ def insert_parsed_bundle(
     captured_bundle: CapturedBundle,
 ) -> None:
     with write_connection(database_path) as connection, transaction(connection):
+        provenance = connection.execute(
+            """
+            SELECT 1
+            FROM source_snapshots AS s
+            JOIN snapshot_bundle_members AS m
+              ON m.snapshot_id = s.snapshot_id
+             AND m.logical_source_id = s.logical_source_id
+            WHERE s.snapshot_id = ?
+              AND s.source_id = ?
+              AND s.logical_source_id = ?
+              AND m.snapshot_bundle_id = ?
+            """,
+            [
+                captured_source.snapshot_id,
+                source.source_id,
+                captured_source.logical_source_id,
+                captured_bundle.snapshot_bundle_id,
+            ],
+        ).fetchone()
+        if provenance is None:
+            raise CaptureProvenanceError(source.source_id)
         latest = connection.execute(
             """
             SELECT snapshot_id
@@ -92,6 +113,12 @@ class StaleCaptureError(RuntimeError):
     def __init__(self, snapshot_id: str) -> None:
         self.snapshot_id = snapshot_id
         super().__init__(f"capture {snapshot_id} is no longer the latest source snapshot")
+
+
+class CaptureProvenanceError(RuntimeError):
+    def __init__(self, source_id: str) -> None:
+        self.source_id = source_id
+        super().__init__(f"capture provenance does not belong to source {source_id}")
 
 
 def replace_analysis_rows(

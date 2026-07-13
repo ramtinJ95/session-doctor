@@ -159,6 +159,13 @@ CREATE_TABLE_STATEMENTS = (
     """
     CREATE TABLE IF NOT EXISTS source_snapshots (
         snapshot_id VARCHAR PRIMARY KEY,
+        source_id VARCHAR NOT NULL,
+        agent_name VARCHAR NOT NULL,
+        source_kind VARCHAR NOT NULL,
+        source_path VARCHAR NOT NULL,
+        native_session_id VARCHAR,
+        parent_source_id VARCHAR,
+        source_metadata_json VARCHAR NOT NULL DEFAULT '{}',
         logical_source_id VARCHAR NOT NULL REFERENCES logical_sources(logical_source_id),
         blob_id VARCHAR NOT NULL REFERENCES source_blobs(blob_id),
         snapshot_content_id VARCHAR NOT NULL,
@@ -168,7 +175,8 @@ CREATE_TABLE_STATEMENTS = (
         capture_status VARCHAR NOT NULL CHECK (capture_status IN ('captured')),
         previous_snapshot_id VARCHAR REFERENCES source_snapshots(snapshot_id),
         UNIQUE (logical_source_id, capture_sequence),
-        UNIQUE (snapshot_id, logical_source_id)
+        UNIQUE (snapshot_id, logical_source_id),
+        UNIQUE (snapshot_id, source_id)
     )
     """,
     """
@@ -177,6 +185,8 @@ CREATE_TABLE_STATEMENTS = (
         bundle_content_id VARCHAR NOT NULL,
         agent_name VARCHAR NOT NULL,
         native_session_identity VARCHAR NOT NULL,
+        native_identity_status VARCHAR NOT NULL
+            CHECK (native_identity_status IN ('observed', 'fallback_parse_failed')),
         native_bundle_capture_sequence BIGINT NOT NULL
             CHECK (native_bundle_capture_sequence > 0),
         previous_snapshot_bundle_id VARCHAR REFERENCES snapshot_bundles(snapshot_bundle_id),
@@ -208,8 +218,9 @@ CREATE_TABLE_STATEMENTS = (
         discovered_at TIMESTAMP,
         native_session_id VARCHAR,
         parent_source_id VARCHAR,
-        snapshot_id VARCHAR,
-        snapshot_bundle_id VARCHAR,
+        snapshot_id VARCHAR REFERENCES source_snapshots(snapshot_id),
+        snapshot_bundle_id VARCHAR REFERENCES snapshot_bundles(snapshot_bundle_id),
+        CHECK ((snapshot_id IS NULL) = (snapshot_bundle_id IS NULL)),
         metadata_json VARCHAR NOT NULL DEFAULT '{}'
     )
     """,

@@ -33,6 +33,7 @@ from session_doctor.store import (
     SCHEMA_VERSION,
     TABLE_NAMES,
     AnalysisCompatibility,
+    CaptureProvenanceError,
     DuckDBStore,
     SchemaMismatchError,
     SessionScopeFilters,
@@ -155,6 +156,26 @@ def test_older_capture_cannot_replace_newer_normalized_projection(tmp_path) -> N
             ParsedSessionBundle(),
             older,
             older_bundle,
+        )
+
+
+def test_projection_rejects_capture_from_another_source(tmp_path) -> None:
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    captured_source = SessionSource(
+        source_id="captured-source",
+        agent_name=AgentName.CODEX,
+        source_path="/sessions/captured.jsonl",
+    )
+    other_source = captured_source.model_copy(update={"source_id": "other-source"})
+    captured = store.capture_source(captured_source, b"captured")
+    captured_bundle = store.create_single_source_bundle(captured_source, captured, "native-1")
+
+    with pytest.raises(CaptureProvenanceError, match="does not belong"):
+        store.insert_parsed_bundle(
+            other_source,
+            ParsedSessionBundle(),
+            captured,
+            captured_bundle,
         )
 
 
