@@ -26,8 +26,8 @@ EXPLICIT_NEW_TASK = re.compile(
     re.IGNORECASE,
 )
 CORRECTION_OR_CONTINUATION = re.compile(
-    r"^\s*(?:actually|correction|to clarify|i mean|no[,—-]|please continue|continue|"
-    r"review (?:that|the)|try again|fix (?:that|it))\b",
+    r"^\s*(?:(?:actually|correction|to clarify|i mean|please continue|continue|"
+    r"review (?:that|the)|try again|fix (?:that|it))\b|no\s*[,—-](?=\s|$))",
     re.IGNORECASE,
 )
 WORD = re.compile(r"[^\W_]+", re.UNICODE)
@@ -204,30 +204,37 @@ def closure_evidence_between(
     phase = last.metadata.get("phase")
     if phase not in {"final_answer", "final"} and not bool(last.metadata.get("turn_closed")):
         return None
-    raw_order = {event.event_id: event.record_index for event in bundle.raw_events}
-    left_index = raw_order.get(left.source_event_id or "")
-    right_index = raw_order.get(right.source_event_id or "")
-    result_call_ids = {
-        result.tool_call_id for result in bundle.tool_results if result.tool_call_id is not None
-    }
+    raw_events = {event.event_id: event for event in bundle.raw_events}
+    left_event = raw_events.get(left.source_event_id or "")
+    right_event = raw_events.get(right.source_event_id or "")
     for call in bundle.tool_calls:
-        call_index = raw_order.get(call.source_event_id or "")
-        if call_index is None:
-            if call.tool_call_id not in result_call_ids:
-                return None
+        call_event = raw_events.get(call.source_event_id or "")
+        if left_event is None or right_event is None or call_event is None:
+            return None
+        if not (left_event.source_id == call_event.source_id == right_event.source_id):
+            return None
+        if not left_event.record_index < call_event.record_index < right_event.record_index:
             continue
-        if left_index is not None and right_index is not None:
-            if left_index < call_index < right_index and call.tool_call_id not in result_call_ids:
-                return None
-        elif call.tool_call_id not in result_call_ids:
+        ordered_result = any(
+            result.tool_call_id == call.tool_call_id
+            and (result_event := raw_events.get(result.source_event_id or "")) is not None
+            and result_event.source_id == call_event.source_id
+            and call_event.record_index < result_event.record_index < right_event.record_index
+            for result in bundle.tool_results
+        )
+        if not ordered_result:
             return None
     for command in bundle.command_runs:
         if command.ended_at is not None:
             continue
-        command_index = raw_order.get(command.source_event_id or "")
-        if command_index is None:
+        command_event = raw_events.get(command.source_event_id or "")
+        if command_event is None or left_event is None or right_event is None:
             return None
-        if left_index is None or right_index is None or left_index < command_index < right_index:
+        if (
+            command_event.source_id != left_event.source_id
+            or right_event.source_id != left_event.source_id
+            or left_event.record_index < command_event.record_index < right_event.record_index
+        ):
             return None
     return message_anchor(last)
 
