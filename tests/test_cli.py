@@ -700,9 +700,12 @@ def test_claude_multifile_bundle_replays_without_live_files(tmp_path) -> None:
     replayed_parent_ids: list[str | None] = []
     sidecar_correlated = False
     roles_by_kind: dict[str, set[str]] = {}
+    root_member_paths: set[str] = set()
     for bundle_id, source_kind in bundle_rows:
         loaded = store.load_bundle_members(bundle_id)
         roles_by_kind[source_kind] = {member.member_role for member in loaded}
+        if source_kind == "root_session":
+            root_member_paths = {member.source_path for member in loaded}
         assert loaded[0].member_role == "primary"
         assert [member.capture_order for member in loaded] == list(range(len(loaded)))
         assert all(
@@ -729,6 +732,7 @@ def test_claude_multifile_bundle_replays_without_live_files(tmp_path) -> None:
     assert all(parent_id is not None for parent_id in replayed_parent_ids)
     assert sidecar_correlated
     assert "subagent_transcript" in roles_by_kind["root_session"]
+    assert not any(path.endswith("orphan.txt") for path in root_member_paths)
     assert len(roles_by_kind["subsession"] & {"related_transcript", "subagent_transcript"}) <= 1
 
     root_snapshot = next(

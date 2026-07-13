@@ -102,6 +102,7 @@ def ingest_sources(
                     captured_parse_source,
                     source_bytes,
                     store,
+                    member_discovery_source=session_source,
                 )
                 prepared_source = adapter.prepare_captured_source(
                     captured_parse_source,
@@ -212,13 +213,17 @@ def capture_bundle_members(
     primary_source: SessionSource,
     primary_bytes: bytes,
     store: DuckDBStore,
+    *,
+    member_discovery_source: SessionSource | None = None,
 ) -> tuple[tuple[CapturedAdapterMember, ...], tuple[BundleMemberCapture, ...]]:
     adapter_members: list[CapturedAdapterMember] = [
         CapturedAdapterMember(primary_source, "primary", primary_bytes)
     ]
     bundle_members: list[BundleMemberCapture] = []
     try:
-        member_sources = adapter.bundle_member_sources(primary_source, primary_bytes)
+        member_sources = adapter.bundle_member_sources(
+            member_discovery_source or primary_source, primary_bytes
+        )
         for capture_order, (member_source, member_role) in enumerate(member_sources, start=1):
             path = Path(member_source.source_path).expanduser()
             started_at = datetime.now(UTC)

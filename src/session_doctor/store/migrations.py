@@ -173,7 +173,7 @@ def backfill_capture_history(connection: duckdb.DuckDBPyConnection) -> None:
             b.native_bundle_capture_sequence, b.snapshot_bundle_id
         """
     ).fetchall()
-    previous_by_lineage: dict[str, tuple[str, str, object, int]] = {}
+    previous_by_lineage: dict[str, tuple[str, str, object, int, int]] = {}
     for (
         bundle_id,
         content_id,
@@ -210,6 +210,7 @@ def backfill_capture_history(connection: duckdb.DuckDBPyConnection) -> None:
         if (
             previous
             and previous[1] == content_id
+            and int(_source_capture_sequence) == previous[4] + 1
             and captured_at - previous[2] >= timedelta(seconds=30)
         ):
             state = "settled_unknown"
@@ -234,6 +235,7 @@ def backfill_capture_history(connection: duckdb.DuckDBPyConnection) -> None:
             str(content_id),
             captured_at,
             sequence,
+            int(_source_capture_sequence),
         )
 
 
