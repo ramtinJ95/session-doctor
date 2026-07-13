@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import duckdb
 from pydantic import BaseModel
 
 from session_doctor.adapters import ParsedSessionBundle
@@ -46,6 +49,7 @@ class NormalizationCoverage:
     snapshot_bundle_id: str
     status: str
     current_normalization_run_id: str | None
+    selected_normalization_run_id: str | None
     available_normalization_run_ids: tuple[str, ...]
 
 
@@ -87,93 +91,113 @@ def persist_normalization(
     configuration_hash: str = NORMALIZATION_CONFIGURATION_HASH,
 ) -> NormalizationRun:
     with write_connection(database_path) as connection, transaction(connection):
-        bundle_row = connection.execute(
-            """
-            SELECT bundle_content_id, agent_name
-            FROM snapshot_bundles WHERE snapshot_bundle_id = ?
-            """,
-            [snapshot_bundle_id],
-        ).fetchone()
-        if bundle_row is None:
-            raise ValueError(f"Snapshot bundle not found: {snapshot_bundle_id}")
-        bundle_content_id, stored_agent_name = str(bundle_row[0]), str(bundle_row[1])
-        adapter_name = source.agent_name.value
-        if adapter_name != stored_agent_name:
-            raise NormalizationConflictError("adapter does not own snapshot bundle")
-        run_id = normalization_identity(
+        return persist_normalization_rows(
+            connection,
+            snapshot_bundle_id,
+            source,
+            bundle,
+            adapter_version,
+            normalization_version,
+            configuration_hash,
+        )
+
+
+def persist_normalization_rows(
+    connection: duckdb.DuckDBPyConnection,
+    snapshot_bundle_id: str,
+    source: SessionSource,
+    bundle: ParsedSessionBundle,
+    adapter_version: str,
+    normalization_version: str = NORMALIZATION_VERSION,
+    configuration_hash: str = NORMALIZATION_CONFIGURATION_HASH,
+) -> NormalizationRun:
+    bundle_row = connection.execute(
+        """
+        SELECT bundle_content_id, agent_name
+        FROM snapshot_bundles WHERE snapshot_bundle_id = ?
+        """,
+        [snapshot_bundle_id],
+    ).fetchone()
+    if bundle_row is None:
+        raise ValueError(f"Snapshot bundle not found: {snapshot_bundle_id}")
+    bundle_content_id, stored_agent_name = str(bundle_row[0]), str(bundle_row[1])
+    adapter_name = source.agent_name.value
+    if adapter_name != stored_agent_name:
+        raise NormalizationConflictError("adapter does not own snapshot bundle")
+    run_id = normalization_identity(
+        bundle_content_id,
+        adapter_name,
+        adapter_version,
+        normalization_version,
+        configuration_hash,
+    )
+    connection.execute(
+        """
+        INSERT INTO normalization_runs (
+            normalization_run_id, bundle_content_id, adapter_name,
+            adapter_version, normalization_version, configuration_hash
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT DO NOTHING
+        """,
+        [
+            run_id,
             bundle_content_id,
             adapter_name,
             adapter_version,
             normalization_version,
             configuration_hash,
-        )
-        connection.execute(
+        ],
+    )
+    stored_run = connection.execute(
+        """
+        SELECT bundle_content_id, adapter_name, adapter_version,
+            normalization_version, configuration_hash
+        FROM normalization_runs WHERE normalization_run_id = ?
+        """,
+        [run_id],
+    ).fetchone()
+    expected_run = (
+        bundle_content_id,
+        adapter_name,
+        adapter_version,
+        normalization_version,
+        configuration_hash,
+    )
+    if stored_run != expected_run:
+        raise NormalizationConflictError("normalization identity collision")
+    connection.execute(
+        """
+        INSERT INTO normalization_run_bundles (
+            normalization_run_id, snapshot_bundle_id
+        ) VALUES (?, ?)
+        ON CONFLICT DO NOTHING
+        """,
+        [run_id, snapshot_bundle_id],
+    )
+    rows = normalized_entity_rows(source, bundle)
+    if rows:
+        connection.executemany(
             """
-            INSERT INTO normalization_runs (
-                normalization_run_id, bundle_content_id, adapter_name,
-                adapter_version, normalization_version, configuration_hash
-            ) VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO normalized_entities (
+                normalization_run_id, entity_kind, entity_id,
+                entity_order, payload_json
+            ) VALUES (?, ?, ?, ?, ?)
             ON CONFLICT DO NOTHING
             """,
-            [
-                run_id,
-                bundle_content_id,
-                adapter_name,
-                adapter_version,
-                normalization_version,
-                configuration_hash,
-            ],
+            [(run_id, *row) for row in rows],
         )
-        stored_run = connection.execute(
-            """
-            SELECT bundle_content_id, adapter_name, adapter_version,
-                normalization_version, configuration_hash
-            FROM normalization_runs WHERE normalization_run_id = ?
-            """,
-            [run_id],
-        ).fetchone()
-        expected_run = (
-            bundle_content_id,
-            adapter_name,
-            adapter_version,
-            normalization_version,
-            configuration_hash,
+    stored_rows = connection.execute(
+        """
+        SELECT entity_kind, entity_id, entity_order, payload_json
+        FROM normalized_entities WHERE normalization_run_id = ?
+        ORDER BY entity_kind, entity_order, entity_id
+        """,
+        [run_id],
+    ).fetchall()
+    if tuple(stored_rows) != tuple(sorted(rows, key=lambda row: (row[0], row[2], row[1]))):
+        raise NormalizationConflictError(
+            "normalization replay differs for an existing semantic identity"
         )
-        if stored_run != expected_run:
-            raise NormalizationConflictError("normalization identity collision")
-        connection.execute(
-            """
-            INSERT INTO normalization_run_bundles (
-                normalization_run_id, snapshot_bundle_id
-            ) VALUES (?, ?)
-            ON CONFLICT DO NOTHING
-            """,
-            [run_id, snapshot_bundle_id],
-        )
-        rows = normalized_entity_rows(source, bundle)
-        for entity_kind, entity_id, entity_order, payload_json in rows:
-            connection.execute(
-                """
-                INSERT INTO normalized_entities (
-                    normalization_run_id, entity_kind, entity_id,
-                    entity_order, payload_json
-                ) VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT DO NOTHING
-                """,
-                [run_id, entity_kind, entity_id, entity_order, payload_json],
-            )
-        stored_rows = connection.execute(
-            """
-            SELECT entity_kind, entity_id, entity_order, payload_json
-            FROM normalized_entities WHERE normalization_run_id = ?
-            ORDER BY entity_kind, entity_order, entity_id
-            """,
-            [run_id],
-        ).fetchall()
-        if tuple(stored_rows) != tuple(sorted(rows, key=lambda row: (row[0], row[2], row[1]))):
-            raise NormalizationConflictError(
-                "normalization replay differs for an existing semantic identity"
-            )
     return NormalizationRun(
         normalization_run_id=run_id,
         bundle_content_id=bundle_content_id,
@@ -209,10 +233,19 @@ def normalized_entity_rows(
                     entity_kind,
                     entity_id,
                     entity_order,
-                    entity.model_dump_json(),
+                    canonical_model_json(entity),
                 )
             )
     return tuple(rows)
+
+
+def canonical_model_json(entity: BaseModel) -> str:
+    return json.dumps(
+        entity.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
 
 
 def entity_identifier(entity_kind: str, entity: BaseModel) -> str:
@@ -257,11 +290,21 @@ def normalization_coverage(
             """,
             [snapshot_bundle_id],
         ).fetchall()
-    available = tuple(str(row[0]) for row in rows)
+    ordered_rows = tuple(
+        sorted(
+            rows,
+            key=lambda row: (
+                parser_version_key(str(row[2])) or (-1,),
+                str(row[0]),
+            ),
+            reverse=True,
+        )
+    )
+    available = tuple(str(row[0]) for row in ordered_rows)
     current = next(
         (
             str(row[0])
-            for row in rows
+            for row in ordered_rows
             if row[1:]
             == (
                 adapter_name,
@@ -272,13 +315,46 @@ def normalization_coverage(
         ),
         None,
     )
+    current_version_key = parser_version_key(adapter_version)
+    compatible = tuple(
+        row
+        for row in ordered_rows
+        if row[1] == adapter_name
+        and row[3] == normalization_version
+        and row[4] == configuration_hash
+        and versions_compatible(
+            parser_version_key(str(row[2])),
+            current_version_key,
+            str(row[2]),
+            adapter_version,
+        )
+    )
+    selected = current or (str(compatible[0][0]) if compatible else None)
     status = "current" if current is not None else "stale" if available else "missing"
     return NormalizationCoverage(
         snapshot_bundle_id=snapshot_bundle_id,
         status=status,
         current_normalization_run_id=current,
+        selected_normalization_run_id=selected,
         available_normalization_run_ids=available,
     )
+
+
+def parser_version_key(value: str) -> tuple[int, ...] | None:
+    if re.fullmatch(r"\d+(?:\.\d+)*", value) is None:
+        return None
+    return tuple(int(part) for part in value.split("."))
+
+
+def versions_compatible(
+    candidate: tuple[int, ...] | None,
+    current: tuple[int, ...] | None,
+    candidate_raw: str,
+    current_raw: str,
+) -> bool:
+    if candidate is None or current is None:
+        return candidate_raw == current_raw
+    return candidate[0] == current[0] and candidate <= current
 
 
 def load_normalization(

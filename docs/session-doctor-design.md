@@ -171,6 +171,12 @@ queries are read-only and report current, stale, or missing coverage. The v1
 normalized tables remain a rebuildable current compatibility projection until
 the v2 query cutover.
 
+Bundle content identity includes every persisted source-descriptor field used
+as parser input. Normalized entity payloads use recursively key-sorted canonical
+JSON. A compatible fallback run must use the same adapter, normalization
+version, configuration hash, and parser major version, with a parsed numeric
+version no newer than the running parser; ties break by run identity.
+
 ### Identity And Ordering
 
 - Source record order is authoritative within one captured source.
