@@ -55,7 +55,7 @@ For the next unmerged roadmap PR:
    - Spawn a fresh `reviewer` subagent against the complete PR diff and current PR requirements.
    - Require prioritized findings with exact file and line references.
    - Fix every valid high- and medium-severity finding.
-   - If a high/medium finding is intentionally rejected, record a concrete technical reason in the working notes and obtain another reviewer pass; do not silently dismiss it.
+   - If a high/medium finding is intentionally rejected, record a concrete technical reason and include both the original finding and rationale in the next reviewer brief. Require that reviewer to resolve the dispute explicitly; do not silently dismiss it.
    - Log unrelated or deferred findings in `scratch/BACKLOG.md` with file and line references.
    - Run affected tests, create logical conventional commits, and push each fix batch.
    - Spawn a new reviewer against the updated PR.
@@ -73,7 +73,7 @@ For the next unmerged roadmap PR:
 
    - Confirm required remote checks pass on the latest pushed commit.
    - Confirm the roadmap PR gate is satisfied and no stale v1/partial-v2 fallback is exposed.
-   - Confirm the PR is mergeable and still based on current `main`; update it safely if required and rerun affected checks/review.
+   - Confirm the PR is mergeable and still based on current `main`. If the branch is updated, return to the full reviewer loop and rerun every local and remote merge gate on the new head.
 
 8. **Merge and continue**
    - Rebase-merge the PR and delete the remote branch.
