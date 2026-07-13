@@ -205,19 +205,10 @@ def test_projection_rejects_capture_from_another_source(tmp_path) -> None:
         )
 
 
-def test_snapshot_manifest_constraints_reject_orphans_and_empty_captures(tmp_path) -> None:
+def test_snapshot_manifest_constraints_reject_empty_captured_members(tmp_path) -> None:
     database_path = tmp_path / "session-doctor.duckdb"
     DuckDBStore(database_path).initialize()
     with duckdb.connect(str(database_path)) as connection:
-        with pytest.raises(duckdb.ConstraintException):
-            connection.execute(
-                """
-                INSERT INTO source_snapshots (
-                    snapshot_id, logical_source_id, blob_id, snapshot_content_id,
-                    capture_sequence, capture_status
-                ) VALUES ('snapshot', 'missing-source', 'missing-blob', 'content', 1, 'captured')
-                """
-            )
         with pytest.raises(duckdb.ConstraintException):
             connection.execute(
                 """

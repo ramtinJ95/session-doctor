@@ -117,9 +117,11 @@ zlib level-6 compression in `source_blobs`; the other durable capture tables are
 lifecycle observations.
 
 History is exposed through `session-doctor snapshots list`, `show`, `replay`,
-and `prune`. Replay requires an explicit output path. Non-terminal complete
-bundles settle only after a consecutive identical capture in the same lineage
-at least 30 seconds later.
+and `prune`. Replay requires an explicit output path, refuses accidental
+replacement, and can export a complete ordered multi-file bundle. Non-terminal
+complete bundles settle only after a consecutive identical capture in the same
+lineage at least 30 seconds later. Prune reports structured dependent loss and
+commits relational deletion atomically before checkpointing DuckDB.
 
 The parser consumes only stored bytes. A source mutation after capture cannot
 change that normalization run.

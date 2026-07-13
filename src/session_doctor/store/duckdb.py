@@ -52,6 +52,7 @@ from .row_mappers import (
     tool_result_rows,
 )
 from .snapshot_history import (
+    PruneDependencies,
     PruneResult,
     SnapshotSummary,
 )
@@ -189,6 +190,7 @@ class DuckDBStore:
         native_session_identity: str,
         native_identity_status: str = "observed",
         capture_status: str = "complete",
+        primary_capture_status: str = "captured",
         capture_evidence: dict[str, object] | None = None,
     ) -> CapturedBundle:
         return write_single_source_bundle(
@@ -198,6 +200,7 @@ class DuckDBStore:
             native_session_identity=native_session_identity,
             native_identity_status=native_identity_status,
             capture_status=capture_status,
+            primary_capture_status=primary_capture_status,
             capture_evidence=capture_evidence,
         )
 
@@ -247,7 +250,7 @@ class DuckDBStore:
     def prune_snapshot(self, snapshot_id: str, *, force: bool = False) -> PruneResult:
         return delete_snapshot(self.database_path, snapshot_id, force=force)
 
-    def snapshot_dependencies(self, snapshot_id: str) -> tuple[str, ...]:
+    def snapshot_dependencies(self, snapshot_id: str) -> PruneDependencies:
         return read_snapshot_dependencies(self.database_path, snapshot_id)
 
     def replace_analysis_rows(

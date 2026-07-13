@@ -13,7 +13,12 @@ from .duckdb import (
 )
 from .lifecycle import LifecycleObservation
 from .migrations import DURABLE_TABLE_NAMES, SCHEMA_VERSION, TABLE_NAMES, SchemaMismatchError
-from .snapshot_history import PruneResult, SnapshotPruneBlocked, SnapshotSummary
+from .snapshot_history import (
+    PruneDependencies,
+    PruneResult,
+    SnapshotPruneBlocked,
+    SnapshotSummary,
+)
 from .snapshots import (
     BundleMemberCapture,
     CapturedBundle,
@@ -47,6 +52,7 @@ __all__ = [
     "ProjectFilters",
     "ProjectReport",
     "PruneResult",
+    "PruneDependencies",
     "SessionSummary",
     "SessionScopeFilters",
     "StoreInfo",

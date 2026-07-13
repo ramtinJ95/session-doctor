@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -81,7 +82,13 @@ from .integration_assets import IntegrationAssetError, session_doctor_skill_dire
 from .report_payload import build_session_report
 from .report_renderers import render_session_report, render_session_report_markdown
 from .schemas import AnalysisRun, SessionClassification, SessionFeature
-from .store import TABLE_NAMES, DuckDBStore, SnapshotPruneBlocked, SnapshotSummary
+from .store import (
+    TABLE_NAMES,
+    DuckDBStore,
+    LoadedBundleMember,
+    SnapshotPruneBlocked,
+    SnapshotSummary,
+)
 from .summary_payload import summary_payload
 from .trend_payload import project_payload, trend_payload
 
@@ -265,7 +272,12 @@ def snapshots_show(
     if row is None:
         console.print(f"[red]Snapshot not found:[/red] {snapshot_id}")
         raise typer.Exit(1)
-    typer.echo(json.dumps(snapshot_summary_payload(row), indent=2, sort_keys=True, default=str))
+    payload = snapshot_summary_payload(row)
+    payload["members"] = [
+        bundle_member_payload(member)
+        for member in DuckDBStore(database_path).load_bundle_members(row.snapshot_bundle_id)
+    ]
+    typer.echo(json.dumps(payload, indent=2, sort_keys=True, default=str))
 
 
 @snapshots_app.command("replay")
@@ -273,18 +285,62 @@ def snapshots_replay(
     snapshot_id: str,
     output: Annotated[Path, typer.Option("--output", help="Exact raw-byte destination.")],
     db: Annotated[Path | None, typer.Option("--db", help="DuckDB path to inspect.")] = None,
+    bundle_mode: Annotated[
+        bool,
+        typer.Option("--bundle", help="Export the complete ordered bundle to a new directory."),
+    ] = False,
+    overwrite: Annotated[
+        bool,
+        typer.Option("--overwrite", help="Replace an existing single-file output."),
+    ] = False,
 ) -> None:
     """Atomically write one exact captured source to an explicit path."""
     database_path = database_path_from_option(db)
     require_valid_database_path(database_path)
     require_current_database_schema(database_path)
-    source_bytes = DuckDBStore(database_path).load_snapshot_bytes(snapshot_id)
-    if source_bytes is None:
+    store = DuckDBStore(database_path)
+    summary = store.snapshot_summary(snapshot_id)
+    source_bytes = store.load_snapshot_bytes(snapshot_id)
+    if source_bytes is None or summary is None:
         console.print(f"[red]Snapshot not found:[/red] {snapshot_id}")
         raise typer.Exit(1)
     destination = output.expanduser()
     if not destination.parent.is_dir():
         raise typer.BadParameter("output parent directory must exist", param_hint="--output")
+    if bundle_mode:
+        if destination.exists():
+            raise typer.BadParameter(
+                "bundle output directory must not already exist",
+                param_hint="--output",
+            )
+        temporary_directory = Path(
+            tempfile.mkdtemp(prefix=f".{destination.name}.", dir=destination.parent)
+        )
+        try:
+            members = store.load_bundle_members(summary.snapshot_bundle_id)
+            manifest = [bundle_member_payload(member) for member in members]
+            for member in members:
+                if member.source_bytes is None:
+                    continue
+                filename = (
+                    f"{member.capture_order:03d}-{member.member_role}-"
+                    f"{Path(member.source_path).name}"
+                )
+                (temporary_directory / filename).write_bytes(member.source_bytes)
+            (temporary_directory / "manifest.json").write_text(
+                json.dumps(manifest, indent=2, sort_keys=True, default=str) + "\n"
+            )
+            os.replace(temporary_directory, destination)
+        except Exception:
+            shutil.rmtree(temporary_directory, ignore_errors=True)
+            raise
+        typer.echo(f"Wrote exact snapshot bundle: {destination}")
+        return
+    if destination.exists() and not overwrite:
+        raise typer.BadParameter(
+            "output already exists; pass --overwrite to replace it",
+            param_hint="--output",
+        )
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{destination.name}.", dir=destination.parent
     )
@@ -313,9 +369,19 @@ def snapshots_prune(
     try:
         if force:
             dependencies = DuckDBStore(database_path).snapshot_dependencies(snapshot_id)
+            typer.echo("Force prune dependencies:")
             typer.echo(
-                "Force prune dependent sources: "
-                + (", ".join(dependencies) if dependencies else "none")
+                json.dumps(
+                    {
+                        "bundles": dependencies.bundle_ids,
+                        "sources": dependencies.source_ids,
+                        "sessions": dependencies.session_ids,
+                        "analysis_runs": dependencies.analysis_run_ids,
+                        "derived_rows": dependencies.derived_row_counts,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
             )
         result = DuckDBStore(database_path).prune_snapshot(snapshot_id, force=force)
     except SnapshotPruneBlocked as exc:
@@ -326,7 +392,8 @@ def snapshots_prune(
         raise typer.Exit(1) from exc
     typer.echo(
         f"Pruned {result.snapshot_id}: bundles={result.deleted_bundle_count} "
-        f"blobs={result.deleted_blob_count} forced={str(result.forced).lower()}"
+        f"blobs={result.deleted_blob_count} forced={str(result.forced).lower()} "
+        f"checkpoint={str(result.checkpoint_completed).lower()}"
     )
 
 
@@ -343,6 +410,19 @@ def snapshot_summary_payload(row: SnapshotSummary) -> dict[str, object]:
         "capture_status": row.capture_status,
         "byte_length": row.byte_length,
         "is_latest": row.is_latest,
+    }
+
+
+def bundle_member_payload(member: LoadedBundleMember) -> dict[str, object]:
+    return {
+        "capture_order": member.capture_order,
+        "source_id": member.source_id,
+        "source_path": member.source_path,
+        "member_role": member.member_role,
+        "member_capture_status": member.member_capture_status,
+        "capture_started_at": member.capture_started_at,
+        "capture_completed_at": member.capture_completed_at,
+        "byte_length": len(member.source_bytes) if member.source_bytes is not None else None,
     }
 
 

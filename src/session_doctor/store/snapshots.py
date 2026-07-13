@@ -55,9 +55,13 @@ class BundleMemberCapture:
 @dataclass(frozen=True)
 class LoadedBundleMember:
     source: SessionSource | None
+    source_id: str
+    source_path: str
     member_role: str
     member_capture_status: str
     capture_order: int
+    capture_started_at: object
+    capture_completed_at: object
     source_bytes: bytes | None
 
 
@@ -182,6 +186,7 @@ def create_single_source_bundle(
     native_session_identity: str,
     native_identity_status: str = "observed",
     capture_status: str = "complete",
+    primary_capture_status: str = "captured",
     capture_completed_at: datetime | None = None,
     capture_evidence: dict[str, object] | None = None,
 ) -> CapturedBundle:
@@ -225,7 +230,7 @@ def create_single_source_bundle(
             "primary",
             captured_source.logical_source_id,
             captured_source.snapshot_content_id,
-            "captured",
+            primary_capture_status,
         )
         snapshot_bundle_id = stable_id(
             "snapshot-bundle",
@@ -300,7 +305,7 @@ def create_single_source_bundle(
                 source_id, source_path, member_role, member_capture_status,
                 capture_started_at, capture_completed_at,
                 native_modified_before, native_modified_after, evidence_json
-            ) VALUES (?, 0, ?, ?, ?, ?, 'primary', 'captured', ?, ?, ?, ?, '{}')
+            ) VALUES (?, 0, ?, ?, ?, ?, 'primary', ?, ?, ?, ?, ?, '{}')
             """,
             [
                 snapshot_bundle_id,
@@ -308,6 +313,7 @@ def create_single_source_bundle(
                 captured_source.snapshot_id,
                 stored_source.source_id,
                 stored_source.source_path,
+                primary_capture_status,
                 stored_captured_at,
                 completed_at,
                 captured_source.native_modified_at,
@@ -319,12 +325,13 @@ def create_single_source_bundle(
             INSERT INTO snapshot_bundle_members (
                 snapshot_bundle_id, logical_source_id, snapshot_id,
                 capture_order, member_role, member_capture_status
-            ) VALUES (?, ?, ?, 0, 'primary', 'captured')
+            ) VALUES (?, ?, ?, 0, 'primary', ?)
             """,
             [
                 snapshot_bundle_id,
                 captured_source.logical_source_id,
                 captured_source.snapshot_id,
+                primary_capture_status,
             ],
         )
     return CapturedBundle(
@@ -369,15 +376,48 @@ def add_bundle_members(
     if not members:
         return captured_bundle
     with write_connection(database_path) as connection, transaction(connection):
+        stored_bundle = connection.execute(
+            """
+            SELECT bundle_content_id, native_session_identity,
+                native_bundle_capture_sequence, native_identity_status
+            FROM snapshot_bundles WHERE snapshot_bundle_id = ?
+            """,
+            [captured_bundle.snapshot_bundle_id],
+        ).fetchone()
+        if stored_bundle != (
+            captured_bundle.bundle_content_id,
+            captured_bundle.native_session_identity,
+            captured_bundle.capture_sequence,
+            captured_bundle.native_identity_status,
+        ):
+            raise SnapshotSourceMismatchError("bundle identity does not match storage")
         for member in members:
             captured = member.captured_source
             if captured is not None:
+                stored_snapshot = connection.execute(
+                    """
+                    SELECT source_id, source_path, logical_source_id,
+                        snapshot_content_id, capture_sequence
+                    FROM source_snapshots WHERE snapshot_id = ?
+                    """,
+                    [captured.snapshot_id],
+                ).fetchone()
+                if stored_snapshot != (
+                    member.source_id,
+                    member.source_path,
+                    captured.logical_source_id,
+                    captured.snapshot_content_id,
+                    captured.capture_sequence,
+                ):
+                    raise SnapshotSourceMismatchError(
+                        "bundle member identity does not match storage"
+                    )
                 connection.execute(
                     """
                     INSERT INTO snapshot_bundle_members (
                         snapshot_bundle_id, logical_source_id, snapshot_id,
                         capture_order, member_role, member_capture_status
-                    ) VALUES (?, ?, ?, ?, ?, 'captured')
+                    ) VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     [
                         captured_bundle.snapshot_bundle_id,
@@ -385,6 +425,7 @@ def add_bundle_members(
                         captured.snapshot_id,
                         member.capture_order,
                         member.member_role,
+                        member.member_capture_status,
                     ],
                 )
             connection.execute(
@@ -490,7 +531,9 @@ def load_bundle_members(
     with read_connection(database_path) as connection:
         rows = connection.execute(
             """
-            SELECT capture_order, member_role, member_capture_status, snapshot_id
+            SELECT capture_order, source_id, source_path, member_role,
+                member_capture_status, capture_started_at, capture_completed_at,
+                snapshot_id
             FROM bundle_member_capture_metadata
             WHERE snapshot_bundle_id = ?
             ORDER BY capture_order
@@ -498,15 +541,28 @@ def load_bundle_members(
             [snapshot_bundle_id],
         ).fetchall()
     members: list[LoadedBundleMember] = []
-    for capture_order, member_role, status, snapshot_id in rows:
+    for (
+        capture_order,
+        source_id,
+        source_path,
+        member_role,
+        status,
+        capture_started_at,
+        capture_completed_at,
+        snapshot_id,
+    ) in rows:
         source = load_snapshot_source(database_path, str(snapshot_id)) if snapshot_id else None
         source_bytes = load_snapshot_bytes(database_path, str(snapshot_id)) if snapshot_id else None
         members.append(
             LoadedBundleMember(
                 source=source,
+                source_id=str(source_id),
+                source_path=str(source_path),
                 member_role=str(member_role),
                 member_capture_status=str(status),
                 capture_order=int(capture_order),
+                capture_started_at=capture_started_at,
+                capture_completed_at=capture_completed_at,
                 source_bytes=source_bytes,
             )
         )

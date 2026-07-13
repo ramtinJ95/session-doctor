@@ -178,11 +178,14 @@ sibling asset, or browser window. Stale or missing analysis is shown explicitly.
 uv run session-doctor snapshots list --status settled_unknown --format json
 uv run session-doctor snapshots show <snapshot-id>
 uv run session-doctor snapshots replay <snapshot-id> --output replay.jsonl
+uv run session-doctor snapshots replay <snapshot-id> --bundle --output replay-bundle
 uv run session-doctor snapshots prune <snapshot-id>
 uv run session-doctor snapshots prune <snapshot-id> --force
 ```
 
 Replay writes exact sensitive source bytes only to the explicit output path.
+It refuses an existing file unless `--overwrite` is supplied; bundle export
+always requires a new directory and includes an ordered manifest.
 Pruning blocks current normalized dependencies unless `--force`; forced pruning
 reports those dependencies, removes the complete bundle capture, and
 checkpoints DuckDB.
@@ -203,7 +206,7 @@ command.
 | `sessions list` | List ingested sessions | `--agent NAME`, `--db PATH` |
 | `snapshots list` | List exact history and lifecycle | `--agent NAME`, `--status STATE`, `--format terminal\|json` |
 | `snapshots show SNAPSHOT_ID` | Show snapshot provenance | `--db PATH` |
-| `snapshots replay SNAPSHOT_ID` | Write exact captured bytes | `--output PATH`, `--db PATH` |
+| `snapshots replay SNAPSHOT_ID` | Write exact captured bytes or bundle | `--output PATH`, `--bundle`, `--overwrite`, `--db PATH` |
 | `snapshots prune SNAPSHOT_ID` | Explicitly prune a bundle capture | `--force`, `--db PATH` |
 | `analyze SESSION_ID` | Analyze one session | `--agent NAME`, `--format terminal\|json`, `--artifact PATH`, `--no-artifact` |
 | `analyze --all` | Restore or rebuild analysis coverage | `--project PATH`, `--agent NAME`, `--force`, `--write-artifacts` |

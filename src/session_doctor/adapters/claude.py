@@ -207,7 +207,11 @@ class ClaudeCodeAdapter(BaseAdapter):
     ) -> tuple[tuple[SessionSource, str], ...]:
         source_path = Path(source.source_path).expanduser()
         session_dir = claude_session_directory(source_path)
-        candidates = list(session_dir.rglob("*")) if session_dir.is_dir() else []
+        candidates = (
+            [candidate for candidate in session_dir.rglob("*") if candidate.is_file()]
+            if session_dir.is_dir()
+            else []
+        )
         root_path = session_dir.parent / f"{session_dir.name}.jsonl"
         if root_path.is_file():
             candidates.append(root_path)
