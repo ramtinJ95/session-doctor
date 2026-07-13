@@ -8,7 +8,7 @@ import duckdb
 import pytest
 
 from session_doctor.adapters import ParsedSessionBundle
-from session_doctor.ingest_workflow import topology_inputs_changed
+from session_doctor.ingest_workflow import capture_status, topology_inputs_changed
 from session_doctor.schemas import AgentName, Session, SessionSource
 from session_doctor.store import BundleMemberCapture, DuckDBStore, SnapshotPruneBlocked
 
@@ -230,6 +230,10 @@ def test_topology_selection_detects_changes_to_any_input(tmp_path) -> None:
     competing_parent.write_bytes(b"competing")
     (tmp_path / "new-neighbor.jsonl").write_bytes(b"new")
     assert topology_inputs_changed(members) is True
+
+
+def test_topology_change_skews_bundle_without_existing_members() -> None:
+    assert capture_status(False, (), topology_changed=True) == "skewed"
 
 
 def test_incomplete_capture_interrupts_settling_across_identity_fallback(tmp_path) -> None:

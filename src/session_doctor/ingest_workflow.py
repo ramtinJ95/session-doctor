@@ -98,7 +98,7 @@ def ingest_sources(
             primary_capture_status = "changed_during_capture" if primary_changed else "captured"
             bundle_members: tuple[BundleMemberCapture, ...] = ()
             try:
-                adapter_members, bundle_members = capture_bundle_members(
+                adapter_members, bundle_members, topology_changed = capture_bundle_members(
                     adapter,
                     captured_parse_source,
                     source_bytes,
@@ -109,7 +109,9 @@ def ingest_sources(
                     captured_parse_source,
                     adapter_members,
                 )
-                aggregate_capture_status = capture_status(primary_changed, bundle_members)
+                aggregate_capture_status = capture_status(
+                    primary_changed, bundle_members, topology_changed=topology_changed
+                )
                 bundle = adapter.parse_source(prepared_source, source_bytes)
                 if aggregate_capture_status == "complete" and parse_snapshot_incomplete(bundle):
                     aggregate_capture_status = "incomplete"
@@ -216,7 +218,7 @@ def capture_bundle_members(
     store: DuckDBStore,
     *,
     member_discovery_source: SessionSource | None = None,
-) -> tuple[tuple[CapturedAdapterMember, ...], tuple[BundleMemberCapture, ...]]:
+) -> tuple[tuple[CapturedAdapterMember, ...], tuple[BundleMemberCapture, ...], bool]:
     adapter_members: list[CapturedAdapterMember] = [
         CapturedAdapterMember(primary_source, "primary", primary_bytes)
     ]
@@ -285,7 +287,8 @@ def capture_bundle_members(
                     },
                 )
             )
-        if topology_inputs_changed(member_sources, member_discovery_source):
+        topology_changed = topology_inputs_changed(member_sources, member_discovery_source)
+        if topology_changed:
             bundle_members = [
                 replace(
                     member,
@@ -303,7 +306,7 @@ def capture_bundle_members(
             ]
     except Exception as exc:
         raise BundleMemberCaptureError(exc, tuple(bundle_members)) from exc
-    return tuple(adapter_members), tuple(bundle_members)
+    return tuple(adapter_members), tuple(bundle_members), topology_changed
 
 
 def topology_inputs_changed(
@@ -350,9 +353,16 @@ def topology_inputs_changed(
     return False
 
 
-def capture_status(primary_changed: bool, members: tuple[BundleMemberCapture, ...]) -> str:
-    if primary_changed or any(
-        member.member_capture_status == "changed_during_capture" for member in members
+def capture_status(
+    primary_changed: bool,
+    members: tuple[BundleMemberCapture, ...],
+    *,
+    topology_changed: bool = False,
+) -> str:
+    if (
+        primary_changed
+        or topology_changed
+        or any(member.member_capture_status == "changed_during_capture" for member in members)
     ):
         return "skewed"
     if any(member.member_capture_status in {"missing", "unreadable"} for member in members):
