@@ -160,8 +160,17 @@ class DuckDBStore:
         bundle: ParsedSessionBundle,
         captured_source: CapturedSource,
         captured_bundle: CapturedBundle,
+        *,
+        adapter_version: str = "0.1.0",
     ) -> None:
-        write_parsed_bundle(self.database_path, source, bundle, captured_source, captured_bundle)
+        write_parsed_bundle(
+            self.database_path,
+            source,
+            bundle,
+            captured_source,
+            captured_bundle,
+            adapter_version=adapter_version,
+        )
 
     def insert_untracked_parsed_bundle(
         self, source: SessionSource, bundle: ParsedSessionBundle

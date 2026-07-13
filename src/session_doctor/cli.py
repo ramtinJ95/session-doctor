@@ -318,6 +318,7 @@ def normalization_status(
             "snapshot_bundle_id": None,
             "status": "missing",
             "current_normalization_run_id": None,
+            "selected_normalization_run_id": None,
             "available_normalization_run_ids": [],
         }
     else:
@@ -332,6 +333,7 @@ def normalization_status(
             "snapshot_bundle_id": coverage.snapshot_bundle_id,
             "status": coverage.status,
             "current_normalization_run_id": coverage.current_normalization_run_id,
+            "selected_normalization_run_id": coverage.selected_normalization_run_id,
             "available_normalization_run_ids": coverage.available_normalization_run_ids,
         }
     typer.echo(json.dumps(status_payload, indent=2, sort_keys=True))

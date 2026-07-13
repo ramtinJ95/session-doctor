@@ -4,8 +4,10 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
+from session_doctor.adapters import ParsedSessionBundle
 from session_doctor.adapters.codex import CodexAdapter
 from session_doctor.cli import app
 from session_doctor.normalization_workflow import normalize_snapshot
@@ -18,6 +20,14 @@ runner = CliRunner()
 
 class LegacyCodexAdapter(CodexAdapter):
     version = "0.0.9"
+
+
+class VersionNineCodexAdapter(CodexAdapter):
+    version = "9.0"
+
+
+class VersionTenCodexAdapter(CodexAdapter):
+    version = "10.0"
 
 
 def test_bundle_without_run_reports_missing_coverage(tmp_path) -> None:
@@ -94,6 +104,26 @@ def test_parser_versions_coexist_and_replay_is_additive(tmp_path) -> None:
     assert stored_current.bundle == stored_legacy.bundle
 
 
+def test_latest_compatible_selection_uses_parsed_versions(tmp_path) -> None:
+    store, snapshot_id = ingest_fixture(tmp_path / "session-doctor.duckdb")
+    summary = store.snapshot_summary(snapshot_id)
+    assert summary is not None
+    assert summary.snapshot_bundle_id is not None
+    version_nine = normalize_snapshot(VersionNineCodexAdapter(), store, snapshot_id)
+    version_ten = normalize_snapshot(VersionTenCodexAdapter(), store, snapshot_id)
+
+    coverage = store.normalization_coverage(
+        summary.snapshot_bundle_id,
+        adapter_name="codex",
+        adapter_version="10.1",
+    )
+
+    assert coverage.status == "stale"
+    assert coverage.current_normalization_run_id is None
+    assert coverage.selected_normalization_run_id == version_ten.normalization_run_id
+    assert coverage.selected_normalization_run_id != version_nine.normalization_run_id
+
+
 def test_coverage_selection_is_deterministic_and_read_only(tmp_path) -> None:
     database_path = tmp_path / "session-doctor.duckdb"
     store, snapshot_id = ingest_fixture(database_path)
@@ -122,13 +152,15 @@ def test_coverage_selection_is_deterministic_and_read_only(tmp_path) -> None:
     stale = store.normalization_coverage(
         summary.snapshot_bundle_id,
         adapter_name="codex",
-        adapter_version="future-parser",
+        adapter_version="0.2.0",
     )
 
     assert first == second
     assert first.status == "current"
+    assert first.selected_normalization_run_id == first.current_normalization_run_id
     assert stale.status == "stale"
     assert stale.current_normalization_run_id is None
+    assert stale.selected_normalization_run_id == first.current_normalization_run_id
     assert {table: store.table_count(table) for table in before} == before
 
     status_result = runner.invoke(
@@ -209,3 +241,76 @@ def test_prune_reports_normalization_and_preserves_shared_run(tmp_path) -> None:
     assert result.dependent_normalization_run_ids == dependencies.normalization_run_ids
     assert store.table_count("normalization_runs") == 1
     assert store.table_count("normalization_run_bundles") == 1
+
+
+def test_canonical_json_ignores_metadata_insertion_order(tmp_path) -> None:
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    source = SessionSource(
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+        source_path="/sessions/source-1.jsonl",
+        metadata={"z": 1, "a": {"y": 2, "b": 3}},
+    )
+    captured = store.capture_source(source, b"{}\n")
+    captured_bundle = store.create_single_source_bundle(source, captured, "source-1")
+    bundle = ParsedSessionBundle()
+    store.insert_parsed_bundle(source, bundle, captured, captured_bundle)
+    stored_source = store.load_snapshot_source(captured.snapshot_id)
+    assert stored_source is not None
+
+    replayed = store.persist_normalization(
+        captured_bundle.snapshot_bundle_id,
+        stored_source,
+        bundle,
+        adapter_version=CodexAdapter.version,
+    )
+
+    assert store.table_count("normalization_runs") == 1
+    assert store.load_normalization(replayed.normalization_run_id) is not None
+
+
+def test_bundle_content_identity_includes_parser_source_descriptor(tmp_path) -> None:
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    first_source = SessionSource(
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+        source_path="/sessions/source-1.jsonl",
+        metadata={"parser_input": "first"},
+    )
+    first_capture = store.capture_source(first_source, b"same")
+    first_bundle = store.create_single_source_bundle(first_source, first_capture, "native-1")
+    second_source = first_source.model_copy(update={"metadata": {"parser_input": "second"}})
+    second_capture = store.capture_source(second_source, b"same")
+    second_bundle = store.create_single_source_bundle(second_source, second_capture, "native-1")
+
+    assert first_capture.snapshot_content_id == second_capture.snapshot_content_id
+    assert first_bundle.bundle_content_id != second_bundle.bundle_content_id
+
+
+def test_projection_failure_rolls_back_normalization(tmp_path, monkeypatch) -> None:
+    from session_doctor.store import writers
+
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    source = SessionSource(
+        source_id="source-1",
+        agent_name=AgentName.CODEX,
+        source_path="/sessions/source-1.jsonl",
+    )
+    captured = store.capture_source(source, b"{}\n")
+    captured_bundle = store.create_single_source_bundle(source, captured, "source-1")
+
+    def fail_projection(*_args, **_kwargs) -> None:
+        raise RuntimeError("synthetic projection failure")
+
+    monkeypatch.setattr(writers, "delete_source_records", fail_projection)
+
+    with pytest.raises(RuntimeError, match="synthetic projection failure"):
+        store.insert_parsed_bundle(
+            source,
+            ParsedSessionBundle(),
+            captured,
+            captured_bundle,
+        )
+
+    assert store.table_count("normalization_runs") == 0
+    assert store.table_count("normalized_entities") == 0

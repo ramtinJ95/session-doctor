@@ -32,7 +32,7 @@ def normalize_snapshot(
     bundle = adapter.parse_source(prepared_source, primary.source_bytes)
     return store.persist_normalization(
         summary.snapshot_bundle_id,
-        prepared_source,
+        primary.source,
         bundle,
         adapter_version=adapter.version,
     )
