@@ -20,6 +20,7 @@ from session_doctor.schemas import (
     Session,
     SessionSource,
     ToolCall,
+    ToolResult,
 )
 from session_doctor.segmentation import broad_goal_similarity, segment_session
 from session_doctor.store import DuckDBStore
@@ -110,6 +111,7 @@ def test_explicit_new_task_after_closure_is_not_interrupted_unknown() -> None:
         "Actually, fix the parser test first",
         "Please continue with the parser test",
         "Review that parser test change",
+        "No, fix the parser test first",
         "Fix parser tests",
     ],
 )
@@ -158,7 +160,7 @@ def test_pending_tool_work_prevents_closure_split() -> None:
             agent_name=AgentName.CODEX,
             record_index=index,
         )
-        for index in range(4)
+        for index in range(5)
     ]
     pending.messages[0].source_event_id = "event-0"
     pending.messages[1].source_event_id = "event-2"
@@ -169,6 +171,14 @@ def test_pending_tool_work_prevents_closure_split() -> None:
             session_id="s1",
             source_event_id="event-1",
             name="shell",
+        )
+    ]
+    pending.tool_results = [
+        ToolResult(
+            tool_result_id="late-result",
+            session_id="s1",
+            tool_call_id="pending-call",
+            source_event_id="event-4",
         )
     ]
     result = segment_session(pending, lifecycle())
@@ -322,8 +332,7 @@ def test_latest_capture_bundle_is_used_for_a_b_a_history(tmp_path) -> None:
     assert latest_lifecycle is not None
     assert analysis.episodes[0].first_user_anchor_id == "event-a"
     assert analysis.lifecycle_observation_id == latest_lifecycle.lifecycle_observation_id
-    newer_capture = store.capture_source(source, b"unparsed-C")
-    store.create_single_source_bundle(source, newer_capture, "native-history")
+    store.capture_source(source, b"unparsed-C")
     with pytest.raises(EpisodeAnalysisUnavailable, match="latest capture"):
         analyze_session_episodes(store, "session-history", store.database_path)
 
