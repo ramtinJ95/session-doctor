@@ -82,6 +82,14 @@ def trailing_json_record_malformed(path: Path, source_bytes: bytes) -> bool:
     return False
 
 
+def metadata_json_malformed(source_bytes: bytes) -> bool:
+    try:
+        payload = json.loads(source_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return True
+    return not isinstance(payload, dict)
+
+
 CLAUDE_MESSAGE_TYPES = {"assistant", "system", "user"}
 
 
@@ -257,6 +265,16 @@ class ClaudeCodeAdapter(BaseAdapter):
                         parse_incomplete_paths.add(transcript)
                 except OSError:
                     continue
+            for metadata_path in {
+                candidate for candidate in candidates if candidate.name.endswith(".meta.json")
+            }:
+                try:
+                    metadata_bytes = metadata_path.read_bytes()
+                except OSError:
+                    continue
+                expected_hashes[metadata_path] = hashlib.sha256(metadata_bytes).hexdigest()
+                if metadata_json_malformed(metadata_bytes):
+                    parse_incomplete_paths.add(metadata_path)
         elif source.source_kind is SourceKind.SUBSESSION:
             candidates.append(source_path.with_suffix(".meta.json"))
             root_path = session_dir.parent / f"{session_dir.name}.jsonl"
@@ -297,7 +315,8 @@ class ClaudeCodeAdapter(BaseAdapter):
             parse_incomplete_paths.update(
                 path
                 for path, content in topology_bytes.items()
-                if path.suffix == ".jsonl" and trailing_json_record_malformed(path, content)
+                if (path.suffix == ".jsonl" and trailing_json_record_malformed(path, content))
+                or (path.name.endswith(".meta.json") and metadata_json_malformed(content))
             )
             current = next(
                 (
