@@ -893,8 +893,9 @@ Implementation decisions:
   every captured member to a new directory;
 - pruning accepts only a bundle's primary snapshot, blocks normalized
   dependencies unless `--force`, reports affected bundles, sources, sessions,
-  analysis runs, and derived-row counts, removes that bundle capture
-  atomically, and runs DuckDB `CHECKPOINT` after commit;
+  analysis runs, inbound topology references, and derived-row counts, removes
+  that bundle capture atomically, clears inbound references to deleted
+  provenance, and runs DuckDB `CHECKPOINT` after commit;
 - Claude bundles capture transcripts, subagent metadata, persisted tool
   results, and related session files before parsing; topology and sidecar
   evidence are reconstructed only from captured bytes.

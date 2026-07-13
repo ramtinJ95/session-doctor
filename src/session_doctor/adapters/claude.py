@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -209,25 +210,64 @@ class ClaudeCodeAdapter(BaseAdapter):
         session_dir = claude_session_directory(source_path)
         candidates: list[Path] = []
         evidence_sources = [(source_path, source_bytes)]
+        expected_hashes: dict[Path, str] = {}
         if source.source_kind is SourceKind.ROOT_SESSION and session_dir.is_dir():
             transcripts = sorted((session_dir / "subagents").glob("*.jsonl"))
             candidates.extend(transcripts)
             candidates.extend(candidate.with_suffix(".meta.json") for candidate in transcripts)
             for transcript in transcripts:
                 try:
-                    evidence_sources.append((transcript, transcript.read_bytes()))
+                    transcript_bytes = transcript.read_bytes()
+                    evidence_sources.append((transcript, transcript_bytes))
+                    expected_hashes[transcript] = hashlib.sha256(transcript_bytes).hexdigest()
                 except OSError:
                     continue
         elif source.source_kind is SourceKind.SUBSESSION:
             candidates.append(source_path.with_suffix(".meta.json"))
             root_path = session_dir.parent / f"{session_dir.name}.jsonl"
-            parent_candidates = [root_path]
-            parent_candidates.extend(sorted((session_dir / "subagents").glob("*.jsonl")))
-            candidates.extend(
-                candidate
-                for candidate in parent_candidates
-                if source.parent_source_id == source_id_for_path(self.name, candidate)
+            topology_paths = [root_path]
+            topology_paths.extend(sorted((session_dir / "subagents").glob("*.jsonl")))
+            topology_paths.extend(sorted((session_dir / "subagents").glob("*.meta.json")))
+            topology_sources = [
+                SessionSource(
+                    source_id=source_id_for_path(self.name, path),
+                    agent_name=self.name,
+                    source_path=str(path),
+                    source_kind=classify_claude_path(path),
+                )
+                for path in topology_paths
+            ]
+            topology_bytes: dict[Path, bytes] = {}
+            for path in topology_paths:
+                try:
+                    topology_bytes[path] = (
+                        source_bytes if path == source_path else path.read_bytes()
+                    )
+                except OSError:
+                    continue
+            enrich_claude_sources(topology_sources, topology_bytes)
+            current = next(
+                (
+                    candidate
+                    for candidate in topology_sources
+                    if candidate.source_id == source.source_id
+                ),
+                None,
             )
+            if current is not None and current.parent_source_id is not None:
+                parent_path = next(
+                    (
+                        path
+                        for path in topology_paths
+                        if source_id_for_path(self.name, path) == current.parent_source_id
+                    ),
+                    None,
+                )
+                if parent_path is not None and parent_path in topology_bytes:
+                    candidates.append(parent_path)
+                    expected_hashes[parent_path] = hashlib.sha256(
+                        topology_bytes[parent_path]
+                    ).hexdigest()
         for evidence_path, evidence_bytes in evidence_sources:
             for line in evidence_bytes.decode("utf-8").splitlines():
                 try:
@@ -254,6 +294,11 @@ class ClaudeCodeAdapter(BaseAdapter):
                 agent_name=self.name,
                 source_path=str(path),
                 source_kind=source_kind,
+                metadata=(
+                    {"capture_expected_sha256": expected_hashes[path]}
+                    if path in expected_hashes
+                    else {}
+                ),
             )
             role = {
                 SourceKind.ROOT_SESSION: "related_transcript",

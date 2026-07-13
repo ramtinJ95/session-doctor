@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -241,9 +242,17 @@ def capture_bundle_members(
             modified_after = file_modified_at(path)
             signature_after = file_capture_signature(path)
             captured = None
+            discovery_bytes_changed = False
             if member_bytes is not None:
+                expected_hash = member_source.metadata.get("capture_expected_sha256")
+                discovery_bytes_changed = (
+                    isinstance(expected_hash, str)
+                    and hashlib.sha256(member_bytes).hexdigest() != expected_hash
+                )
                 status = (
-                    "changed_during_capture" if signature_before != signature_after else "captured"
+                    "changed_during_capture"
+                    if signature_before != signature_after or discovery_bytes_changed
+                    else "captured"
                 )
                 captured = store.capture_source(
                     member_source,
@@ -269,6 +278,7 @@ def capture_bundle_members(
                     evidence={
                         "signature_before": signature_before,
                         "signature_after": signature_after,
+                        "discovery_bytes_changed": discovery_bytes_changed,
                     },
                 )
             )
