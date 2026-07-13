@@ -1,6 +1,6 @@
 ---
 name: "Implement deterministic analysis v2 roadmap"
-description: "Implement and merge every PR in the deterministic-analysis-v2 roadmap using gated review loops."
+description: "Implement and merge every PR in the deterministic-analysis-v2 roadmap using gated review loops capped at five reviews per PR."
 ---
 
 # Implement deterministic analysis v2 roadmap
@@ -18,7 +18,8 @@ Use this workflow to implement `docs/deterministic-analysis-v2-plan.md` from PR 
 - Never bypass hooks, approval guards, required checks, or destructive-operation safeguards.
 - During code inspection, add any unrelated issue to `scratch/BACKLOG.md` with file and line references.
 - High- and medium-severity reviewer findings and required CI checks are hard merge gates.
-- Continue automatically between merged PRs. Stop only when continuing safely is impossible, such as an unresolvable product ambiguity, a blocked command requiring user approval, or a persistent external failure.
+- Run at most five reviewer passes for each PR. If the fifth pass still reports a valid high- or medium-severity finding, do not merge; report the blocked PR and remaining findings to the user.
+- Continue automatically between merged PRs. Stop only when continuing safely is impossible, such as an unresolvable product ambiguity, a blocked command requiring user approval, a persistent external failure, or exhaustion of the five-review limit with merge-blocking findings.
 
 ## Loop
 
@@ -51,15 +52,18 @@ For the next unmerged roadmap PR:
    - Open a concise PR describing what changed, why, tests run, and the roadmap gate addressed.
    - Do not merge yet.
 
-6. **Run the reviewer loop**
+6. **Run the reviewer loop, capped at five passes**
+   - Track the review-pass count for this PR, starting at one.
    - Spawn a fresh `reviewer` subagent against the complete PR diff and current PR requirements.
    - Require prioritized findings with exact file and line references.
    - Fix every valid high- and medium-severity finding.
    - If a high/medium finding is intentionally rejected, record a concrete technical reason and include both the original finding and rationale in the next reviewer brief. Require that reviewer to resolve the dispute explicitly; do not silently dismiss it.
    - Log unrelated or deferred findings in `scratch/BACKLOG.md` with file and line references.
    - Run affected tests, create logical conventional commits, and push each fix batch.
-   - Spawn a new reviewer against the updated PR.
-   - Repeat until a fresh review reports no high- or medium-severity findings.
+   - If fewer than five passes have run, spawn a new reviewer against the updated PR.
+   - Stop early when a fresh review reports no high- or medium-severity findings.
+   - Never run a sixth reviewer pass for the PR.
+   - If the fifth pass still reports a valid high- or medium-severity finding, preserve the hard merge gate, do not merge, and report the PR as blocked with the exact remaining findings.
 
 7. **Pass merge gates**
    - Run the full required local checks from the plan:
@@ -73,7 +77,7 @@ For the next unmerged roadmap PR:
 
    - Confirm required remote checks pass on the latest pushed commit.
    - Confirm the roadmap PR gate is satisfied and no stale v1/partial-v2 fallback is exposed.
-   - Confirm the PR is mergeable and still based on current `main`. If the branch is updated, return to the full reviewer loop and rerun every local and remote merge gate on the new head.
+   - Confirm the PR is mergeable and still based on current `main`. If the branch is updated, rerun local and remote merge gates. A branch update does not reset or extend the five-review limit.
 
 8. **Merge and continue**
    - Rebase-merge the PR and delete the remote branch.
