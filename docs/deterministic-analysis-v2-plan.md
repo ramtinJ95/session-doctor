@@ -840,6 +840,18 @@ Gate:
 
 ### PR 2: Durable Raw Blob And Snapshot Schema
 
+Implementation decisions:
+
+- DuckDB schema version 5 introduces durable `source_blobs`,
+  `logical_sources`, `source_snapshots`, `snapshot_bundles`, and
+  `snapshot_bundle_members` tables;
+- source blobs use deterministic zlib level-6 compression and SHA-256 content
+  addressing;
+- every ingest creates an immutable capture observation, while unchanged bytes
+  reuse one blob and snapshot-content identity;
+- production ingestion commits captured bytes before passing those same bytes
+  to the adapter.
+
 Deliverables:
 
 - add compressed content-addressed BLOB storage;
@@ -1408,8 +1420,7 @@ No implementation PR is committed or opened without explicit user direction.
 
 These are deliberately deferred until their owning PR:
 
-- compressed BLOB codec and level;
-- exact durable/derived table names and constraints;
+- remaining derived table names, constraints, and indexes;
 - exact settling interval;
 - built-in validator command registry;
 - initial tier thresholds after pilot annotation;

@@ -106,6 +106,11 @@ compressed content-addressed blob, while every ingest observation retains its
 own immutable capture identity and time. Multi-file sessions use ordered bundle
 manifests; they do not claim an atomic directory snapshot.
 
+Schema version 5 stores blobs with SHA-256 content identity and deterministic
+zlib level-6 compression in `source_blobs`; the other durable capture tables are
+`logical_sources`, `source_snapshots`, `snapshot_bundles`, and
+`snapshot_bundle_members`.
+
 The parser consumes only stored bytes. A source mutation after capture cannot
 change that normalization run.
 
@@ -534,8 +539,7 @@ evidence to external judges. Session Doctor itself never sends it.
 
 The roadmap assigns these decisions to their owning PRs:
 
-- compressed BLOB codec and level;
-- exact SQL table names, constraints, and indexes;
+- remaining derived SQL table names, constraints, and indexes;
 - settling interval;
 - built-in validator registry;
 - active-time derivation by adapter;
