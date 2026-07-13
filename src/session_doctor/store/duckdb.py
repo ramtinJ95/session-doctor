@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from session_doctor.adapters import ParsedSessionBundle
@@ -16,6 +17,15 @@ from .analysis_readers import AnalysisTarget, list_analysis_targets
 from .connection import initialize_database, inspection_connection
 from .diagnostic_readers import load_diagnostic_snapshot
 from .json_values import duckdb_value, metadata_json, parse_metadata, parse_string_list
+from .lifecycle import (
+    LifecycleObservation,
+)
+from .lifecycle import (
+    lifecycle_for_bundle as read_bundle_lifecycle,
+)
+from .lifecycle import (
+    record_lifecycle_observation as write_lifecycle_observation,
+)
 from .migrations import require_current_schema
 from .models import AggregateSummary, SessionScopeFilters, SessionSummary, StoreInfo, SummaryFilters
 from .project_readers import read_projects
@@ -41,15 +51,42 @@ from .row_mappers import (
     tool_call_rows,
     tool_result_rows,
 )
+from .snapshot_history import (
+    PruneResult,
+    SnapshotSummary,
+)
+from .snapshot_history import (
+    latest_snapshot as read_latest_snapshot,
+)
+from .snapshot_history import (
+    list_snapshots as read_snapshots,
+)
+from .snapshot_history import (
+    prune_snapshot as delete_snapshot,
+)
+from .snapshot_history import (
+    snapshot_dependencies as read_snapshot_dependencies,
+)
+from .snapshot_history import (
+    snapshot_summary as read_snapshot_summary,
+)
 from .snapshots import (
+    BundleMemberCapture,
     CapturedBundle,
     CapturedSource,
+    LoadedBundleMember,
+)
+from .snapshots import (
+    add_bundle_members as write_bundle_members,
 )
 from .snapshots import (
     capture_source as write_source_capture,
 )
 from .snapshots import (
     create_single_source_bundle as write_single_source_bundle,
+)
+from .snapshots import (
+    load_bundle_members as read_bundle_members,
 )
 from .snapshots import (
     load_snapshot_bytes as read_snapshot_bytes,
@@ -120,8 +157,21 @@ class DuckDBStore:
     ) -> None:
         write_untracked_parsed_bundle(self.database_path, source, bundle)
 
-    def capture_source(self, source: SessionSource, source_bytes: bytes) -> CapturedSource:
-        return write_source_capture(self.database_path, source, source_bytes)
+    def capture_source(
+        self,
+        source: SessionSource,
+        source_bytes: bytes,
+        *,
+        native_modified_at: datetime | None = None,
+        captured_at: datetime | None = None,
+    ) -> CapturedSource:
+        return write_source_capture(
+            self.database_path,
+            source,
+            source_bytes,
+            native_modified_at=native_modified_at,
+            captured_at=captured_at,
+        )
 
     def load_snapshot_bytes(self, snapshot_id: str) -> bytes | None:
         return read_snapshot_bytes(self.database_path, snapshot_id)
@@ -129,12 +179,17 @@ class DuckDBStore:
     def load_snapshot_source(self, snapshot_id: str) -> SessionSource | None:
         return read_snapshot_source(self.database_path, snapshot_id)
 
+    def load_bundle_members(self, snapshot_bundle_id: str) -> tuple[LoadedBundleMember, ...]:
+        return read_bundle_members(self.database_path, snapshot_bundle_id)
+
     def create_single_source_bundle(
         self,
         source: SessionSource,
         captured_source: CapturedSource,
         native_session_identity: str,
         native_identity_status: str = "observed",
+        capture_status: str = "complete",
+        capture_evidence: dict[str, object] | None = None,
     ) -> CapturedBundle:
         return write_single_source_bundle(
             self.database_path,
@@ -142,7 +197,58 @@ class DuckDBStore:
             captured_source,
             native_session_identity=native_session_identity,
             native_identity_status=native_identity_status,
+            capture_status=capture_status,
+            capture_evidence=capture_evidence,
         )
+
+    def add_bundle_members(
+        self,
+        captured_bundle: CapturedBundle,
+        members: tuple[BundleMemberCapture, ...],
+    ) -> CapturedBundle:
+        return write_bundle_members(self.database_path, captured_bundle, members)
+
+    def record_lifecycle(
+        self, snapshot_bundle_id: str, *, terminal_observed: bool
+    ) -> LifecycleObservation:
+        return write_lifecycle_observation(
+            self.database_path,
+            snapshot_bundle_id,
+            terminal_observed=terminal_observed,
+        )
+
+    def lifecycle_for_bundle(self, snapshot_bundle_id: str) -> LifecycleObservation | None:
+        return read_bundle_lifecycle(self.database_path, snapshot_bundle_id)
+
+    def list_snapshots(
+        self,
+        *,
+        agent_name: str | None = None,
+        lifecycle_state: str | None = None,
+    ) -> tuple[SnapshotSummary, ...]:
+        return read_snapshots(
+            self.database_path,
+            agent_name=agent_name,
+            lifecycle_state=lifecycle_state,
+        )
+
+    def snapshot_summary(self, snapshot_id: str) -> SnapshotSummary | None:
+        return read_snapshot_summary(self.database_path, snapshot_id)
+
+    def latest_snapshot(
+        self, source_id: str, *, lifecycle_state: str | None = None
+    ) -> SnapshotSummary | None:
+        return read_latest_snapshot(
+            self.database_path,
+            source_id,
+            lifecycle_state=lifecycle_state,
+        )
+
+    def prune_snapshot(self, snapshot_id: str, *, force: bool = False) -> PruneResult:
+        return delete_snapshot(self.database_path, snapshot_id, force=force)
+
+    def snapshot_dependencies(self, snapshot_id: str) -> tuple[str, ...]:
+        return read_snapshot_dependencies(self.database_path, snapshot_id)
 
     def replace_analysis_rows(
         self,

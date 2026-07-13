@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -72,6 +73,19 @@ class CodexAdapter(BaseAdapter):
             for path in sorted(discovery_root.rglob("*.jsonl"))
             if path.is_file()
         ]
+
+    def terminal_observed(self, source: SessionSource, source_bytes: bytes) -> bool:
+        for line in source_bytes.decode("utf-8").splitlines():
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, dict) or record.get("type") != "event_msg":
+                continue
+            payload = record.get("payload")
+            if isinstance(payload, dict) and payload.get("type") == "task_complete":
+                return True
+        return False
 
     def parse_source(self, source: SessionSource, source_bytes: bytes) -> ParsedSessionBundle:
         source_path = Path(source.source_path).expanduser()

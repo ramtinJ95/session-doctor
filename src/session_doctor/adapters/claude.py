@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -7,13 +8,18 @@ from session_doctor.ids import source_id_for_path
 from session_doctor.privacy import hash_text
 from session_doctor.schemas import AgentName, RawEvent, SessionSource, SourceKind
 
-from .base import BaseAdapter, ParsedSessionBundle
+from .base import BaseAdapter, CapturedAdapterMember, ParsedSessionBundle
 from .claude_commands import ClaudeToolResult, ClaudeToolUse, command_runs_from_tools
 from .claude_files import FILE_TOOL_OPERATIONS, file_activity_from_tool_use
 from .claude_messages import message_from_record, unsupported_content_shapes
 from .claude_metadata import ClaudeSessionMetadata, extract_session_metadata
 from .claude_records import raw_event_for_record, read_claude_jsonl
-from .claude_sidecars import add_topology_warnings, enrich_tool_result_from_sidecar
+from .claude_sidecars import (
+    add_topology_warnings,
+    enrich_tool_result_from_captured_sidecar,
+    enrich_tool_result_from_sidecar,
+    summarize_sidecar_bytes,
+)
 from .claude_tools import (
     assistant_tool_use_blocks,
     model_usage_from_record,
@@ -22,7 +28,11 @@ from .claude_tools import (
     tool_result_from_block,
     user_tool_result_blocks,
 )
-from .claude_topology import enrich_claude_sources
+from .claude_topology import (
+    claude_session_directory,
+    enrich_claude_sources,
+    resolve_tool_result_path,
+)
 from .common import (
     bool_value,
     dict_value,
@@ -191,6 +201,81 @@ class ClaudeCodeAdapter(BaseAdapter):
         }
         metadata["claude_multifile_evidence_status"] = "unavailable_until_bundle_capture"
         return source.model_copy(update={"parent_source_id": None, "metadata": metadata})
+
+    def bundle_member_sources(
+        self, source: SessionSource, source_bytes: bytes
+    ) -> tuple[tuple[SessionSource, str], ...]:
+        source_path = Path(source.source_path).expanduser()
+        session_dir = claude_session_directory(source_path)
+        candidates = list(session_dir.rglob("*")) if session_dir.is_dir() else []
+        root_path = session_dir.parent / f"{session_dir.name}.jsonl"
+        if root_path.is_file():
+            candidates.append(root_path)
+        for candidate in tuple(candidates):
+            if candidate.parent.name == "subagents" and candidate.suffix == ".jsonl":
+                candidates.append(candidate.with_suffix(".meta.json"))
+        if source_path.parent.name == "subagents":
+            candidates.append(source_path.with_suffix(".meta.json"))
+        for line in source_bytes.decode("utf-8").splitlines():
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            raw_path = string_value(
+                dict_value(record.get("toolUseResult")).get("persistedOutputPath")
+            )
+            if (
+                raw_path
+                and (resolved := resolve_tool_result_path(source_path, raw_path)) is not None
+            ):
+                candidates.append(resolved)
+        members: list[tuple[SessionSource, str]] = []
+        for path in sorted(set(candidates)):
+            if path == source_path:
+                continue
+            source_kind = classify_claude_path(path)
+            member_source = SessionSource(
+                source_id=source_id_for_path(self.name, path),
+                agent_name=self.name,
+                source_path=str(path),
+                source_kind=source_kind,
+            )
+            role = {
+                SourceKind.ROOT_SESSION: "related_transcript",
+                SourceKind.SUBSESSION: "subagent_transcript",
+                SourceKind.SUBAGENT_METADATA: "subagent_metadata",
+                SourceKind.TOOL_RESULT: "tool_result",
+            }.get(source_kind, "auxiliary")
+            members.append((member_source, role))
+        return tuple(members)
+
+    def prepare_captured_source(
+        self,
+        source: SessionSource,
+        members: tuple[CapturedAdapterMember, ...],
+    ) -> SessionSource:
+        sources = [source.model_copy(deep=True)]
+        sources.extend(
+            member.source.model_copy(deep=True)
+            for member in members
+            if member.source.source_id != source.source_id
+        )
+        source_bytes_by_path = {
+            Path(member.source.source_path): member.source_bytes for member in members
+        }
+        enrich_claude_sources(sources, source_bytes_by_path)
+        prepared = next(row for row in sources if row.source_id == source.source_id)
+        prepared.metadata.pop("claude_multifile_evidence_status", None)
+        prepared.metadata["claude_captured_tool_results"] = {
+            str(Path(member.source.source_path).resolve()): summarize_sidecar_bytes(
+                member.source_bytes
+            )
+            for member in members
+            if member.source.source_kind is SourceKind.TOOL_RESULT
+        }
+        return prepared
 
     def source_for_path(self, path: Path) -> SessionSource:
         source_kind = classify_claude_path(path)
@@ -476,13 +561,12 @@ def parse_user_tool_results(
                 normalized_result,
             )
         elif correlate_sidecar and persisted_output_path is not None:
-            bundle.parse_warnings.append(
-                warning_for_record(
-                    source,
-                    record_index,
-                    "tool_result_sidecar_capture_unavailable",
-                    "Claude Code tool-result sidecar enrichment awaits bundle capture",
-                )
+            normalized_result = enrich_tool_result_from_captured_sidecar(
+                bundle,
+                source,
+                record_index,
+                record,
+                normalized_result,
             )
         bundle.tool_results.append(normalized_result)
 

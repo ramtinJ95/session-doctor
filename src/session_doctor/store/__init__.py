@@ -11,8 +11,16 @@ from .duckdb import (
     StoreInfo,
     SummaryFilters,
 )
+from .lifecycle import LifecycleObservation
 from .migrations import DURABLE_TABLE_NAMES, SCHEMA_VERSION, TABLE_NAMES, SchemaMismatchError
-from .snapshots import CapturedBundle, CapturedSource, SnapshotSourceMismatchError
+from .snapshot_history import PruneResult, SnapshotPruneBlocked, SnapshotSummary
+from .snapshots import (
+    BundleMemberCapture,
+    CapturedBundle,
+    CapturedSource,
+    LoadedBundleMember,
+    SnapshotSourceMismatchError,
+)
 from .trend_models import (
     ProjectFilters,
     ProjectReport,
@@ -29,6 +37,7 @@ __all__ = [
     "AnalysisTarget",
     "CapturedSource",
     "CapturedBundle",
+    "BundleMemberCapture",
     "CaptureProvenanceError",
     "DatabaseOpenError",
     "DuckDBStore",
@@ -37,11 +46,14 @@ __all__ = [
     "SchemaMismatchError",
     "ProjectFilters",
     "ProjectReport",
+    "PruneResult",
     "SessionSummary",
     "SessionScopeFilters",
     "StoreInfo",
     "StaleCaptureError",
     "SnapshotSourceMismatchError",
+    "SnapshotPruneBlocked",
+    "SnapshotSummary",
     "SummaryFilters",
     "TABLE_NAMES",
     "TrendBucketSize",
@@ -49,4 +61,6 @@ __all__ = [
     "TrendReport",
     "TrendStatus",
     "load_diagnostic_snapshot",
+    "LifecycleObservation",
+    "LoadedBundleMember",
 ]

@@ -161,6 +161,72 @@ def enrich_tool_result_from_sidecar(
     )
 
 
+def enrich_tool_result_from_captured_sidecar(
+    bundle: ParsedSessionBundle,
+    source: SessionSource,
+    record_index: int,
+    record: dict[str, Any],
+    tool_result: ToolResult,
+) -> ToolResult:
+    raw_path = string_value(dict_value(record.get("toolUseResult")).get("persistedOutputPath"))
+    if raw_path is None:
+        return tool_result
+    sidecar_path = resolve_tool_result_path(Path(source.source_path), raw_path)
+    summaries = dict_value(source.metadata.get("claude_captured_tool_results"))
+    summary = dict_value(summaries.get(str(sidecar_path))) if sidecar_path else {}
+    if not summary:
+        bundle.parse_warnings.append(
+            warning_for_record(
+                source,
+                record_index,
+                "missing_captured_tool_result_sidecar",
+                "Claude Code tool-result sidecar is absent from the captured bundle",
+            )
+        )
+        return tool_result
+    sidecar_hash = string_value(summary.get("hash"))
+    sidecar_byte_length = int_value(summary.get("byte_length")) or 0
+    sidecar_character_length = int_value(summary.get("character_length"))
+    metadata = {
+        **tool_result.metadata,
+        "sidecar_correlated": True,
+        "sidecar_hash": sidecar_hash,
+        "sidecar_byte_length": sidecar_byte_length,
+        "sidecar_character_length": sidecar_character_length,
+        "sidecar_declared_length": int_value(
+            dict_value(record.get("toolUseResult")).get("persistedOutputSize")
+        ),
+        "inline_output_truncated": (
+            tool_result.output_length is not None
+            and sidecar_character_length is not None
+            and tool_result.output_length < sidecar_character_length
+        ),
+    }
+    use_sidecar_output = tool_result.output_length in {None, 0} and sidecar_byte_length > 0
+    return tool_result.model_copy(
+        update={
+            "output_hash": sidecar_hash if use_sidecar_output else tool_result.output_hash,
+            "output_length": (
+                sidecar_character_length if use_sidecar_output else tool_result.output_length
+            ),
+            "metadata": metadata,
+        }
+    )
+
+
+def summarize_sidecar_bytes(source_bytes: bytes) -> dict[str, object]:
+    digest = hashlib.sha256(source_bytes).hexdigest()
+    try:
+        character_length: int | None = len(source_bytes.decode("utf-8"))
+    except UnicodeDecodeError:
+        character_length = None
+    return {
+        "hash": digest,
+        "byte_length": len(source_bytes),
+        "character_length": character_length,
+    }
+
+
 def hash_sidecar(path: Path) -> tuple[str, int, int | None]:
     digest = hashlib.sha256()
     byte_length = 0
@@ -183,4 +249,10 @@ def hash_sidecar(path: Path) -> tuple[str, int, int | None]:
     return digest.hexdigest(), byte_length, character_length
 
 
-__all__ = ["add_topology_warnings", "enrich_tool_result_from_sidecar", "hash_sidecar"]
+__all__ = [
+    "add_topology_warnings",
+    "enrich_tool_result_from_captured_sidecar",
+    "enrich_tool_result_from_sidecar",
+    "hash_sidecar",
+    "summarize_sidecar_bytes",
+]

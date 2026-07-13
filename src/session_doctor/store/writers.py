@@ -248,8 +248,16 @@ def insert_session_source(
     captured_bundle: CapturedBundle | None,
 ) -> None:
     native_session_id = source.native_session_id
+    parent_source_id = source.parent_source_id
     if bundle.session and bundle.session.native_session_id:
         native_session_id = bundle.session.native_session_id
+    if bundle.session and bundle.session.parent_session_id:
+        parent_row = connection.execute(
+            "SELECT source_id FROM sessions WHERE session_id = ?",
+            [bundle.session.parent_session_id],
+        ).fetchone()
+        if parent_row is not None:
+            parent_source_id = str(parent_row[0])
     connection.execute(
         """
         INSERT INTO session_sources (
@@ -273,7 +281,7 @@ def insert_session_source(
             source.source_kind.value,
             duckdb_value(source.discovered_at),
             native_session_id,
-            source.parent_source_id,
+            parent_source_id,
             captured_source.snapshot_id if captured_source else None,
             captured_bundle.snapshot_bundle_id if captured_bundle else None,
             metadata_json(source.metadata),

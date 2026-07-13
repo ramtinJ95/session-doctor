@@ -78,7 +78,7 @@ def test_native_three_adapter_reports_and_graphs_include_linked_sidechain(tmp_pa
     assert len(sidechains) == 2
     sidechain_id = sidechains[0]
     sidechain_parent_id = session_rows[sidechain_id][2]
-    assert sidechain_parent_id is None
+    assert sidechain_parent_id is not None
 
     disclosed_evidence_texts = 0
     for session_id in top_level_ids.values():
@@ -148,7 +148,7 @@ def test_native_three_adapter_reports_and_graphs_include_linked_sidechain(tmp_pa
     assert sidechain_report.exit_code == 0
     sidechain_report_payload = cast("dict[str, Any]", json.loads(sidechain_report.stdout))
     assert sidechain_report_payload["session"]["is_sidechain"] is True
-    assert sidechain_report_payload["session"]["parent_session_id"] is None
+    assert sidechain_report_payload["session"]["parent_session_id"] == sidechain_parent_id
     sidechain_snapshot = store.load_diagnostic_snapshot(sidechain_id)
     assert sidechain_snapshot is not None
     disclosed_evidence_texts += assert_report_privacy(
@@ -165,7 +165,10 @@ def test_native_three_adapter_reports_and_graphs_include_linked_sidechain(tmp_pa
         for node in sidechain_graph_payload["nodes"]
         if node["node_type"] == "session_reference"
     ]
-    assert all(node["relationship"] != "parent" for node in references)
+    assert any(
+        node["relationship"] == "parent" and node["referenced_session_id"] == sidechain_parent_id
+        for node in references
+    )
     assert disclosed_evidence_texts > 0
 
     assert {table: store.table_count(table) for table in TABLE_NAMES} == before
