@@ -6,7 +6,10 @@ from pathlib import Path
 import duckdb
 from duckdb import DuckDBPyConnection
 
+from session_doctor.ids import stable_id
+
 from .connection import read_connection, transaction, write_connection
+from .json_values import metadata_json
 from .lifecycle import LIFECYCLE_STATES
 from .writers import delete_source_records
 
@@ -36,6 +39,7 @@ class PruneResult:
     dependent_analysis_run_ids: tuple[str, ...]
     inbound_source_ids: tuple[str, ...]
     inbound_session_ids: tuple[str, ...]
+    downstream_lifecycle_bundle_ids: tuple[str, ...]
     derived_row_counts: dict[str, int]
     forced: bool
     checkpoint_completed: bool
@@ -49,6 +53,7 @@ class PruneDependencies:
     analysis_run_ids: tuple[str, ...]
     inbound_source_ids: tuple[str, ...]
     inbound_session_ids: tuple[str, ...]
+    downstream_lifecycle_bundle_ids: tuple[str, ...]
     derived_row_counts: dict[str, int]
 
 
@@ -125,6 +130,15 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
         else []
     )
     inbound_session_ids = tuple(str(row[0]) for row in inbound_session_rows)
+    downstream_lifecycle_rows = connection.execute(
+        """
+        SELECT snapshot_bundle_id FROM bundle_capture_metadata
+        WHERE previous_lineage_bundle_id IN (SELECT unnest(?))
+        ORDER BY snapshot_bundle_id
+        """,
+        [list(bundle_ids)],
+    ).fetchall()
+    downstream_lifecycle_bundle_ids = tuple(str(row[0]) for row in downstream_lifecycle_rows)
     analysis_rows = (
         connection.execute(
             "SELECT analysis_run_id FROM analysis_runs "
@@ -175,6 +189,7 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
         analysis_run_ids=analysis_run_ids,
         inbound_source_ids=inbound_source_ids,
         inbound_session_ids=inbound_session_ids,
+        downstream_lifecycle_bundle_ids=downstream_lifecycle_bundle_ids,
         derived_row_counts=derived_row_counts,
     )
 
@@ -274,6 +289,7 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
             dependencies.source_ids
             or dependencies.inbound_source_ids
             or dependencies.inbound_session_ids
+            or dependencies.downstream_lifecycle_bundle_ids
         ) and not force:
             raise SnapshotPruneBlocked(snapshot_id, dependencies)
         bundle_id = dependencies.bundle_ids[0]
@@ -293,6 +309,21 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
             [bundle_id],
         ).fetchone()
         previous_lineage_bundle_id = lineage_row[0] if lineage_row else None
+        downstream_settled_rows = (
+            connection.execute(
+                """
+                SELECT l.snapshot_bundle_id, b.captured_at
+                FROM lifecycle_observations AS l
+                JOIN snapshot_bundles AS b USING (snapshot_bundle_id)
+                WHERE l.snapshot_bundle_id IN (SELECT unnest(?))
+                    AND l.state = 'settled_unknown'
+                ORDER BY l.snapshot_bundle_id
+                """,
+                [list(dependencies.downstream_lifecycle_bundle_ids)],
+            ).fetchall()
+            if dependencies.downstream_lifecycle_bundle_ids
+            else []
+        )
         member_snapshot_rows = connection.execute(
             """
             SELECT DISTINCT s.snapshot_id, s.logical_source_id, s.blob_id,
@@ -325,6 +356,37 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
             """,
             [previous_lineage_bundle_id, bundle_id],
         )
+        for downstream_bundle_id, downstream_captured_at in downstream_settled_rows:
+            connection.execute(
+                "DELETE FROM lifecycle_observations WHERE snapshot_bundle_id = ?",
+                [downstream_bundle_id],
+            )
+            state = "possibly_active"
+            connection.execute(
+                """
+                INSERT INTO lifecycle_observations (
+                    lifecycle_observation_id, snapshot_bundle_id,
+                    lifecycle_policy_version, state, observed_at, evidence_json
+                ) VALUES (?, ?, 'lifecycle-v1', ?, ?, ?)
+                """,
+                [
+                    stable_id(
+                        "lifecycle-observation",
+                        downstream_bundle_id,
+                        "lifecycle-v1",
+                        state,
+                    ),
+                    downstream_bundle_id,
+                    state,
+                    downstream_captured_at,
+                    metadata_json(
+                        {
+                            "reason": "predecessor_pruned",
+                            "pruned_snapshot_bundle_id": bundle_id,
+                        }
+                    ),
+                ],
+            )
         connection.execute(
             """
             UPDATE snapshot_bundles SET previous_snapshot_bundle_id = ?
@@ -401,6 +463,7 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
         dependent_analysis_run_ids=dependencies.analysis_run_ids,
         inbound_source_ids=dependencies.inbound_source_ids,
         inbound_session_ids=dependencies.inbound_session_ids,
+        downstream_lifecycle_bundle_ids=dependencies.downstream_lifecycle_bundle_ids,
         derived_row_counts=dependencies.derived_row_counts,
         forced=force,
         checkpoint_completed=checkpoint_completed,

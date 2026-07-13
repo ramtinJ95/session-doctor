@@ -378,6 +378,30 @@ def test_prune_rolls_back_all_relational_changes_on_failure(tmp_path, monkeypatc
     assert {table: store.table_count(table) for table in before} == before
 
 
+def test_prune_downgrades_settlement_that_depended_on_deleted_capture(tmp_path) -> None:
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    started = datetime(2026, 7, 13, 12, 0, tzinfo=UTC)
+    first, _, _ = capture_bundle(store, source(), b"same", started)
+    _, second_bundle, second_observation = capture_bundle(
+        store,
+        source(),
+        b"same",
+        started + timedelta(seconds=31),
+    )
+    assert second_observation.state == "settled_unknown"
+    dependencies = store.snapshot_dependencies(first.snapshot_id)
+    assert dependencies.downstream_lifecycle_bundle_ids == (second_bundle.snapshot_bundle_id,)
+
+    with pytest.raises(SnapshotPruneBlocked):
+        store.prune_snapshot(first.snapshot_id)
+    store.prune_snapshot(first.snapshot_id, force=True)
+
+    rewritten = store.lifecycle_for_bundle(second_bundle.snapshot_bundle_id)
+    assert rewritten is not None
+    assert rewritten.state == "possibly_active"
+    assert rewritten.evidence["reason"] == "predecessor_pruned"
+
+
 def test_schema_v5_history_is_backfilled_without_losing_raw_bytes(tmp_path) -> None:
     database_path = tmp_path / "session-doctor.duckdb"
     captured_at = datetime(2026, 7, 13, 12, 0)

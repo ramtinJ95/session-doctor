@@ -491,6 +491,35 @@ def test_invalid_utf8_claude_child_is_retained_as_incomplete_member(tmp_path) ->
     assert child_member.source_bytes == b"\xff"
 
 
+def test_malformed_claude_metadata_keeps_root_bundle_incomplete(tmp_path) -> None:
+    source_root = tmp_path / "topology"
+    copytree(CLAUDE_TOPOLOGY_FIXTURE_DIR, source_root)
+    metadata_path = source_root / "project/session-root/subagents/agent-a.meta.json"
+    metadata_path.write_bytes(b"\xff")
+    database_path = tmp_path / "session-doctor.duckdb"
+
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "claude",
+            "--source",
+            str(source_root),
+            "--db",
+            str(database_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    root_snapshot = next(
+        row
+        for row in DuckDBStore(database_path).list_snapshots()
+        if row.source_path.endswith("session-root.jsonl")
+    )
+    assert root_snapshot.capture_status == "incomplete"
+
+
 def test_ingest_resolves_source_path_before_deriving_ids(tmp_path) -> None:
     with runner.isolated_filesystem(temp_dir=tmp_path):
         fixture_path = CODEX_FIXTURE_DIR / "basic-session.jsonl"

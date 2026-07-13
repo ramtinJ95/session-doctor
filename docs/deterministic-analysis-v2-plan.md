@@ -895,7 +895,8 @@ Implementation decisions:
   dependencies unless `--force`, reports affected bundles, sources, sessions,
   analysis runs, inbound topology references, and derived-row counts, removes
   that bundle capture atomically, clears inbound references to deleted
-  provenance, and runs DuckDB `CHECKPOINT` after commit;
+  provenance, downgrades settlement that depended on a deleted predecessor,
+  and runs DuckDB `CHECKPOINT` after commit;
 - Claude bundles capture transcripts, subagent metadata, persisted tool
   results, and related session files before parsing; topology and sidecar
   evidence are reconstructed only from captured bytes.
