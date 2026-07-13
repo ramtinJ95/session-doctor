@@ -244,7 +244,7 @@ def test_boundary_packet_export_is_deterministic_blinded_and_preseal(tmp_path) -
         is IdentityExposureStatus.IDENTITY_EXPOSED
     )
     messages_without_source = list(stored.bundle.messages)
-    messages_without_source[4] = messages_without_source[4].model_copy(
+    messages_without_source[2] = messages_without_source[2].model_copy(
         update={"source_event_id": None}
     )
     messages_without_source[1] = messages_without_source[1].model_copy(
@@ -255,7 +255,7 @@ def test_boundary_packet_export_is_deterministic_blinded_and_preseal(tmp_path) -
         bundle=stored.bundle.model_copy(update={"messages": messages_without_source}),
     )
     unresolved_exports = export_boundary_packets(unresolved_stored, foundation)
-    unresolved_packet = unresolved_exports[-1].judge_packet
+    unresolved_packet = unresolved_exports[0].judge_packet
     assert isinstance(unresolved_packet, BoundaryPacket)
     assert unresolved_packet.adjacent_user_turns[1].source_event_id is None
     assert (

@@ -72,9 +72,11 @@ from .config import supports_current_python
 from .evaluation_models import JudgeAnnotation
 from .evaluation_packets import (
     boundary_pilot_corpus_bytes,
+    discard_staged_packet_exports,
     export_boundary_packets,
     export_boundary_pilot,
-    write_packet_exports,
+    publish_staged_packet_exports,
+    stage_packet_exports,
 )
 from .graph_payload import graph_payload
 from .graph_projection import project_graph
@@ -376,10 +378,15 @@ def evaluation_export_boundaries(
         console.print(f"[red]Normalization not found:[/red] {normalization_run_id}")
         raise typer.Exit(1)
     exports = export_boundary_packets(stored, foundation)
+    staged_output: Path | None = None
     try:
+        staged_output = stage_packet_exports(exports, output)
         register_evaluation_corpus(database_path, normalization_run_id, exports)
-        write_packet_exports(exports, output)
-    except (ValueError, EvaluationImportError) as exc:
+        publish_staged_packet_exports(staged_output, output)
+        staged_output = None
+    except (OSError, ValueError, EvaluationImportError) as exc:
+        if staged_output is not None:
+            discard_staged_packet_exports(staged_output)
         console.print(f"[red]Evaluation export failed:[/red] {exc}")
         raise typer.Exit(1) from exc
     typer.echo(f"Exported {len(exports)} boundary packets: {output}")
@@ -408,6 +415,7 @@ def evaluation_export_pilot(
     if output.exists() or not output.parent.is_dir():
         console.print("[red]Evaluation export failed:[/red] output must be a new directory")
         raise typer.Exit(1)
+    staged_output: Path | None = None
     try:
         corpus_bytes = boundary_pilot_corpus_bytes()
         store = DuckDBStore(database_path)
@@ -425,9 +433,13 @@ def evaluation_export_pilot(
             store.record_lifecycle(bundle.snapshot_bundle_id, terminal_observed=True)
             bundle_id = bundle.snapshot_bundle_id
         exports = export_boundary_pilot(corpus_bytes, bundle_id)
+        staged_output = stage_packet_exports(exports, output)
         register_boundary_pilot(database_path, corpus_bytes, bundle_id, exports)
-        write_packet_exports(exports, output)
+        publish_staged_packet_exports(staged_output, output)
+        staged_output = None
     except (OSError, KeyError, ValueError, EvaluationImportError) as exc:
+        if staged_output is not None:
+            discard_staged_packet_exports(staged_output)
         console.print(f"[red]Evaluation export failed:[/red] {exc}")
         raise typer.Exit(1) from exc
     typer.echo(f"Exported {len(exports)} registered pilot packets: {output}")
