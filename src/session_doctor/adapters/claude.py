@@ -212,6 +212,8 @@ class ClaudeCodeAdapter(BaseAdapter):
         evidence_sources = [(source_path, source_bytes)]
         expected_hashes: dict[Path, str] = {}
         topology_input_hashes: dict[str, str | None] | None = None
+        topology_directory: Path | None = None
+        topology_directory_members: tuple[str, ...] = ()
         if source.source_kind is SourceKind.ROOT_SESSION and session_dir.is_dir():
             transcripts = sorted((session_dir / "subagents").glob("*.jsonl"))
             candidates.extend(transcripts)
@@ -226,6 +228,14 @@ class ClaudeCodeAdapter(BaseAdapter):
         elif source.source_kind is SourceKind.SUBSESSION:
             candidates.append(source_path.with_suffix(".meta.json"))
             root_path = session_dir.parent / f"{session_dir.name}.jsonl"
+            topology_directory = session_dir / "subagents"
+            topology_directory_members = tuple(
+                sorted(
+                    str(path)
+                    for pattern in ("*.jsonl", "*.meta.json")
+                    for path in topology_directory.glob(pattern)
+                )
+            )
             topology_paths = [root_path]
             topology_paths.extend(sorted((session_dir / "subagents").glob("*.jsonl")))
             topology_paths.extend(sorted((session_dir / "subagents").glob("*.meta.json")))
@@ -306,6 +316,11 @@ class ClaudeCodeAdapter(BaseAdapter):
                 member_metadata["capture_expected_sha256"] = expected_hashes[path]
             if topology_input_hashes is not None:
                 member_metadata["capture_topology_input_sha256"] = topology_input_hashes
+            if topology_directory is not None:
+                member_metadata["capture_topology_directory"] = str(topology_directory)
+                member_metadata["capture_topology_directory_members"] = list(
+                    topology_directory_members
+                )
             member_source = SessionSource(
                 source_id=source_id_for_path(self.name, path),
                 agent_name=self.name,
