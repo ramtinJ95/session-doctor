@@ -163,16 +163,27 @@ def backfill_capture_history(connection: duckdb.DuckDBPyConnection) -> None:
     rows = connection.execute(
         """
         SELECT b.snapshot_bundle_id, b.bundle_content_id, b.agent_name,
-            b.native_session_identity, b.captured_at, s.logical_source_id
+            b.native_session_identity, b.captured_at, s.logical_source_id,
+            s.capture_sequence, b.native_bundle_capture_sequence
         FROM snapshot_bundles AS b
         JOIN source_snapshots AS s ON s.snapshot_id = b.primary_snapshot_id
         LEFT JOIN bundle_capture_metadata AS c USING (snapshot_bundle_id)
         WHERE c.snapshot_bundle_id IS NULL
-        ORDER BY s.logical_source_id, b.captured_at, b.snapshot_bundle_id
+        ORDER BY s.logical_source_id, s.capture_sequence,
+            b.native_bundle_capture_sequence, b.snapshot_bundle_id
         """
     ).fetchall()
     previous_by_lineage: dict[str, tuple[str, str, object, int]] = {}
-    for bundle_id, content_id, agent_name, native_identity, captured_at, logical_source_id in rows:
+    for (
+        bundle_id,
+        content_id,
+        agent_name,
+        native_identity,
+        captured_at,
+        logical_source_id,
+        _source_capture_sequence,
+        _bundle_capture_sequence,
+    ) in rows:
         lineage_id = stable_id("bundle-lineage", agent_name, native_identity, logical_source_id)
         previous = previous_by_lineage.get(lineage_id)
         sequence = previous[3] + 1 if previous else 1
@@ -324,7 +335,7 @@ CREATE_TABLE_STATEMENTS = (
         previous_snapshot_bundle_id VARCHAR,
         captured_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
         UNIQUE (agent_name, native_session_identity, native_bundle_capture_sequence),
-        UNIQUE (snapshot_bundle_id, primary_snapshot_id)
+        UNIQUE (primary_snapshot_id)
     )
     """,
     """

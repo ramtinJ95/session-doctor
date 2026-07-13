@@ -289,7 +289,7 @@ def test_snapshots_cli_lists_replays_and_prunes_exact_history(tmp_path) -> None:
     assert len(rows) == 1
     snapshot_id = rows[0]["snapshot_id"]
     assert rows[0]["is_latest"] is True
-    assert rows[0]["lifecycle_state"] in {"terminal_observed", "possibly_active"}
+    assert rows[0]["lifecycle_state"] == "snapshot_incomplete"
     show_result = runner.invoke(
         app,
         ["snapshots", "show", snapshot_id, "--db", str(database_path)],
@@ -366,6 +366,40 @@ def test_malformed_trailing_record_keeps_snapshot_incomplete(tmp_path) -> None:
     assert result.exit_code == 0
     snapshots = DuckDBStore(database_path).list_snapshots()
     assert snapshots[0].lifecycle_state == "snapshot_incomplete"
+
+
+def test_failed_multifile_preparation_keeps_every_snapshot_owned(tmp_path) -> None:
+    source_path = tmp_path / "invalid-utf8.jsonl"
+    source_path.write_bytes(b"\xff")
+    database_path = tmp_path / "session-doctor.duckdb"
+
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "claude",
+            "--source",
+            str(source_path),
+            "--db",
+            str(database_path),
+        ],
+    )
+
+    assert result.exit_code != 0
+    store = DuckDBStore(database_path)
+    snapshots = store.list_snapshots()
+    assert len(snapshots) == 1
+    assert snapshots[0].lifecycle_state == "snapshot_incomplete"
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        unowned = connection.execute(
+            """
+            SELECT count(*) FROM source_snapshots AS s
+            LEFT JOIN snapshot_bundle_members AS m USING (snapshot_id)
+            WHERE m.snapshot_id IS NULL
+            """
+        ).fetchone()
+    assert unowned == (0,)
 
 
 def test_ingest_resolves_source_path_before_deriving_ids(tmp_path) -> None:
@@ -665,8 +699,10 @@ def test_claude_multifile_bundle_replays_without_live_files(tmp_path) -> None:
     adapter = ClaudeCodeAdapter()
     replayed_parent_ids: list[str | None] = []
     sidecar_correlated = False
+    roles_by_kind: dict[str, set[str]] = {}
     for bundle_id, source_kind in bundle_rows:
         loaded = store.load_bundle_members(bundle_id)
+        roles_by_kind[source_kind] = {member.member_role for member in loaded}
         assert loaded[0].member_role == "primary"
         assert [member.capture_order for member in loaded] == list(range(len(loaded)))
         assert all(
@@ -692,6 +728,8 @@ def test_claude_multifile_bundle_replays_without_live_files(tmp_path) -> None:
         )
     assert all(parent_id is not None for parent_id in replayed_parent_ids)
     assert sidecar_correlated
+    assert "subagent_transcript" in roles_by_kind["root_session"]
+    assert len(roles_by_kind["subsession"] & {"related_transcript", "subagent_transcript"}) <= 1
 
     root_snapshot = next(
         member.source

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import duckdb
+from duckdb import DuckDBPyConnection
 
 from .connection import read_connection, transaction, write_connection
 from .lifecycle import LIFECYCLE_STATES
@@ -60,85 +61,89 @@ class SnapshotPruneBlocked(RuntimeError):
 
 def snapshot_dependencies(database_path: Path, snapshot_id: str) -> PruneDependencies:
     with read_connection(database_path) as connection:
-        exists = connection.execute(
-            "SELECT 1 FROM source_snapshots WHERE snapshot_id = ?", [snapshot_id]
-        ).fetchone()
-        if exists is None:
-            raise ValueError(f"Snapshot not found: {snapshot_id}")
-        bundle_rows = connection.execute(
-            """
+        return _snapshot_dependencies(connection, snapshot_id)
+
+
+def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> PruneDependencies:
+    exists = connection.execute(
+        "SELECT 1 FROM source_snapshots WHERE snapshot_id = ?", [snapshot_id]
+    ).fetchone()
+    if exists is None:
+        raise ValueError(f"Snapshot not found: {snapshot_id}")
+    bundle_rows = connection.execute(
+        """
             SELECT snapshot_bundle_id FROM snapshot_bundles
             WHERE primary_snapshot_id = ? ORDER BY snapshot_bundle_id
             """,
-            [snapshot_id],
-        ).fetchall()
-        if not bundle_rows:
-            raise ValueError(
-                "Only primary snapshots can be pruned; prune the owning bundle's primary"
-            )
-        bundle_ids = tuple(str(row[0]) for row in bundle_rows)
-        source_rows = connection.execute(
-            """
+        [snapshot_id],
+    ).fetchall()
+    if not bundle_rows:
+        raise ValueError("Only primary snapshots can be pruned; prune the owning bundle's primary")
+    if len(bundle_rows) != 1:
+        raise RuntimeError(f"Snapshot has multiple owning bundles: {snapshot_id}")
+    bundle_ids = tuple(str(row[0]) for row in bundle_rows)
+    source_rows = connection.execute(
+        """
             SELECT source_id FROM session_sources
             WHERE snapshot_bundle_id IN (SELECT unnest(?))
             ORDER BY source_id
             """,
-            [list(bundle_ids)],
+        [list(bundle_ids)],
+    ).fetchall()
+    source_ids = tuple(str(row[0]) for row in source_rows)
+    session_rows = (
+        connection.execute(
+            "SELECT session_id FROM sessions WHERE source_id IN (SELECT unnest(?)) "
+            "ORDER BY session_id",
+            [list(source_ids)],
         ).fetchall()
-        source_ids = tuple(str(row[0]) for row in source_rows)
-        session_rows = (
-            connection.execute(
-                "SELECT session_id FROM sessions WHERE source_id IN (SELECT unnest(?)) "
-                "ORDER BY session_id",
-                [list(source_ids)],
-            ).fetchall()
-            if source_ids
-            else []
-        )
-        session_ids = tuple(str(row[0]) for row in session_rows)
-        analysis_rows = (
-            connection.execute(
-                "SELECT analysis_run_id FROM analysis_runs "
-                "WHERE session_id IN (SELECT unnest(?)) ORDER BY analysis_run_id",
-                [list(session_ids)],
-            ).fetchall()
-            if session_ids
-            else []
-        )
-        analysis_run_ids = tuple(str(row[0]) for row in analysis_rows)
-        derived_row_counts: dict[str, int] = {
-            "session_sources": len(source_ids),
-            "sessions": len(session_ids),
-        }
-        for table_name in ("raw_events", "parse_warnings"):
-            if not source_ids:
-                derived_row_counts[table_name] = 0
-                continue
-            count_row = connection.execute(
-                f"SELECT count(*) FROM {table_name} WHERE source_id IN (SELECT unnest(?))",
-                [list(source_ids)],
-            ).fetchone()
-            derived_row_counts[table_name] = int(count_row[0]) if count_row else 0
-        for table_name in (
-            "messages",
-            "tool_calls",
-            "tool_results",
-            "command_runs",
-            "file_activities",
-            "model_usage",
-            "analysis_runs",
-            "message_features",
-            "session_features",
-            "session_classifications",
-        ):
-            if not session_ids:
-                derived_row_counts[table_name] = 0
-                continue
-            count_row = connection.execute(
-                f"SELECT count(*) FROM {table_name} WHERE session_id IN (SELECT unnest(?))",
-                [list(session_ids)],
-            ).fetchone()
-            derived_row_counts[table_name] = int(count_row[0]) if count_row else 0
+        if source_ids
+        else []
+    )
+    session_ids = tuple(str(row[0]) for row in session_rows)
+    analysis_rows = (
+        connection.execute(
+            "SELECT analysis_run_id FROM analysis_runs "
+            "WHERE session_id IN (SELECT unnest(?)) ORDER BY analysis_run_id",
+            [list(session_ids)],
+        ).fetchall()
+        if session_ids
+        else []
+    )
+    analysis_run_ids = tuple(str(row[0]) for row in analysis_rows)
+    derived_row_counts: dict[str, int] = {
+        "session_sources": len(source_ids),
+        "sessions": len(session_ids),
+    }
+    for table_name in ("raw_events", "parse_warnings"):
+        if not source_ids:
+            derived_row_counts[table_name] = 0
+            continue
+        count_row = connection.execute(
+            f"SELECT count(*) FROM {table_name} WHERE source_id IN (SELECT unnest(?))",
+            [list(source_ids)],
+        ).fetchone()
+        derived_row_counts[table_name] = int(count_row[0]) if count_row else 0
+    for table_name in (
+        "messages",
+        "tool_calls",
+        "tool_results",
+        "command_runs",
+        "file_activities",
+        "model_usage",
+        "analysis_runs",
+        "message_features",
+        "session_features",
+        "session_classifications",
+    ):
+        if not session_ids:
+            derived_row_counts[table_name] = 0
+            continue
+        count_row = connection.execute(
+            f"SELECT count(*) FROM {table_name} WHERE session_id IN (SELECT unnest(?))",
+            [list(session_ids)],
+        ).fetchone()
+        derived_row_counts[table_name] = int(count_row[0]) if count_row else 0
     return PruneDependencies(
         bundle_ids=bundle_ids,
         source_ids=source_ids,
@@ -237,12 +242,11 @@ def latest_snapshot(
 
 
 def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> PruneResult:
-    dependencies = snapshot_dependencies(database_path, snapshot_id)
-    if dependencies.source_ids and not force:
-        raise SnapshotPruneBlocked(snapshot_id, dependencies)
-
-    bundle_id = dependencies.bundle_ids[0]
     with write_connection(database_path) as connection, transaction(connection):
+        dependencies = _snapshot_dependencies(connection, snapshot_id)
+        if dependencies.source_ids and not force:
+            raise SnapshotPruneBlocked(snapshot_id, dependencies)
+        bundle_id = dependencies.bundle_ids[0]
         bundle_row = connection.execute(
             """
             SELECT previous_snapshot_bundle_id FROM snapshot_bundles

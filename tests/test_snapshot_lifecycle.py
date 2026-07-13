@@ -28,12 +28,13 @@ def capture_bundle(
     *,
     capture_status: str = "complete",
     terminal_observed: bool = False,
+    native_identity: str = "native-session-1",
 ):
     captured = store.capture_source(source_row, source_bytes, captured_at=captured_at)
     bundle = store.create_single_source_bundle(
         source_row,
         captured,
-        "native-session-1",
+        native_identity,
         capture_status=capture_status,
     )
     observation = store.record_lifecycle(
@@ -173,6 +174,54 @@ def test_bundle_member_status_controls_capture_and_lifecycle(tmp_path) -> None:
     skewed_members = skewed_store.load_bundle_members(skewed_bundle.snapshot_bundle_id)
     assert skewed_members[0].member_capture_status == "changed_during_capture"
     assert skewed_observation.state == "snapshot_incomplete"
+
+
+def test_missing_member_identity_changes_bundle_content(tmp_path) -> None:
+    started = datetime(2026, 7, 13, 12, 0, tzinfo=UTC)
+    content_ids: list[str] = []
+    for index, missing_path in enumerate(("/missing/a", "/missing/b")):
+        store = DuckDBStore(tmp_path / f"missing-{index}.duckdb")
+        captured = store.capture_source(source(), b"same", captured_at=started)
+        bundle = store.create_single_source_bundle(source(), captured, "native-session-1")
+        bundle = store.add_bundle_members(
+            bundle,
+            (
+                BundleMemberCapture(
+                    source_id="missing-source",
+                    source_path=missing_path,
+                    member_role="tool_result",
+                    member_capture_status="missing",
+                    capture_order=1,
+                    capture_started_at=started,
+                    capture_completed_at=started,
+                ),
+            ),
+        )
+        content_ids.append(bundle.bundle_content_id)
+
+    assert content_ids[0] != content_ids[1]
+
+
+def test_incomplete_capture_interrupts_settling_across_identity_fallback(tmp_path) -> None:
+    store = DuckDBStore(tmp_path / "session-doctor.duckdb")
+    started = datetime(2026, 7, 13, 12, 0, tzinfo=UTC)
+    capture_bundle(store, source(), b"same", started)
+    capture_bundle(
+        store,
+        source(),
+        b"broken",
+        started + timedelta(seconds=31),
+        native_identity="parse-failed:source-1",
+        capture_status="parse_failed",
+    )
+    _, _, observation = capture_bundle(
+        store,
+        source(),
+        b"same",
+        started + timedelta(seconds=62),
+    )
+
+    assert observation.state == "possibly_active"
 
 
 def test_snapshot_history_marks_only_latest_and_supports_explicit_selection(tmp_path) -> None:
@@ -383,6 +432,26 @@ def test_schema_v5_history_is_backfilled_without_losing_raw_bytes(tmp_path) -> N
             "INSERT INTO snapshot_bundle_members VALUES "
             "('bundle-1', 'logical-1', 'snapshot-1', 0, 'primary', 'captured')"
         )
+        connection.execute(
+            """
+            INSERT INTO source_snapshots VALUES (
+                'snapshot-2', 'source-1', 'pi', 'root_session',
+                '/sessions/source-1.jsonl', NULL, NULL, NULL, '{}', 'logical-1',
+                'blob-1', 'content-1', 2, ?, NULL, 'captured', 'snapshot-1'
+            )
+            """,
+            [captured_at - timedelta(hours=1)],
+        )
+        connection.execute(
+            "INSERT INTO snapshot_bundles VALUES "
+            "('bundle-2', 'bundle-content-1', 'pi', 'native-1', 'snapshot-2', "
+            "'observed', 2, 'bundle-1', ?)",
+            [captured_at - timedelta(hours=1)],
+        )
+        connection.execute(
+            "INSERT INTO snapshot_bundle_members VALUES "
+            "('bundle-2', 'logical-1', 'snapshot-2', 0, 'primary', 'captured')"
+        )
 
     store = DuckDBStore(database_path)
     store.initialize()
@@ -391,3 +460,16 @@ def test_schema_v5_history_is_backfilled_without_losing_raw_bytes(tmp_path) -> N
     summary = store.snapshot_summary("snapshot-1")
     assert summary is not None
     assert summary.lifecycle_state == "possibly_active"
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        lineage = connection.execute(
+            """
+            SELECT snapshot_bundle_id, lineage_capture_sequence,
+                previous_lineage_bundle_id
+            FROM bundle_capture_metadata ORDER BY lineage_capture_sequence
+            """
+        ).fetchall()
+        states = connection.execute(
+            "SELECT state FROM lifecycle_observations ORDER BY snapshot_bundle_id"
+        ).fetchall()
+    assert lineage == [("bundle-1", 1, None), ("bundle-2", 2, "bundle-1")]
+    assert states == [("possibly_active",), ("possibly_active",)]
