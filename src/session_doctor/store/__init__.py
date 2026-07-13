@@ -19,6 +19,7 @@ from .evaluation import (
     import_judge_annotation,
     register_boundary_pilot,
     register_evaluation_corpus,
+    registered_corpus_bundle_id,
     resolve_judge_panel,
     select_panel_audit,
 )
@@ -98,6 +99,7 @@ __all__ = [
     "import_judge_annotation",
     "register_evaluation_corpus",
     "register_boundary_pilot",
+    "registered_corpus_bundle_id",
     "resolve_judge_panel",
     "select_panel_audit",
     "NORMALIZATION_CONFIGURATION_HASH",

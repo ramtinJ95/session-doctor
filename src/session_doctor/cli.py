@@ -103,6 +103,7 @@ from .store import (
     import_judge_annotation,
     register_boundary_pilot,
     register_evaluation_corpus,
+    registered_corpus_bundle_id,
 )
 from .summary_payload import summary_payload
 from .trend_payload import project_payload, trend_payload
@@ -405,19 +406,22 @@ def evaluation_export_pilot(
         raise typer.Exit(1)
     try:
         corpus_bytes = boundary_pilot_corpus_bytes()
-        source = SessionSource(
-            source_id=stable_id(
-                "evaluation-pilot-source", hashlib.sha256(corpus_bytes).hexdigest()
-            ),
-            agent_name=AgentName.PI,
-            source_path="evaluation-corpus://boundary-pilot-v1",
-        )
         store = DuckDBStore(database_path)
-        captured = store.capture_source(source, corpus_bytes)
-        bundle = store.create_single_source_bundle(source, captured, "boundary-pilot-v1")
-        store.record_lifecycle(bundle.snapshot_bundle_id, terminal_observed=True)
-        exports = export_boundary_pilot(corpus_bytes, bundle.snapshot_bundle_id)
-        register_boundary_pilot(database_path, corpus_bytes, bundle.snapshot_bundle_id, exports)
+        bundle_id = registered_corpus_bundle_id(database_path, "boundary-pilot-v1")
+        if bundle_id is None:
+            source = SessionSource(
+                source_id=stable_id(
+                    "evaluation-pilot-source", hashlib.sha256(corpus_bytes).hexdigest()
+                ),
+                agent_name=AgentName.PI,
+                source_path="evaluation-corpus://boundary-pilot-v1",
+            )
+            captured = store.capture_source(source, corpus_bytes)
+            bundle = store.create_single_source_bundle(source, captured, "boundary-pilot-v1")
+            store.record_lifecycle(bundle.snapshot_bundle_id, terminal_observed=True)
+            bundle_id = bundle.snapshot_bundle_id
+        exports = export_boundary_pilot(corpus_bytes, bundle_id)
+        register_boundary_pilot(database_path, corpus_bytes, bundle_id, exports)
         write_packet_exports(exports, output)
     except (OSError, KeyError, ValueError, EvaluationImportError) as exc:
         console.print(f"[red]Evaluation export failed:[/red] {exc}")
