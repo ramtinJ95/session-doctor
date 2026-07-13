@@ -56,10 +56,9 @@ At PR 7:
 coverage/version fields. PR 21 restores it as a normalization-only project
 identity view with no derived-analysis dependency.
 
-From PR 2 through PR 3, Claude parent topology and persisted tool-result
-enrichment are explicitly unavailable in production ingestion rather than
-derived from uncaptured live sidecars. PR 3 restores them from exact multi-file
-bundle members.
+Between PR 2 and PR 3, Claude parent topology and persisted tool-result
+enrichment were explicitly unavailable rather than derived from uncaptured live
+sidecars. Schema version 6 restores them from exact multi-file bundle members.
 
 ### Phase 11: Standalone Visual Reports And Trend Dashboards
 
@@ -111,10 +110,16 @@ compressed content-addressed blob, while every ingest observation retains its
 own immutable capture identity and time. Multi-file sessions use ordered bundle
 manifests; they do not claim an atomic directory snapshot.
 
-Schema version 5 stores blobs with SHA-256 content identity and deterministic
+Schema version 6 stores blobs with SHA-256 content identity and deterministic
 zlib level-6 compression in `source_blobs`; the other durable capture tables are
 `logical_sources`, `source_snapshots`, `snapshot_bundles`, and
-`snapshot_bundle_members`.
+`snapshot_bundle_members`, plus bundle/member capture metadata and immutable
+lifecycle observations.
+
+History is exposed through `session-doctor snapshots list`, `show`, `replay`,
+and `prune`. Replay requires an explicit output path. Non-terminal complete
+bundles settle only after a consecutive identical capture in the same lineage
+at least 30 seconds later.
 
 The parser consumes only stored bytes. A source mutation after capture cannot
 change that normalization run.
