@@ -22,6 +22,7 @@ DURABLE_TABLE_NAMES = (
     "bundle_member_capture_metadata",
     "lifecycle_observations",
     "evaluation_packets",
+    "evaluation_corpora",
     "judge_annotations",
     "judge_panel_resolutions",
     "audit_selections",
@@ -363,6 +364,15 @@ CREATE_TABLE_STATEMENTS = (
         evidence_ids_json VARCHAR NOT NULL,
         allowed_answers_json VARCHAR NOT NULL,
         created_at TIMESTAMP NOT NULL DEFAULT current_timestamp
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS evaluation_corpora (
+        evaluation_corpus_id VARCHAR PRIMARY KEY,
+        annotation_protocol_version VARCHAR NOT NULL,
+        expected_packet_count INTEGER NOT NULL CHECK (expected_packet_count > 0),
+        source_identity VARCHAR NOT NULL,
+        registered_at TIMESTAMP NOT NULL DEFAULT current_timestamp
     )
     """,
     """

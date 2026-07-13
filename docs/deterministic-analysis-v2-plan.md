@@ -1029,6 +1029,9 @@ Implementation contract:
 - `evaluation export-pilot` captures the exact checked manifest/source corpus,
   registers all 24 packets under one corpus identity, and exports only opaque
   judge packets; strata remain private and are not judge-visible evidence;
+- corpus cardinality is immutable before annotation; production registration
+  regenerates the complete boundary corpus from stored normalization and
+  inserts it atomically, while the pilot command accepts no corpus override;
 - episode packet schema is available, but generation fails explicitly until
   frozen boundary references exist after PR 8;
 - Session Doctor performs no provider calls in export, import, or resolution.

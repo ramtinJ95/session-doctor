@@ -394,7 +394,7 @@ evaluation command invokes a provider. Episode export remains explicitly
 unavailable until frozen adjudicated boundaries exist after PR 8.
 
 Every packet has an `evaluation_corpus_id`. Audit freezing requires an explicit
-corpus, positive preregistered cardinality, and complete packet registration
+corpus, a durably preregistered cardinality, and complete atomic packet registration
 before any panel resolution. The immutable audit record stores the complete
 cohort, eligible subset, ranked nearest-20% selection, and one seed. Panel
 resolution requires that frozen corpus record. No packet may be added afterward.
@@ -409,9 +409,12 @@ non-adjacent regions and derives 24 unique packet identities. Judge packets
 contain only those normalized events; selection strata stay in the private
 manifest. `evaluation export-pilot` durably captures the exact combined corpus,
 registers its 24 packets with direct snapshot-bundle provenance, and exports
-judge-only files. Normal production packets retain normalization-run plus
+judge-only files. The command accepts no corpus override: registration verifies
+the captured bytes against the pinned checked manifest and source document.
+Normal production packets retain normalization-run plus
 snapshot-bundle provenance and reconstruct private target identities from the
-stored semantic foundation before registration.
+stored semantic foundation before regenerating and atomically registering the
+complete expected boundary corpus. Episode packets cannot use this path.
 
 A frozen cohort spanning multiple snapshot bundles makes partial snapshot
 pruning unavailable, even with force. The cohort may be removed only when the

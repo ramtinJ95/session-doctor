@@ -40,6 +40,8 @@ class PruneResult:
     dependent_analysis_run_ids: tuple[str, ...]
     dependent_normalization_run_ids: tuple[str, ...]
     dependent_evaluation_packet_ids: tuple[str, ...]
+    dependent_evaluation_corpus_ids: tuple[str, ...]
+    partial_evaluation_corpus_ids: tuple[str, ...]
     dependent_audit_protocol_ids: tuple[str, ...]
     partial_audit_protocol_ids: tuple[str, ...]
     inbound_source_ids: tuple[str, ...]
@@ -58,6 +60,8 @@ class PruneDependencies:
     analysis_run_ids: tuple[str, ...]
     normalization_run_ids: tuple[str, ...]
     evaluation_packet_ids: tuple[str, ...]
+    evaluation_corpus_ids: tuple[str, ...]
+    partial_evaluation_corpus_ids: tuple[str, ...]
     audit_protocol_ids: tuple[str, ...]
     partial_audit_protocol_ids: tuple[str, ...]
     inbound_source_ids: tuple[str, ...]
@@ -111,6 +115,8 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
             analysis_run_ids=(),
             normalization_run_ids=(),
             evaluation_packet_ids=(),
+            evaluation_corpus_ids=(),
+            partial_evaluation_corpus_ids=(),
             audit_protocol_ids=(),
             partial_audit_protocol_ids=(),
             inbound_source_ids=(),
@@ -136,6 +142,25 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
         [list(bundle_ids)],
     ).fetchall()
     evaluation_packet_ids = tuple(str(row[0]) for row in evaluation_packet_rows)
+    evaluation_corpus_ids: tuple[str, ...] = ()
+    partial_evaluation_corpus_ids: tuple[str, ...] = ()
+    if evaluation_packet_ids:
+        corpus_rows = connection.execute(
+            "SELECT DISTINCT evaluation_corpus_id FROM evaluation_packets "
+            "WHERE packet_id IN (SELECT unnest(?)) ORDER BY evaluation_corpus_id",
+            [list(evaluation_packet_ids)],
+        ).fetchall()
+        evaluation_corpus_ids = tuple(str(row[0]) for row in corpus_rows)
+        partial_corpora = []
+        for corpus_id in evaluation_corpus_ids:
+            remaining = connection.execute(
+                "SELECT count(*) FROM evaluation_packets WHERE evaluation_corpus_id = ? "
+                "AND packet_id NOT IN (SELECT unnest(?))",
+                [corpus_id, list(evaluation_packet_ids)],
+            ).fetchone()
+            if remaining is not None and int(remaining[0]) > 0:
+                partial_corpora.append(corpus_id)
+        partial_evaluation_corpus_ids = tuple(partial_corpora)
     audit_protocol_ids: tuple[str, ...] = ()
     partial_audit_protocol_ids: tuple[str, ...] = ()
     if evaluation_packet_ids:
@@ -268,6 +293,7 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
         )
         derived_row_counts[table_name] = int(count_row[0]) if count_row else 0
     derived_row_counts["audit_protocols"] = len(audit_protocol_ids)
+    derived_row_counts["evaluation_corpora"] = len(evaluation_corpus_ids)
     for table_name in ("raw_events", "parse_warnings"):
         if not source_ids:
             derived_row_counts[table_name] = 0
@@ -304,6 +330,8 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
         analysis_run_ids=analysis_run_ids,
         normalization_run_ids=normalization_run_ids,
         evaluation_packet_ids=evaluation_packet_ids,
+        evaluation_corpus_ids=evaluation_corpus_ids,
+        partial_evaluation_corpus_ids=partial_evaluation_corpus_ids,
         audit_protocol_ids=audit_protocol_ids,
         partial_audit_protocol_ids=partial_audit_protocol_ids,
         inbound_source_ids=inbound_source_ids,
@@ -410,12 +438,13 @@ def latest_snapshot(
 def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> PruneResult:
     with write_connection(database_path) as connection, transaction(connection):
         dependencies = _snapshot_dependencies(connection, snapshot_id)
-        if dependencies.partial_audit_protocol_ids:
+        if dependencies.partial_audit_protocol_ids or dependencies.partial_evaluation_corpus_ids:
             raise SnapshotPruneBlocked(snapshot_id, dependencies)
         if (
             dependencies.source_ids
             or dependencies.normalization_run_ids
             or dependencies.evaluation_packet_ids
+            or dependencies.evaluation_corpus_ids
             or dependencies.audit_protocol_ids
             or dependencies.inbound_source_ids
             or dependencies.inbound_session_ids
@@ -570,6 +599,10 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
             connection.execute(
                 "DELETE FROM evaluation_packets WHERE packet_id IN (SELECT unnest(?))",
                 [list(dependencies.evaluation_packet_ids)],
+            )
+            connection.execute(
+                "DELETE FROM evaluation_corpora WHERE evaluation_corpus_id IN (SELECT unnest(?))",
+                [list(dependencies.evaluation_corpus_ids)],
             )
 
         connection.execute(
@@ -738,6 +771,8 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
         dependent_analysis_run_ids=dependencies.analysis_run_ids,
         dependent_normalization_run_ids=dependencies.normalization_run_ids,
         dependent_evaluation_packet_ids=dependencies.evaluation_packet_ids,
+        dependent_evaluation_corpus_ids=dependencies.evaluation_corpus_ids,
+        partial_evaluation_corpus_ids=dependencies.partial_evaluation_corpus_ids,
         dependent_audit_protocol_ids=dependencies.audit_protocol_ids,
         partial_audit_protocol_ids=dependencies.partial_audit_protocol_ids,
         inbound_source_ids=dependencies.inbound_source_ids,

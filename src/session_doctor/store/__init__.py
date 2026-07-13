@@ -18,7 +18,7 @@ from .evaluation import (
     import_human_adjudication,
     import_judge_annotation,
     register_boundary_pilot,
-    register_evaluation_packet,
+    register_evaluation_corpus,
     resolve_judge_panel,
     select_panel_audit,
 )
@@ -96,7 +96,7 @@ __all__ = [
     "freeze_audit_protocol",
     "import_human_adjudication",
     "import_judge_annotation",
-    "register_evaluation_packet",
+    "register_evaluation_corpus",
     "register_boundary_pilot",
     "resolve_judge_panel",
     "select_panel_audit",

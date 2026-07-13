@@ -71,7 +71,7 @@ from .cli_renderers import (
 from .config import supports_current_python
 from .evaluation_models import JudgeAnnotation
 from .evaluation_packets import (
-    canonical_json,
+    boundary_pilot_corpus_bytes,
     export_boundary_packets,
     export_boundary_pilot,
     write_packet_exports,
@@ -102,7 +102,7 @@ from .store import (
     SnapshotSummary,
     import_judge_annotation,
     register_boundary_pilot,
-    register_evaluation_packet,
+    register_evaluation_corpus,
 )
 from .summary_payload import summary_payload
 from .trend_payload import project_payload, trend_payload
@@ -372,12 +372,7 @@ def evaluation_export_boundaries(
         raise typer.Exit(1)
     exports = export_boundary_packets(stored, foundation)
     try:
-        for packet_export in exports:
-            register_evaluation_packet(
-                database_path,
-                normalization_run_id,
-                packet_export,
-            )
+        register_evaluation_corpus(database_path, normalization_run_id, exports)
         write_packet_exports(exports, output.expanduser())
     except (ValueError, EvaluationImportError) as exc:
         console.print(f"[red]Evaluation export failed:[/red] {exc}")
@@ -398,10 +393,6 @@ def evaluation_export_episodes() -> None:
 @evaluation_app.command("export-pilot")
 def evaluation_export_pilot(
     output: Annotated[Path, typer.Option("--output", help="New judge-packet directory.")],
-    manifest: Annotated[
-        Path,
-        typer.Option("--manifest", help="Checked boundary-pilot manifest."),
-    ] = Path("evaluation/boundary-pilot-v1.json"),
     db: Annotated[Path | None, typer.Option("--db", help="DuckDB path to modify.")] = None,
 ) -> None:
     """Register and export the checked blinded boundary pilot without provider calls."""
@@ -409,17 +400,11 @@ def evaluation_export_pilot(
     require_valid_database_path(database_path)
     require_current_database_schema(database_path)
     output = output.expanduser()
-    manifest = manifest.expanduser().resolve()
     if output.exists() or not output.parent.is_dir():
         console.print("[red]Evaluation export failed:[/red] output must be a new directory")
         raise typer.Exit(1)
     try:
-        manifest_document = json.loads(manifest.read_text())
-        source_path = manifest.parent / str(manifest_document["source_corpus"])
-        source_document = json.loads(source_path.read_text())
-        corpus_bytes = (
-            canonical_json({"manifest": manifest_document, "sources": source_document}) + "\n"
-        ).encode()
+        corpus_bytes = boundary_pilot_corpus_bytes()
         source = SessionSource(
             source_id=stable_id(
                 "evaluation-pilot-source", hashlib.sha256(corpus_bytes).hexdigest()
@@ -431,8 +416,8 @@ def evaluation_export_pilot(
         captured = store.capture_source(source, corpus_bytes)
         bundle = store.create_single_source_bundle(source, captured, "boundary-pilot-v1")
         store.record_lifecycle(bundle.snapshot_bundle_id, terminal_observed=True)
-        exports = export_boundary_pilot(manifest, bundle.snapshot_bundle_id)
-        register_boundary_pilot(database_path, manifest, bundle.snapshot_bundle_id, exports)
+        exports = export_boundary_pilot(corpus_bytes, bundle.snapshot_bundle_id)
+        register_boundary_pilot(database_path, corpus_bytes, bundle.snapshot_bundle_id, exports)
         write_packet_exports(exports, output)
     except (OSError, KeyError, ValueError, EvaluationImportError) as exc:
         console.print(f"[red]Evaluation export failed:[/red] {exc}")
@@ -587,6 +572,8 @@ def snapshots_prune(
                         "analysis_runs": dependencies.analysis_run_ids,
                         "normalization_runs": dependencies.normalization_run_ids,
                         "evaluation_packets": dependencies.evaluation_packet_ids,
+                        "evaluation_corpora": dependencies.evaluation_corpus_ids,
+                        "partial_evaluation_corpora": dependencies.partial_evaluation_corpus_ids,
                         "audit_protocols": dependencies.audit_protocol_ids,
                         "partial_audit_protocols": dependencies.partial_audit_protocol_ids,
                         "inbound_source_references": dependencies.inbound_source_ids,

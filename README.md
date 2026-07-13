@@ -215,7 +215,7 @@ command.
 | `normalizations status SNAPSHOT_ID` | Show current, stale, or missing parser coverage | `--db PATH` |
 | `normalizations replay SNAPSHOT_ID` | Explicitly add current parser output from stored bytes | `--db PATH` |
 | `evaluation export-boundaries RUN_ID` | Register routing privately and export judge-only boundary packets | `--output DIR`, `--db PATH` |
-| `evaluation export-pilot` | Register the checked 24-case pilot and export judge-only packets | `--output DIR`, `--manifest PATH`, `--db PATH` |
+| `evaluation export-pilot` | Register the pinned 24-case pilot and export judge-only packets | `--output DIR`, `--db PATH` |
 | `evaluation import-judge` | Import one offline judge annotation | `--input JSON`, `--db PATH` |
 | `snapshots prune SNAPSHOT_ID` | Explicitly prune a bundle capture | `--force`, `--db PATH` |
 | `analyze SESSION_ID` | Analyze one session | `--agent NAME`, `--format terminal\|json`, `--artifact PATH`, `--no-artifact` |
