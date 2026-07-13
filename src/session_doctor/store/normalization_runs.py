@@ -343,7 +343,10 @@ def normalization_coverage(
 def parser_version_key(value: str) -> tuple[int, ...] | None:
     if re.fullmatch(r"\d+(?:\.\d+)*", value) is None:
         return None
-    return tuple(int(part) for part in value.split("."))
+    parts = [int(part) for part in value.split(".")]
+    while len(parts) > 1 and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts)
 
 
 def versions_compatible(
