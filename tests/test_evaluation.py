@@ -284,6 +284,32 @@ def test_packet_contract_rejects_provenance_and_mutable_discriminators(tmp_path)
         )
 
 
+def test_panel_requires_a_complete_frozen_corpus(tmp_path) -> None:
+    store, exports, _ = evaluation_fixture(tmp_path)
+    packet = exports[0]
+    assert isinstance(packet.judge_packet, BoundaryPacket)
+    judge = annotation(
+        packet.routing.packet_id,
+        packet.judge_packet.left_user_event_id,
+        7,
+        "split",
+    )
+    import_judge_annotation(store.database_path, judge)
+    with pytest.raises(EvaluationImportError, match="frozen before panel"):
+        resolve_judge_panel(
+            store.database_path,
+            packet.routing.packet_id,
+            (judge.judge_annotation_id,),
+        )
+    with pytest.raises(EvaluationImportError, match="cardinality"):
+        freeze_audit_protocol(
+            store.database_path,
+            "boundary-development-v1",
+            "wrong-cardinality",
+            len(exports) + 1,
+        )
+
+
 def test_panel_consensus_audit_and_reference_records_remain_separate(tmp_path) -> None:
     store, exports, _ = evaluation_fixture(tmp_path)
     packet = exports[0]
@@ -294,7 +320,9 @@ def test_panel_consensus_audit_and_reference_records_remain_separate(tmp_path) -
         for index in range(100)
         if first_audit_packet(f"seed-{index}", exports) != packet.routing.packet_id
     )
-    protocol = freeze_audit_protocol(store.database_path, seed)
+    protocol = freeze_audit_protocol(
+        store.database_path, "boundary-development-v1", seed, len(exports)
+    )
     assert len(protocol.eligible_packet_ids) == 5
     assert len(protocol.selected_packet_ids) == 1
     annotations = tuple(
@@ -351,6 +379,12 @@ def test_panel_consensus_audit_and_reference_records_remain_separate(tmp_path) -
 
 def test_disputed_panel_requires_compatible_human_adjudication(tmp_path) -> None:
     store, exports, _ = evaluation_fixture(tmp_path)
+    freeze_audit_protocol(
+        store.database_path,
+        "boundary-development-v1",
+        "disputed-seed",
+        len(exports),
+    )
     packet = exports[0]
     assert isinstance(packet.judge_packet, BoundaryPacket)
     evidence_id = packet.judge_packet.left_user_event_id
@@ -407,7 +441,7 @@ def test_selected_consensus_audit_requires_human_resolution(tmp_path) -> None:
         for index in range(100)
         if first_audit_packet(f"selected-{index}", exports) == packet.routing.packet_id
     )
-    freeze_audit_protocol(store.database_path, seed)
+    freeze_audit_protocol(store.database_path, "boundary-development-v1", seed, len(exports))
     annotations = tuple(
         annotation(packet.routing.packet_id, evidence_id, index + 10, "no_split")
         for index in range(3)
@@ -458,7 +492,12 @@ def test_identity_exposed_packet_is_ineligible_for_audit(tmp_path) -> None:
     assert isinstance(packet.judge_packet, BoundaryPacket)
     assert packet.routing.identity_exposure_status is IdentityExposureStatus.IDENTITY_EXPOSED
     evidence_id = packet.judge_packet.left_user_event_id
-    freeze_audit_protocol(store.database_path, "forced-eligible-seed")
+    freeze_audit_protocol(
+        store.database_path,
+        "boundary-development-v1",
+        "forced-eligible-seed",
+        len(exports),
+    )
     annotations = tuple(
         annotation(packet.routing.packet_id, evidence_id, index + 20, "split") for index in range(3)
     )
@@ -495,7 +534,12 @@ def test_pilot_manifest_has_stratified_preseal_cases() -> None:
 
 def test_snapshot_prune_reports_and_removes_evaluation_dependencies(tmp_path) -> None:
     store, exports, _ = evaluation_fixture(tmp_path)
-    freeze_audit_protocol(store.database_path, "frozen-before-rebuild")
+    freeze_audit_protocol(
+        store.database_path,
+        "boundary-development-v1",
+        "frozen-before-rebuild",
+        len(exports),
+    )
     with duckdb.connect(str(store.database_path)) as connection:
         rebuild_derived_schema(connection, SCHEMA_VERSION)
     snapshot = store.list_snapshots()[0]
@@ -503,7 +547,7 @@ def test_snapshot_prune_reports_and_removes_evaluation_dependencies(tmp_path) ->
     assert dependencies.evaluation_packet_ids == tuple(
         sorted(packet.routing.packet_id for packet in exports)
     )
-    assert dependencies.audit_protocol_versions == ("annotation-protocol-v1",)
+    assert len(dependencies.audit_protocol_ids) == 1
     with pytest.raises(SnapshotPruneBlocked):
         store.prune_snapshot(snapshot.snapshot_id)
 
@@ -512,6 +556,31 @@ def test_snapshot_prune_reports_and_removes_evaluation_dependencies(tmp_path) ->
     assert result.dependent_evaluation_packet_ids == dependencies.evaluation_packet_ids
     assert store.table_count("evaluation_packets") == 0
     assert store.table_count("audit_protocols") == 0
+
+
+def test_snapshot_prune_rejects_partial_frozen_cohort_even_with_force(tmp_path) -> None:
+    store, exports, _ = evaluation_fixture(tmp_path)
+    extra_source = SessionSource(
+        source_id="extra-source",
+        agent_name=AgentName.CODEX,
+        source_path="/sessions/extra.jsonl",
+    )
+    captured = store.capture_source(extra_source, b"{}\n")
+    extra_bundle = store.create_single_source_bundle(extra_source, captured, "extra-native")
+    with duckdb.connect(str(store.database_path)) as connection:
+        connection.execute(
+            "UPDATE evaluation_packets SET snapshot_bundle_id = ? WHERE packet_id = ?",
+            [extra_bundle.snapshot_bundle_id, exports[-1].routing.packet_id],
+        )
+    freeze_audit_protocol(
+        store.database_path,
+        "boundary-development-v1",
+        "partial-cohort-seed",
+        len(exports),
+    )
+    original_snapshot = next(row for row in store.list_snapshots() if row.source_id == "source-1")
+    with pytest.raises(SnapshotPruneBlocked):
+        store.prune_snapshot(original_snapshot.snapshot_id, force=True)
 
 
 def test_evaluation_cli_exports_and_imports_without_episode_generation(tmp_path) -> None:
@@ -554,6 +623,28 @@ def test_evaluation_cli_exports_and_imports_without_episode_generation(tmp_path)
         ],
     )
     assert imported.exit_code == 0
+    pilot_output = tmp_path / "pilot-packets"
+    pilot_exported = runner.invoke(
+        app,
+        [
+            "evaluation",
+            "export-pilot",
+            "--output",
+            str(pilot_output),
+            "--db",
+            str(store.database_path),
+        ],
+    )
+    assert pilot_exported.exit_code == 0
+    assert len(list(pilot_output.glob("*.judge.json"))) == 24
+    pilot_protocol = freeze_audit_protocol(
+        store.database_path,
+        "boundary-pilot-v1",
+        "pilot-seed-v1",
+        24,
+    )
+    assert len(pilot_protocol.cohort_packet_ids) == 24
+    assert len(pilot_protocol.selected_packet_ids) == 5
     unavailable = runner.invoke(app, ["evaluation", "export-episodes"])
     assert unavailable.exit_code == 1
     assert "unavailable" in unavailable.stdout

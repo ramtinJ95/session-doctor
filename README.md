@@ -182,6 +182,7 @@ uv run session-doctor snapshots replay <snapshot-id> --bundle --output replay-bu
 uv run session-doctor normalizations status <snapshot-id>
 uv run session-doctor normalizations replay <snapshot-id>
 uv run session-doctor evaluation export-boundaries <normalization-run-id> --output packets
+uv run session-doctor evaluation export-pilot --output pilot-packets
 uv run session-doctor evaluation import-judge --input judge-annotation.json
 uv run session-doctor snapshots prune <snapshot-id>
 uv run session-doctor snapshots prune <snapshot-id> --force
@@ -213,7 +214,8 @@ command.
 | `snapshots replay SNAPSHOT_ID` | Write exact captured bytes or bundle | `--output PATH`, `--bundle`, `--overwrite`, `--db PATH` |
 | `normalizations status SNAPSHOT_ID` | Show current, stale, or missing parser coverage | `--db PATH` |
 | `normalizations replay SNAPSHOT_ID` | Explicitly add current parser output from stored bytes | `--db PATH` |
-| `evaluation export-boundaries RUN_ID` | Export blinded boundary packets and private routing envelopes | `--output DIR`, `--db PATH` |
+| `evaluation export-boundaries RUN_ID` | Register routing privately and export judge-only boundary packets | `--output DIR`, `--db PATH` |
+| `evaluation export-pilot` | Register the checked 24-case pilot and export judge-only packets | `--output DIR`, `--manifest PATH`, `--db PATH` |
 | `evaluation import-judge` | Import one offline judge annotation | `--input JSON`, `--db PATH` |
 | `snapshots prune SNAPSHOT_ID` | Explicitly prune a bundle capture | `--force`, `--db PATH` |
 | `analyze SESSION_ID` | Analyze one session | `--agent NAME`, `--format terminal\|json`, `--artifact PATH`, `--no-artifact` |

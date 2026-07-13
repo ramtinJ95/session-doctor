@@ -354,7 +354,8 @@ CREATE_TABLE_STATEMENTS = (
         schema_version VARCHAR NOT NULL,
         annotation_protocol_version VARCHAR NOT NULL,
         packet_kind VARCHAR NOT NULL,
-        normalization_run_id VARCHAR NOT NULL,
+        evaluation_corpus_id VARCHAR NOT NULL,
+        normalization_run_id VARCHAR,
         snapshot_bundle_id VARCHAR NOT NULL,
         routing_json VARCHAR NOT NULL,
         judge_packet_json VARCHAR NOT NULL,
@@ -408,11 +409,16 @@ CREATE_TABLE_STATEMENTS = (
     """,
     """
     CREATE TABLE IF NOT EXISTS audit_protocols (
-        annotation_protocol_version VARCHAR PRIMARY KEY,
+        audit_protocol_id VARCHAR PRIMARY KEY,
+        annotation_protocol_version VARCHAR NOT NULL,
+        evaluation_corpus_id VARCHAR NOT NULL,
+        expected_packet_count INTEGER NOT NULL CHECK (expected_packet_count > 0),
         selection_seed_id VARCHAR NOT NULL,
+        cohort_packet_ids_json VARCHAR NOT NULL,
         eligible_packet_ids_json VARCHAR NOT NULL,
         selected_packet_ids_json VARCHAR NOT NULL,
-        frozen_at TIMESTAMP NOT NULL
+        frozen_at TIMESTAMP NOT NULL,
+        UNIQUE (annotation_protocol_version, evaluation_corpus_id)
     )
     """,
     """

@@ -1026,6 +1026,9 @@ Implementation contract:
   references;
 - `evaluation/boundary-pilot-v1.json` contains 24 stratified development
   regions with family identity unknown/ambiguous before PR 12;
+- `evaluation export-pilot` captures the exact checked manifest/source corpus,
+  registers all 24 packets under one corpus identity, and exports only opaque
+  judge packets; strata remain private and are not judge-visible evidence;
 - episode packet schema is available, but generation fails explicitly until
   frozen boundary references exist after PR 8;
 - Session Doctor performs no provider calls in export, import, or resolution.

@@ -393,13 +393,30 @@ separate immutable durable records. Boundary export is deterministic and local;
 evaluation command invokes a provider. Episode export remains explicitly
 unavailable until frozen adjudicated boundaries exist after PR 8.
 
+Every packet has an `evaluation_corpus_id`. Audit freezing requires an explicit
+corpus, positive preregistered cardinality, and complete packet registration
+before any panel resolution. The immutable audit record stores the complete
+cohort, eligible subset, ranked nearest-20% selection, and one seed. Panel
+resolution requires that frozen corpus record. No packet may be added afterward.
+
 The checked-in `evaluation/boundary-pilot-v1.json` preregisters 24 stratified
 development regions across adapters, lengths, successes, blockers,
 active/incomplete cases, and prior ambiguity. Family identity remains unknown
 or ambiguous before PR 12, so this pilot makes no checkpoint or final-test
 claim. `evaluation/boundary-pilot-sources-v1.json` supplies the ordered source
 turns and intervening structures; the loader rejects missing, duplicate, or
-non-adjacent regions and derives 24 unique packet identities.
+non-adjacent regions and derives 24 unique packet identities. Judge packets
+contain only those normalized events; selection strata stay in the private
+manifest. `evaluation export-pilot` durably captures the exact combined corpus,
+registers its 24 packets with direct snapshot-bundle provenance, and exports
+judge-only files. Normal production packets retain normalization-run plus
+snapshot-bundle provenance and reconstruct private target identities from the
+stored semantic foundation before registration.
+
+A frozen cohort spanning multiple snapshot bundles makes partial snapshot
+pruning unavailable, even with force. The cohort may be removed only when the
+authorized prune covers its complete packet set, preventing dangling audit and
+reference provenance.
 
 Evaluation uses two documents: a private routing envelope retained in DuckDB
 and a judge-visible packet written to the export directory. Routing envelopes

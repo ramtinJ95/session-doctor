@@ -40,7 +40,8 @@ class PruneResult:
     dependent_analysis_run_ids: tuple[str, ...]
     dependent_normalization_run_ids: tuple[str, ...]
     dependent_evaluation_packet_ids: tuple[str, ...]
-    dependent_audit_protocol_versions: tuple[str, ...]
+    dependent_audit_protocol_ids: tuple[str, ...]
+    partial_audit_protocol_ids: tuple[str, ...]
     inbound_source_ids: tuple[str, ...]
     inbound_session_ids: tuple[str, ...]
     downstream_lifecycle_bundle_ids: tuple[str, ...]
@@ -57,7 +58,8 @@ class PruneDependencies:
     analysis_run_ids: tuple[str, ...]
     normalization_run_ids: tuple[str, ...]
     evaluation_packet_ids: tuple[str, ...]
-    audit_protocol_versions: tuple[str, ...]
+    audit_protocol_ids: tuple[str, ...]
+    partial_audit_protocol_ids: tuple[str, ...]
     inbound_source_ids: tuple[str, ...]
     inbound_session_ids: tuple[str, ...]
     downstream_lifecycle_bundle_ids: tuple[str, ...]
@@ -109,7 +111,8 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
             analysis_run_ids=(),
             normalization_run_ids=(),
             evaluation_packet_ids=(),
-            audit_protocol_versions=(),
+            audit_protocol_ids=(),
+            partial_audit_protocol_ids=(),
             inbound_source_ids=(),
             inbound_session_ids=(),
             downstream_lifecycle_bundle_ids=(),
@@ -133,19 +136,23 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
         [list(bundle_ids)],
     ).fetchall()
     evaluation_packet_ids = tuple(str(row[0]) for row in evaluation_packet_rows)
-    audit_protocol_versions: tuple[str, ...] = ()
+    audit_protocol_ids: tuple[str, ...] = ()
+    partial_audit_protocol_ids: tuple[str, ...] = ()
     if evaluation_packet_ids:
         packet_id_set = set(evaluation_packet_ids)
         matching_protocols = []
-        for protocol_version, eligible_json, selected_json in connection.execute(
-            "SELECT annotation_protocol_version, eligible_packet_ids_json, "
-            "selected_packet_ids_json FROM audit_protocols "
+        partial_protocols = []
+        for protocol_id, cohort_json in connection.execute(
+            "SELECT audit_protocol_id, cohort_packet_ids_json FROM audit_protocols "
             "ORDER BY annotation_protocol_version"
         ).fetchall():
-            referenced = set(json.loads(str(eligible_json))) | set(json.loads(str(selected_json)))
+            referenced = set(json.loads(str(cohort_json)))
             if referenced & packet_id_set:
-                matching_protocols.append(str(protocol_version))
-        audit_protocol_versions = tuple(matching_protocols)
+                matching_protocols.append(str(protocol_id))
+                if referenced - packet_id_set:
+                    partial_protocols.append(str(protocol_id))
+        audit_protocol_ids = tuple(matching_protocols)
+        partial_audit_protocol_ids = tuple(partial_protocols)
     source_rows = connection.execute(
         """
             SELECT source_id FROM session_sources
@@ -260,7 +267,7 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
             else None
         )
         derived_row_counts[table_name] = int(count_row[0]) if count_row else 0
-    derived_row_counts["audit_protocols"] = len(audit_protocol_versions)
+    derived_row_counts["audit_protocols"] = len(audit_protocol_ids)
     for table_name in ("raw_events", "parse_warnings"):
         if not source_ids:
             derived_row_counts[table_name] = 0
@@ -297,7 +304,8 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
         analysis_run_ids=analysis_run_ids,
         normalization_run_ids=normalization_run_ids,
         evaluation_packet_ids=evaluation_packet_ids,
-        audit_protocol_versions=audit_protocol_versions,
+        audit_protocol_ids=audit_protocol_ids,
+        partial_audit_protocol_ids=partial_audit_protocol_ids,
         inbound_source_ids=inbound_source_ids,
         inbound_session_ids=inbound_session_ids,
         downstream_lifecycle_bundle_ids=downstream_lifecycle_bundle_ids,
@@ -402,11 +410,13 @@ def latest_snapshot(
 def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> PruneResult:
     with write_connection(database_path) as connection, transaction(connection):
         dependencies = _snapshot_dependencies(connection, snapshot_id)
+        if dependencies.partial_audit_protocol_ids:
+            raise SnapshotPruneBlocked(snapshot_id, dependencies)
         if (
             dependencies.source_ids
             or dependencies.normalization_run_ids
             or dependencies.evaluation_packet_ids
-            or dependencies.audit_protocol_versions
+            or dependencies.audit_protocol_ids
             or dependencies.inbound_source_ids
             or dependencies.inbound_session_ids
             or dependencies.downstream_lifecycle_bundle_ids
@@ -541,11 +551,10 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
             [bundle_id],
         )
         if dependencies.evaluation_packet_ids:
-            if dependencies.audit_protocol_versions:
+            if dependencies.audit_protocol_ids:
                 connection.execute(
-                    "DELETE FROM audit_protocols "
-                    "WHERE annotation_protocol_version IN (SELECT unnest(?))",
-                    [list(dependencies.audit_protocol_versions)],
+                    "DELETE FROM audit_protocols WHERE audit_protocol_id IN (SELECT unnest(?))",
+                    [list(dependencies.audit_protocol_ids)],
                 )
             for table_name in (
                 "reference_resolutions",
@@ -729,7 +738,8 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
         dependent_analysis_run_ids=dependencies.analysis_run_ids,
         dependent_normalization_run_ids=dependencies.normalization_run_ids,
         dependent_evaluation_packet_ids=dependencies.evaluation_packet_ids,
-        dependent_audit_protocol_versions=dependencies.audit_protocol_versions,
+        dependent_audit_protocol_ids=dependencies.audit_protocol_ids,
+        partial_audit_protocol_ids=dependencies.partial_audit_protocol_ids,
         inbound_source_ids=dependencies.inbound_source_ids,
         inbound_session_ids=dependencies.inbound_session_ids,
         downstream_lifecycle_bundle_ids=dependencies.downstream_lifecycle_bundle_ids,

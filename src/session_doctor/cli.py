@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -69,7 +70,12 @@ from .cli_renderers import (
 )
 from .config import supports_current_python
 from .evaluation_models import JudgeAnnotation
-from .evaluation_packets import export_boundary_packets, write_packet_exports
+from .evaluation_packets import (
+    canonical_json,
+    export_boundary_packets,
+    export_boundary_pilot,
+    write_packet_exports,
+)
 from .graph_payload import graph_payload
 from .graph_projection import project_graph
 from .html import (
@@ -79,12 +85,13 @@ from .html import (
     render_trends_html,
     write_html,
 )
+from .ids import stable_id
 from .ingest_workflow import IngestSummary, ingest_sources
 from .integration_assets import IntegrationAssetError, session_doctor_skill_directory
 from .normalization_workflow import normalize_snapshot
 from .report_payload import build_session_report
 from .report_renderers import render_session_report, render_session_report_markdown
-from .schemas import AnalysisRun, SessionClassification, SessionFeature
+from .schemas import AgentName, AnalysisRun, SessionClassification, SessionFeature, SessionSource
 from .store import (
     TABLE_NAMES,
     DuckDBStore,
@@ -94,6 +101,7 @@ from .store import (
     SnapshotPruneBlocked,
     SnapshotSummary,
     import_judge_annotation,
+    register_boundary_pilot,
     register_evaluation_packet,
 )
 from .summary_payload import summary_payload
@@ -387,6 +395,51 @@ def evaluation_export_episodes() -> None:
     raise typer.Exit(1)
 
 
+@evaluation_app.command("export-pilot")
+def evaluation_export_pilot(
+    output: Annotated[Path, typer.Option("--output", help="New judge-packet directory.")],
+    manifest: Annotated[
+        Path,
+        typer.Option("--manifest", help="Checked boundary-pilot manifest."),
+    ] = Path("evaluation/boundary-pilot-v1.json"),
+    db: Annotated[Path | None, typer.Option("--db", help="DuckDB path to modify.")] = None,
+) -> None:
+    """Register and export the checked blinded boundary pilot without provider calls."""
+    database_path = database_path_from_option(db)
+    require_valid_database_path(database_path)
+    require_current_database_schema(database_path)
+    output = output.expanduser()
+    manifest = manifest.expanduser().resolve()
+    if output.exists() or not output.parent.is_dir():
+        console.print("[red]Evaluation export failed:[/red] output must be a new directory")
+        raise typer.Exit(1)
+    try:
+        manifest_document = json.loads(manifest.read_text())
+        source_path = manifest.parent / str(manifest_document["source_corpus"])
+        source_document = json.loads(source_path.read_text())
+        corpus_bytes = (
+            canonical_json({"manifest": manifest_document, "sources": source_document}) + "\n"
+        ).encode()
+        source = SessionSource(
+            source_id=stable_id(
+                "evaluation-pilot-source", hashlib.sha256(corpus_bytes).hexdigest()
+            ),
+            agent_name=AgentName.PI,
+            source_path="evaluation-corpus://boundary-pilot-v1",
+        )
+        store = DuckDBStore(database_path)
+        captured = store.capture_source(source, corpus_bytes)
+        bundle = store.create_single_source_bundle(source, captured, "boundary-pilot-v1")
+        store.record_lifecycle(bundle.snapshot_bundle_id, terminal_observed=True)
+        exports = export_boundary_pilot(manifest, bundle.snapshot_bundle_id)
+        register_boundary_pilot(database_path, manifest, bundle.snapshot_bundle_id, exports)
+        write_packet_exports(exports, output)
+    except (OSError, KeyError, ValueError, EvaluationImportError) as exc:
+        console.print(f"[red]Evaluation export failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    typer.echo(f"Exported {len(exports)} registered pilot packets: {output}")
+
+
 @evaluation_app.command("import-judge")
 def evaluation_import_judge(
     input_path: Annotated[Path, typer.Option("--input", help="Judge annotation JSON.")],
@@ -534,7 +587,8 @@ def snapshots_prune(
                         "analysis_runs": dependencies.analysis_run_ids,
                         "normalization_runs": dependencies.normalization_run_ids,
                         "evaluation_packets": dependencies.evaluation_packet_ids,
-                        "audit_protocols": dependencies.audit_protocol_versions,
+                        "audit_protocols": dependencies.audit_protocol_ids,
+                        "partial_audit_protocols": dependencies.partial_audit_protocol_ids,
                         "inbound_source_references": dependencies.inbound_source_ids,
                         "inbound_session_references": dependencies.inbound_session_ids,
                         "downstream_lifecycle_bundles": (

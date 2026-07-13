@@ -4,50 +4,83 @@
     {
       "source_id": "codex-pilot",
       "adapter": "codex",
+      "target_provider": "openai",
+      "target_model": "codex-pilot-model",
       "user_turns": [
         {"event_id": "codex-u0", "text": "Inspect the failing test."},
-        {"event_id": "codex-u1", "text": "Now fix the parser failure."},
-        {"event_id": "codex-u2", "text": "Continue after the tool error."},
+        {"event_id": "codex-u1", "text": "Run the parser command."},
+        {"event_id": "codex-u2", "text": "Continue with the output."},
         {"event_id": "codex-u3", "text": "Run the focused checks."},
-        {"event_id": "codex-u4", "text": "Switch to the schema task."},
-        {"event_id": "codex-u5", "text": "The session is still active."},
-        {"event_id": "codex-u6", "text": "Review the prior disagreement."},
-        {"event_id": "codex-u7", "text": "Validate the successful change."},
-        {"event_id": "codex-u8", "text": "Finish with the remaining blocker."}
+        {"event_id": "codex-u4", "text": "Inspect the schema."},
+        {"event_id": "codex-u5", "text": "Continue from here."},
+        {"event_id": "codex-u6", "text": "Review the latest output."},
+        {"event_id": "codex-u7", "text": "Validate the change."},
+        {"event_id": "codex-u8", "text": "Finish the remaining work."}
       ],
-      "intervening_structures": ["success", "blocker", "tool_error", "success", "task_switch", "active", "prior_disagreement", "blocker"]
+      "intervening_events": [
+        {"event_id":"codex-a0","entity_kind":"normalized_message","role":"assistant","text":"I inspected the requested files."},
+        {"event_id":"codex-t1","entity_kind":"normalized_tool_call","structure":{"tool_name":"shell"}},
+        {"event_id":"codex-r2","entity_kind":"normalized_tool_result","structure":{"status":"error","exit_code":1}},
+        {"event_id":"codex-r3","entity_kind":"normalized_tool_result","structure":{"status":"success","exit_code":0}},
+        {"event_id":"codex-a4","entity_kind":"normalized_message","role":"assistant","text":"I will inspect the schema next."},
+        {"event_id":"codex-t5","entity_kind":"normalized_tool_call","structure":{"tool_name":"read"}},
+        {"event_id":"codex-t6","entity_kind":"normalized_tool_call","structure":{"tool_name":"search"}},
+        {"event_id":"codex-r7","entity_kind":"normalized_tool_result","structure":{"status":"error","exit_code":1}}
+      ]
     },
     {
       "source_id": "claude-pilot",
       "adapter": "claude",
+      "target_provider": "anthropic",
+      "target_model": "claude-pilot-model",
       "user_turns": [
         {"event_id": "claude-u0", "text": "Read the implementation."},
-        {"event_id": "claude-u1", "text": "Investigate the failed command."},
-        {"event_id": "claude-u2", "text": "Resume the delegated work."},
-        {"event_id": "claude-u3", "text": "Check the successful result."},
-        {"event_id": "claude-u4", "text": "Start the next independent goal."},
-        {"event_id": "claude-u5", "text": "This capture may be incomplete."},
-        {"event_id": "claude-u6", "text": "Resolve the ambiguous boundary."},
+        {"event_id": "claude-u1", "text": "Investigate the command output."},
+        {"event_id": "claude-u2", "text": "Resume the work."},
+        {"event_id": "claude-u3", "text": "Check the result."},
+        {"event_id": "claude-u4", "text": "Inspect the schema."},
+        {"event_id": "claude-u5", "text": "Continue from here."},
+        {"event_id": "claude-u6", "text": "Review the latest output."},
         {"event_id": "claude-u7", "text": "Confirm the final validation."},
-        {"event_id": "claude-u8", "text": "Address the last blocker."}
+        {"event_id": "claude-u8", "text": "Address the remaining work."}
       ],
-      "intervening_structures": ["success", "blocker", "delegation", "success", "task_switch", "incomplete", "prior_disagreement", "blocker"]
+      "intervening_events": [
+        {"event_id":"claude-a0","entity_kind":"normalized_message","role":"assistant","text":"I inspected the requested files."},
+        {"event_id":"claude-t1","entity_kind":"normalized_tool_call","structure":{"tool_name":"shell"}},
+        {"event_id":"claude-t2","entity_kind":"normalized_tool_call","structure":{"tool_name":"delegate"}},
+        {"event_id":"claude-r3","entity_kind":"normalized_tool_result","structure":{"status":"success","exit_code":0}},
+        {"event_id":"claude-a4","entity_kind":"normalized_message","role":"assistant","text":"I will inspect the schema next."},
+        {"event_id":"claude-t5","entity_kind":"normalized_tool_call","structure":{"tool_name":"read"}},
+        {"event_id":"claude-t6","entity_kind":"normalized_tool_call","structure":{"tool_name":"search"}},
+        {"event_id":"claude-r7","entity_kind":"normalized_tool_result","structure":{"status":"error","exit_code":1}}
+      ]
     },
     {
       "source_id": "pi-pilot",
       "adapter": "pi",
+      "target_provider": "openai",
+      "target_model": "pi-pilot-model",
       "user_turns": [
         {"event_id": "pi-u0", "text": "Inspect the repository state."},
-        {"event_id": "pi-u1", "text": "Fix the blocked operation."},
-        {"event_id": "pi-u2", "text": "Continue after compaction."},
-        {"event_id": "pi-u3", "text": "Run the passing tests."},
-        {"event_id": "pi-u4", "text": "Move to the documentation goal."},
-        {"event_id": "pi-u5", "text": "Keep this active case provisional."},
-        {"event_id": "pi-u6", "text": "Adjudicate the disputed split."},
-        {"event_id": "pi-u7", "text": "Record the successful outcome."},
-        {"event_id": "pi-u8", "text": "Report the unresolved blocker."}
+        {"event_id": "pi-u1", "text": "Run the requested operation."},
+        {"event_id": "pi-u2", "text": "Continue with the output."},
+        {"event_id": "pi-u3", "text": "Run the focused tests."},
+        {"event_id": "pi-u4", "text": "Inspect the documentation."},
+        {"event_id": "pi-u5", "text": "Continue from here."},
+        {"event_id": "pi-u6", "text": "Review the latest output."},
+        {"event_id": "pi-u7", "text": "Record the outcome."},
+        {"event_id": "pi-u8", "text": "Report the remaining work."}
       ],
-      "intervening_structures": ["success", "blocker", "compaction", "success", "task_switch", "active", "prior_disagreement", "blocker"]
+      "intervening_events": [
+        {"event_id":"pi-a0","entity_kind":"normalized_message","role":"assistant","text":"I inspected the requested files."},
+        {"event_id":"pi-t1","entity_kind":"normalized_tool_call","structure":{"tool_name":"shell"}},
+        {"event_id":"pi-c2","entity_kind":"normalized_compaction","structure":{"status":"observed"}},
+        {"event_id":"pi-r3","entity_kind":"normalized_tool_result","structure":{"status":"success","exit_code":0}},
+        {"event_id":"pi-a4","entity_kind":"normalized_message","role":"assistant","text":"I will inspect the schema next."},
+        {"event_id":"pi-t5","entity_kind":"normalized_tool_call","structure":{"tool_name":"read"}},
+        {"event_id":"pi-t6","entity_kind":"normalized_tool_call","structure":{"tool_name":"search"}},
+        {"event_id":"pi-r7","entity_kind":"normalized_tool_result","structure":{"status":"error","exit_code":1}}
+      ]
     }
   ]
 }
