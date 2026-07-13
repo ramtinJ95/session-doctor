@@ -28,9 +28,39 @@ def analyze_session_episodes(
             """,
             [session_id],
         ).fetchone()
+        if row is not None:
+            projected_bundle_id = str(row[0])
+            logical_source = connection.execute(
+                """
+                SELECT snapshots.logical_source_id
+                FROM snapshot_bundles AS bundles
+                JOIN source_snapshots AS snapshots
+                    ON snapshots.snapshot_id = bundles.primary_snapshot_id
+                WHERE bundles.snapshot_bundle_id = ?
+                """,
+                [projected_bundle_id],
+            ).fetchone()
+            latest_bundle = (
+                connection.execute(
+                    """
+                    SELECT bundles.snapshot_bundle_id
+                    FROM source_snapshots AS snapshots
+                    JOIN snapshot_bundles AS bundles
+                        ON bundles.primary_snapshot_id = snapshots.snapshot_id
+                    WHERE snapshots.logical_source_id = ?
+                    ORDER BY snapshots.capture_sequence DESC
+                    LIMIT 1
+                    """,
+                    [str(logical_source[0])],
+                ).fetchone()
+                if logical_source is not None
+                else None
+            )
     if row is None:
         raise EpisodeAnalysisUnavailable("session has no normalized v2 input")
     snapshot_bundle_id = str(row[0])
+    if latest_bundle is None or str(latest_bundle[0]) != snapshot_bundle_id:
+        raise EpisodeAnalysisUnavailable("latest capture has no current normalized projection")
     agent_name = AgentName(str(row[1]))
     adapter = next(item for item in built_in_adapters() if item.name is agent_name)
     coverage = store.normalization_coverage(

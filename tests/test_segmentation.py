@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 from session_doctor.adapters import ParsedSessionBundle
 from session_doctor.adapters.codex import CodexAdapter
 from session_doctor.cli import UNAVAILABLE_REBUILD_MESSAGE, app
-from session_doctor.episode_workflow import analyze_session_episodes
+from session_doctor.episode_workflow import EpisodeAnalysisUnavailable, analyze_session_episodes
 from session_doctor.schemas import (
     AgentName,
     BoundaryDecision,
@@ -91,6 +91,19 @@ def test_separate_question_is_an_explicit_split_marker() -> None:
     assert result.boundaries[0].decision is BoundaryDecision.SPLIT
 
 
+def test_explicit_new_task_after_closure_is_not_interrupted_unknown() -> None:
+    result = segment_session(
+        bundle(
+            "Fix parser tests",
+            "New task: update release notes",
+            closed_after={0},
+        ),
+        lifecycle(),
+    )
+    assert result.boundaries[0].decision is BoundaryDecision.SPLIT
+    assert not result.observations
+
+
 @pytest.mark.parametrize(
     "follow_up",
     [
@@ -148,13 +161,13 @@ def test_pending_tool_work_prevents_closure_split() -> None:
         for index in range(4)
     ]
     pending.messages[0].source_event_id = "event-0"
-    pending.messages[1].source_event_id = "event-1"
+    pending.messages[1].source_event_id = "event-2"
     pending.messages[2].source_event_id = "event-3"
     pending.tool_calls = [
         ToolCall(
             tool_call_id="pending-call",
             session_id="s1",
-            source_event_id="event-2",
+            source_event_id="event-1",
             name="shell",
         )
     ]
@@ -181,6 +194,7 @@ def test_broad_goal_similarity_is_unicode_aware() -> None:
     ("arguments", "command"),
     [
         (["summary", "--db", "ignored.duckdb"], "summary"),
+        (["summary", "--help"], "summary"),
         (["trends", "--format", "html"], "trends"),
         (["report", "session-1", "--db", "ignored.duckdb"], "report"),
         (["graph", "session-1"], "graph"),
@@ -308,6 +322,10 @@ def test_latest_capture_bundle_is_used_for_a_b_a_history(tmp_path) -> None:
     assert latest_lifecycle is not None
     assert analysis.episodes[0].first_user_anchor_id == "event-a"
     assert analysis.lifecycle_observation_id == latest_lifecycle.lifecycle_observation_id
+    newer_capture = store.capture_source(source, b"unparsed-C")
+    store.create_single_source_bundle(source, newer_capture, "native-history")
+    with pytest.raises(EpisodeAnalysisUnavailable, match="latest capture"):
+        analyze_session_episodes(store, "session-history", store.database_path)
 
 
 def test_v1_payload_and_producer_modules_are_absent() -> None:
