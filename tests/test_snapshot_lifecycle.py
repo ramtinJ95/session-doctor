@@ -214,7 +214,11 @@ def test_topology_selection_detects_changes_to_any_input(tmp_path) -> None:
                 "capture_topology_input_sha256": {
                     str(selected_parent): hashlib.sha256(b"selected").hexdigest(),
                     str(competing_parent): hashlib.sha256(b"competing").hexdigest(),
-                }
+                },
+                "capture_topology_directory": str(tmp_path),
+                "capture_topology_directory_members": sorted(
+                    [str(selected_parent), str(competing_parent)]
+                ),
             }
         }
     )
@@ -222,6 +226,9 @@ def test_topology_selection_detects_changes_to_any_input(tmp_path) -> None:
 
     assert topology_inputs_changed(members) is False
     competing_parent.write_bytes(b"changed")
+    assert topology_inputs_changed(members) is True
+    competing_parent.write_bytes(b"competing")
+    (tmp_path / "new-neighbor.jsonl").write_bytes(b"new")
     assert topology_inputs_changed(members) is True
 
 

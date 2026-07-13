@@ -306,14 +306,17 @@ def capture_bundle_members(
 def topology_inputs_changed(
     member_sources: tuple[tuple[SessionSource, str], ...],
 ) -> bool:
-    topology_inputs = next(
+    topology_source = next(
         (
-            source.metadata.get("capture_topology_input_sha256")
+            source
             for source, _role in member_sources
             if source.metadata.get("capture_topology_input_sha256") is not None
         ),
         None,
     )
+    if topology_source is None:
+        return False
+    topology_inputs = topology_source.metadata.get("capture_topology_input_sha256")
     if not isinstance(topology_inputs, dict):
         return False
     for raw_path, expected_hash in topology_inputs.items():
@@ -324,6 +327,15 @@ def topology_inputs_changed(
         except OSError:
             current_hash = None
         if current_hash != expected_hash:
+            return True
+    raw_directory = topology_source.metadata.get("capture_topology_directory")
+    expected_members = topology_source.metadata.get("capture_topology_directory_members")
+    if isinstance(raw_directory, str) and isinstance(expected_members, list):
+        directory = Path(raw_directory)
+        current_members = sorted(
+            str(path) for pattern in ("*.jsonl", "*.meta.json") for path in directory.glob(pattern)
+        )
+        if current_members != expected_members:
             return True
     return False
 
