@@ -4,12 +4,6 @@ import json
 from typing import Any
 
 from session_doctor.adapters import ParsedSessionBundle
-from session_doctor.schemas import (
-    AnalysisRun,
-    MessageFeature,
-    SessionClassification,
-    SessionFeature,
-)
 
 from .json_values import metadata_json
 
@@ -187,71 +181,4 @@ def parse_warning_rows(bundle: ParsedSessionBundle) -> list[dict[str, Any]]:
             "metadata_json": metadata_json(warning.metadata),
         }
         for warning in bundle.parse_warnings
-    ]
-
-
-def analysis_run_rows(analysis_run: AnalysisRun) -> list[dict[str, Any]]:
-    return [
-        {
-            "analysis_run_id": analysis_run.analysis_run_id,
-            "session_id": analysis_run.session_id,
-            "started_at": analysis_run.started_at,
-            "completed_at": analysis_run.completed_at,
-            "analyzer_version": analysis_run.analyzer_version,
-            "artifact_path": analysis_run.artifact_path,
-            "metadata_json": metadata_json(analysis_run.metadata),
-        }
-    ]
-
-
-def message_feature_rows(features: list[MessageFeature]) -> list[dict[str, Any]]:
-    return [
-        {
-            "message_feature_id": feature.message_feature_id,
-            "analysis_run_id": feature.analysis_run_id,
-            "session_id": feature.session_id,
-            "message_id": feature.message_id,
-            "source_event_id": feature.source_event_id,
-            "feature_name": feature.feature_name,
-            "feature_value": feature.feature_value,
-            "score": feature.score,
-            "evidence_json": metadata_json(feature.evidence),
-            "metadata_json": metadata_json(feature.metadata),
-        }
-        for feature in features
-    ]
-
-
-def session_feature_rows(features: list[SessionFeature]) -> list[dict[str, Any]]:
-    return [
-        {
-            "session_feature_id": feature.session_feature_id,
-            "analysis_run_id": feature.analysis_run_id,
-            "session_id": feature.session_id,
-            "feature_name": feature.feature_name,
-            "feature_value": feature.feature_value,
-            "score": feature.score,
-            "evidence_json": metadata_json(feature.evidence),
-            "metadata_json": metadata_json(feature.metadata),
-        }
-        for feature in features
-    ]
-
-
-def session_classification_rows(
-    classifications: list[SessionClassification],
-) -> list[dict[str, Any]]:
-    return [
-        {
-            "session_classification_id": classification.session_classification_id,
-            "analysis_run_id": classification.analysis_run_id,
-            "session_id": classification.session_id,
-            "label": classification.label,
-            "score": classification.score,
-            "confidence": classification.confidence,
-            "evidence_event_ids_json": json.dumps(classification.evidence_event_ids),
-            "evidence_summary": classification.evidence_summary,
-            "metadata_json": metadata_json(classification.metadata),
-        }
-        for classification in classifications
     ]

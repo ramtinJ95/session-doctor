@@ -8,10 +8,6 @@ import duckdb
 from session_doctor.adapters import ParsedSessionBundle
 from session_doctor.schemas import (
     AdapterCapabilityDeclaration,
-    AnalysisRun,
-    MessageFeature,
-    SessionClassification,
-    SessionFeature,
     SessionSource,
 )
 
@@ -23,16 +19,12 @@ from .normalization_runs import (
     persist_normalization_rows,
 )
 from .row_mappers import (
-    analysis_run_rows,
     command_run_rows,
     file_activity_rows,
-    message_feature_rows,
     message_rows,
     model_usage_rows,
     parse_warning_rows,
     raw_event_rows,
-    session_classification_rows,
-    session_feature_rows,
     session_rows,
     tool_call_rows,
     tool_result_rows,
@@ -205,25 +197,6 @@ def validate_bundle_ownership(source: SessionSource, bundle: ParsedSessionBundle
         raise CaptureProvenanceError(source.source_id)
 
 
-def replace_analysis_rows(
-    database_path: Path,
-    analysis_run: AnalysisRun,
-    message_features: list[MessageFeature],
-    session_features: list[SessionFeature],
-    session_classifications: list[SessionClassification],
-) -> None:
-    with write_connection(database_path) as connection, transaction(connection):
-        delete_analysis_records(connection, analysis_run.session_id)
-        insert_rows(connection, "analysis_runs", analysis_run_rows(analysis_run))
-        insert_rows(connection, "message_features", message_feature_rows(message_features))
-        insert_rows(connection, "session_features", session_feature_rows(session_features))
-        insert_rows(
-            connection,
-            "session_classifications",
-            session_classification_rows(session_classifications),
-        )
-
-
 def delete_source_records(connection: duckdb.DuckDBPyConnection, source_id: str) -> None:
     session_rows_for_source = connection.execute(
         "SELECT session_id FROM sessions WHERE source_id = ?",
@@ -238,10 +211,6 @@ def delete_source_records(connection: duckdb.DuckDBPyConnection, source_id: str)
             "command_runs",
             "file_activities",
             "model_usage",
-            "message_features",
-            "session_features",
-            "session_classifications",
-            "analysis_runs",
         ):
             connection.execute(
                 f"DELETE FROM {table_name} WHERE session_id = ?",
@@ -251,16 +220,6 @@ def delete_source_records(connection: duckdb.DuckDBPyConnection, source_id: str)
     connection.execute("DELETE FROM raw_events WHERE source_id = ?", [source_id])
     connection.execute("DELETE FROM sessions WHERE source_id = ?", [source_id])
     connection.execute("DELETE FROM session_sources WHERE source_id = ?", [source_id])
-
-
-def delete_analysis_records(connection: duckdb.DuckDBPyConnection, session_id: str) -> None:
-    for table_name in (
-        "message_features",
-        "session_features",
-        "session_classifications",
-        "analysis_runs",
-    ):
-        connection.execute(f"DELETE FROM {table_name} WHERE session_id = ?", [session_id])
 
 
 def insert_session_source(

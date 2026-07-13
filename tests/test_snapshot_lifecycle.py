@@ -365,7 +365,6 @@ def test_prune_blocks_current_projection_and_force_deletes_dependencies(tmp_path
     assert result.dependent_source_ids == (source_row.source_id,)
     assert result.dependent_session_ids == ("session-1",)
     assert result.dependent_analysis_run_ids == ()
-    assert result.derived_row_counts["analysis_runs"] == 0
     assert result.checkpoint_completed is True
     assert store.snapshot_summary(captured.snapshot_id) is None
     assert store.table_count("sessions") == 0

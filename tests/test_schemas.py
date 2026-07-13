@@ -15,14 +15,9 @@ from session_doctor.privacy import (
 )
 from session_doctor.schemas import (
     AgentName,
-    AnalysisRun,
-    GraphEdge,
     Message,
-    MessageFeature,
     NormalizedRole,
     Session,
-    SessionClassification,
-    SessionFeature,
     SessionSource,
     SourceKind,
 )
@@ -83,77 +78,6 @@ def test_enum_validation_rejects_unknown_agent_string() -> None:
                 "agent_name": "not-an-agent",
                 "source_path": "/tmp/session.jsonl",
             }
-        )
-
-
-def test_graph_edge_confidence_bounds() -> None:
-    edge = GraphEdge(
-        edge_id="edge-1",
-        source_node_id="node-1",
-        target_node_id="node-2",
-        edge_type="derived_from",
-        confidence=0.75,
-    )
-    assert edge.confidence == 0.75
-
-    with pytest.raises(ValidationError):
-        GraphEdge(
-            edge_id="edge-2",
-            source_node_id="node-1",
-            target_node_id="node-2",
-            edge_type="derived_from",
-            confidence=2.0,
-        )
-
-
-def test_analysis_models_validate_confidence_bounds() -> None:
-    run = AnalysisRun(
-        analysis_run_id="analysis-1",
-        session_id="session-1",
-        analyzer_version="phase3",
-    )
-    assert run.artifact_path is None
-
-    message_feature = MessageFeature(
-        message_feature_id="message-feature-1",
-        analysis_run_id=run.analysis_run_id,
-        session_id=run.session_id,
-        message_id="message-1",
-        feature_name="correction_marker",
-        feature_value="true",
-        score=0.75,
-    )
-    assert message_feature.score == 0.75
-
-    session_feature = SessionFeature(
-        session_feature_id="session-feature-1",
-        analysis_run_id=run.analysis_run_id,
-        session_id=run.session_id,
-        feature_name="correction_count",
-        feature_value="1",
-    )
-    assert session_feature.score == 1.0
-
-    classification = SessionClassification(
-        session_classification_id="classification-1",
-        analysis_run_id=run.analysis_run_id,
-        session_id=run.session_id,
-        label="user_stuck",
-        score=0.8,
-        confidence=0.7,
-        evidence_summary="Repeated request and correction evidence.",
-    )
-    assert classification.evidence_event_ids == []
-
-    with pytest.raises(ValidationError):
-        SessionClassification(
-            session_classification_id="classification-2",
-            analysis_run_id=run.analysis_run_id,
-            session_id=run.session_id,
-            label="user_stuck",
-            score=1.2,
-            confidence=0.7,
-            evidence_summary="Invalid score.",
         )
 
 

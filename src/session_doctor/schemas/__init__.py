@@ -1,10 +1,16 @@
 from __future__ import annotations
 
-from .analysis import AnalysisRun, MessageFeature, SessionClassification, SessionFeature
 from .common import AgentName, Confidence, NormalizedRole, SessionDoctorModel, SourceKind
+from .episodes import (
+    BoundaryDecision,
+    BoundaryReason,
+    EpisodeAnalysis,
+    EpisodeBoundary,
+    EpisodeObservation,
+    TaskEpisode,
+)
 from .events import RawEvent
 from .files import FileActivity
-from .graph import GraphEdge, GraphNode, GraphReport
 from .messages import Message
 from .semantics import (
     AdapterCapabilityDeclaration,
@@ -31,23 +37,21 @@ from .warnings import ParseWarning
 
 __all__ = [
     "AgentName",
-    "AnalysisRun",
+    "BoundaryDecision",
+    "BoundaryReason",
     "CommandRun",
     "Confidence",
     "FileActivity",
-    "GraphEdge",
-    "GraphNode",
-    "GraphReport",
+    "EpisodeAnalysis",
+    "EpisodeBoundary",
+    "EpisodeObservation",
     "Message",
-    "MessageFeature",
     "ModelUsage",
     "NormalizedRole",
     "ParseWarning",
     "RawEvent",
     "Session",
-    "SessionClassification",
     "SessionDoctorModel",
-    "SessionFeature",
     "SessionSource",
     "AdapterCapabilityDeclaration",
     "CapabilityEvidence",
@@ -68,4 +72,5 @@ __all__ = [
     "SourceKind",
     "ToolCall",
     "ToolResult",
+    "TaskEpisode",
 ]

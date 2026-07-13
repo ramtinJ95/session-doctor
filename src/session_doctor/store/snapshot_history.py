@@ -226,16 +226,6 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
         [list(bundle_ids)],
     ).fetchall()
     downstream_lifecycle_bundle_ids = tuple(str(row[0]) for row in downstream_lifecycle_rows)
-    analysis_rows = (
-        connection.execute(
-            "SELECT analysis_run_id FROM analysis_runs "
-            "WHERE session_id IN (SELECT unnest(?)) ORDER BY analysis_run_id",
-            [list(session_ids)],
-        ).fetchall()
-        if session_ids
-        else []
-    )
-    analysis_run_ids = tuple(str(row[0]) for row in analysis_rows)
     semantic_analysis_rows = (
         connection.execute(
             """
@@ -250,14 +240,7 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
         if normalization_run_ids
         else []
     )
-    analysis_run_ids = tuple(
-        sorted(
-            {
-                *analysis_run_ids,
-                *(str(row[0]) for row in semantic_analysis_rows),
-            }
-        )
-    )
+    analysis_run_ids = tuple(str(row[0]) for row in semantic_analysis_rows)
     derived_row_counts: dict[str, int] = {
         "session_sources": len(source_ids),
         "sessions": len(session_ids),
@@ -310,10 +293,6 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
         "command_runs",
         "file_activities",
         "model_usage",
-        "analysis_runs",
-        "message_features",
-        "session_features",
-        "session_classifications",
     ):
         if not session_ids:
             derived_row_counts[table_name] = 0

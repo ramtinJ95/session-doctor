@@ -13,8 +13,7 @@ from .config import default_database_path
 from .schemas.common import AgentName, SourceKind
 from .schemas.sessions import SessionSource
 from .store import DatabaseOpenError, DuckDBStore, SchemaMismatchError
-from .store.models import SessionScopeFilters, StoreInfo, SummaryFilters
-from .store.trend_models import ProjectFilters, TrendBucketSize, TrendFilters
+from .store.models import StoreInfo
 
 console = Console()
 
@@ -164,40 +163,6 @@ def require_positive_limit(limit: int) -> None:
     raise typer.Exit(2)
 
 
-def summary_filters_from_options(
-    agent: str | None,
-    project: Path | None,
-    limit: int,
-) -> SummaryFilters:
-    if limit < 1:
-        console.print("[red]Invalid --limit:[/red] expected a positive integer")
-        raise typer.Exit(2)
-
-    scope_filters = scope_filters_from_options(agent, project)
-    return SummaryFilters(
-        agent_name=scope_filters.agent_name,
-        project_path=scope_filters.project_path,
-        limit=limit,
-    )
-
-
-def scope_filters_from_options(
-    agent: str | None,
-    project: Path | None,
-) -> SessionScopeFilters:
-    agent_name = agent_name_from_option(agent)
-
-    project_path = None
-    if project is not None:
-        expanded_project = project.expanduser()
-        if expanded_project.is_absolute():
-            project_path = os.path.normpath(str(expanded_project))
-        else:
-            project_path = os.path.normpath(str(Path.cwd() / expanded_project))
-
-    return SessionScopeFilters(agent_name=agent_name, project_path=project_path)
-
-
 def agent_name_from_option(agent: str | None) -> str | None:
     if agent is None:
         return None
@@ -210,42 +175,6 @@ def agent_name_from_option(agent: str | None) -> str | None:
         console.print(f"[red]Unsupported --agent:[/red] {agent}")
         raise typer.Exit(2)
     return parsed_agent_name.value
-
-
-def trend_filters_from_options(
-    agent: str | None,
-    project: Path | None,
-    bucket: str,
-    periods: int,
-    limit: int,
-) -> TrendFilters:
-    try:
-        bucket_size = TrendBucketSize(bucket)
-    except ValueError:
-        console.print("[red]Invalid --bucket:[/red] expected week or month")
-        raise typer.Exit(2) from None
-    if periods < 1 or periods > 120:
-        console.print("[red]Invalid --periods:[/red] expected an integer from 1 to 120")
-        raise typer.Exit(2)
-    if limit < 1:
-        console.print("[red]Invalid --limit:[/red] expected a positive integer")
-        raise typer.Exit(2)
-    scope = scope_filters_from_options(agent, project)
-    return TrendFilters(
-        agent_name=scope.agent_name,
-        project_path=scope.project_path,
-        bucket=bucket_size,
-        periods=periods,
-        limit=limit,
-    )
-
-
-def project_filters_from_options(agent: str | None, limit: int) -> ProjectFilters:
-    if limit < 1:
-        console.print("[red]Invalid --limit:[/red] expected a positive integer")
-        raise typer.Exit(2)
-    scope = scope_filters_from_options(agent, None)
-    return ProjectFilters(agent_name=scope.agent_name, limit=limit)
 
 
 def adapter_for_ingest(agent: str) -> BaseAdapter:
