@@ -386,6 +386,19 @@ coverage.
 
 ## Evaluation Packet Contract
 
+Schema version 9 stores packet registrations, judge annotations, panel
+resolutions, audit selections, human adjudications, and final references as
+separate immutable durable records. Boundary export is deterministic and local;
+`evaluation import-judge` only reads an externally produced JSON record. No
+evaluation command invokes a provider. Episode export remains explicitly
+unavailable until frozen adjudicated boundaries exist after PR 8.
+
+The checked-in `evaluation/boundary-pilot-v1.json` preregisters 24 stratified
+development regions across adapters, lengths, successes, blockers,
+active/incomplete cases, and prior ambiguity. Family identity remains unknown
+or ambiguous before PR 12, so this pilot makes no checkpoint or final-test
+claim.
+
 Evaluation uses two documents: a private routing envelope and a judge-visible
 packet. Both carry independent schema and annotation-protocol versions.
 

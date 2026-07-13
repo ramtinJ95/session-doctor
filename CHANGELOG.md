@@ -5,6 +5,8 @@ artifact, payload, and CLI contracts may change incompatibly during dogfooding.
 
 ## Unreleased
 
+- add deterministic blinded boundary packet export, offline judge import,
+  panel/audit/human/reference provenance, and a stratified pilot manifest
 - persist source-local ordering, capability/instrumentation evidence, project
   and model identity, usage semantics, and additive semantic analysis identity
 - add immutable, run-keyed normalization history with explicit replay and
