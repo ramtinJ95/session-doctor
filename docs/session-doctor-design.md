@@ -48,10 +48,13 @@ PR 7 completed the analyzer cutover:
 - restored v2 analysis surfaces are marked experimental until PR 23 passes the
   untouched final-test gate.
 
-Schema version 10 drops the four v1 analysis tables. `segmentation-v1` emits
+Schema version 10 drops the four v1 analysis tables. Calibrated
+`segmentation-v2` emits
 event-anchored task episodes and boundary annotations using explicit-new-task,
 correction/repeat, closure-plus-topic-shift, and conservative ambiguous-merge
-precedence. Elapsed time is never a split signal. Active or incomplete
+precedence. Its calibrated continuation vocabulary covers narrow anaphoric
+follow-ups without treating generic imperatives as proof of one task. Elapsed
+time is never a split signal. Active or incomplete
 lifecycle state makes episodes provisional without erasing observations.
 
 `projects list` is unavailable because its current payload includes v1 analysis
@@ -385,7 +388,8 @@ resolutions, audit selections, human adjudications, and final references as
 separate immutable durable records. Boundary export is deterministic and local;
 `evaluation import-judge` only reads an externally produced JSON record. No
 evaluation command invokes a provider. Episode export remains explicitly
-unavailable until frozen adjudicated boundaries exist after PR 8.
+unavailable until the owning relation, result, finding, or facet rubric and its
+allowed-answer set are versioned.
 
 Every packet has an `evaluation_corpus_id`. Audit freezing requires an explicit
 corpus, a durably preregistered cardinality, and complete atomic packet registration
@@ -409,12 +413,30 @@ judge-only files. The command accepts no corpus override: registration verifies
 the captured bytes against the pinned checked manifest and source document.
 Because this checked synthetic development corpus has no genuine authoring-model
 provenance, its routing marks target identity unverifiable; its annotations may
-inform workflow debugging but cannot enter blinded audits or final references.
+inform development calibration but cannot enter the durable blinded-audit or
+final-reference protocol.
 Short, medium, and long cases export increasing amounts of real bounded source
 context; success, blocker, delegation, compaction, and task-transition strata
 are validated against source events. Active/incomplete capture state and prior
 annotation disagreement remain private selection provenance rather than leaked
 judge cues.
+
+`src/session_doctor/evaluation_data/segmentation-calibration-v1.json` freezes
+the PR 8 development calibration. Three distinct external judge models produced
+23 unanimous panels and one disputed panel. A maintainer resolved the dispute
+and audited the frozen nearest five of the 23 unanimous panels; one audited
+answer differed. The resulting 24 development references contain 22
+`no_split`, two `split`, and no `ambiguous` answers. These low-support,
+target-identity-unverifiable data stabilize `segmentation-v2` and synthetic
+regressions only. They make no checkpoint, final, or blinded quality claim.
+The conservative candidate exactly matches 15 of 24 references, emits nine
+explicit ambiguities, and makes no split prediction on the two-reference split
+stratum. Its 15 no-split predictions all match a development reference, but
+that observation is not a quality estimate.
+The same artifact freezes five deterministic episode-evidence inputs across the
+three pilot sources. It deliberately contains no task-specific episode packet
+IDs.
+
 Normal production packets retain normalization-run plus
 snapshot-bundle provenance and reconstruct private target identities from the
 stored semantic foundation before regenerating and atomically registering the
@@ -474,7 +496,9 @@ belong to the packet.
 
 ### Episode Packet
 
-Episode packets are generated only from frozen adjudicated boundaries.
+Episode packets are generated only from frozen adjudicated boundaries and a
+versioned owning-task rubric. PR 8 freezes the evidence inputs but not
+task-specific packet identities.
 
 ```text
 schema_version

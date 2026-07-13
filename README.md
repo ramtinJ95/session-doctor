@@ -61,6 +61,12 @@ uv run session-doctor evaluation import-judge --input judge-annotation.json
 Judge-visible packets are written separately from private routing envelopes.
 Session Doctor performs no provider calls.
 
+The packaged PR 8 development calibration freezes 24 boundary references and
+five deterministic episode-evidence inputs under `segmentation-v2`. Its
+synthetic pilot has unverifiable target-model identity and no family partitions,
+so it makes no blinded, checkpoint, or final quality claim. Task-specific
+episode packet export remains unavailable until each owning rubric is versioned.
+
 ## Temporary command availability
 
 The following commands are deliberately unavailable while their v2 projections
