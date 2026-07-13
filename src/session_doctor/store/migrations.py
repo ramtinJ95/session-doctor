@@ -163,6 +163,7 @@ CREATE_TABLE_STATEMENTS = (
         agent_name VARCHAR NOT NULL,
         source_kind VARCHAR NOT NULL,
         source_path VARCHAR NOT NULL,
+        discovered_at VARCHAR,
         native_session_id VARCHAR,
         parent_source_id VARCHAR,
         source_metadata_json VARCHAR NOT NULL DEFAULT '{}',
@@ -185,13 +186,15 @@ CREATE_TABLE_STATEMENTS = (
         bundle_content_id VARCHAR NOT NULL,
         agent_name VARCHAR NOT NULL,
         native_session_identity VARCHAR NOT NULL,
+        primary_snapshot_id VARCHAR NOT NULL REFERENCES source_snapshots(snapshot_id),
         native_identity_status VARCHAR NOT NULL
             CHECK (native_identity_status IN ('observed', 'fallback_parse_failed')),
         native_bundle_capture_sequence BIGINT NOT NULL
             CHECK (native_bundle_capture_sequence > 0),
         previous_snapshot_bundle_id VARCHAR REFERENCES snapshot_bundles(snapshot_bundle_id),
         captured_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
-        UNIQUE (agent_name, native_session_identity, native_bundle_capture_sequence)
+        UNIQUE (agent_name, native_session_identity, native_bundle_capture_sequence),
+        UNIQUE (snapshot_bundle_id, primary_snapshot_id)
     )
     """,
     """
@@ -218,10 +221,14 @@ CREATE_TABLE_STATEMENTS = (
         discovered_at TIMESTAMP,
         native_session_id VARCHAR,
         parent_source_id VARCHAR,
-        snapshot_id VARCHAR REFERENCES source_snapshots(snapshot_id),
-        snapshot_bundle_id VARCHAR REFERENCES snapshot_bundles(snapshot_bundle_id),
+        snapshot_id VARCHAR,
+        snapshot_bundle_id VARCHAR,
         CHECK ((snapshot_id IS NULL) = (snapshot_bundle_id IS NULL)),
-        metadata_json VARCHAR NOT NULL DEFAULT '{}'
+        metadata_json VARCHAR NOT NULL DEFAULT '{}',
+        FOREIGN KEY (snapshot_id, source_id)
+            REFERENCES source_snapshots(snapshot_id, source_id),
+        FOREIGN KEY (snapshot_bundle_id, snapshot_id)
+            REFERENCES snapshot_bundles(snapshot_bundle_id, primary_snapshot_id)
     )
     """,
     """

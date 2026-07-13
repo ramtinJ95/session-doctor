@@ -49,16 +49,34 @@ def insert_parsed_bundle(
             JOIN snapshot_bundle_members AS m
               ON m.snapshot_id = s.snapshot_id
              AND m.logical_source_id = s.logical_source_id
+            JOIN snapshot_bundles AS b
+              ON b.snapshot_bundle_id = m.snapshot_bundle_id
+             AND b.primary_snapshot_id = s.snapshot_id
+             AND b.agent_name = s.agent_name
             WHERE s.snapshot_id = ?
               AND s.source_id = ?
               AND s.logical_source_id = ?
               AND m.snapshot_bundle_id = ?
+              AND s.agent_name = ?
+              AND s.source_kind = ?
+              AND s.source_path = ?
+              AND s.discovered_at IS NOT DISTINCT FROM ?
+              AND s.native_session_id IS NOT DISTINCT FROM ?
+              AND s.parent_source_id IS NOT DISTINCT FROM ?
+              AND s.source_metadata_json = ?
             """,
             [
                 captured_source.snapshot_id,
                 source.source_id,
                 captured_source.logical_source_id,
                 captured_bundle.snapshot_bundle_id,
+                source.agent_name.value,
+                source.source_kind.value,
+                source.source_path,
+                source.discovered_at.isoformat() if source.discovered_at else None,
+                source.native_session_id,
+                source.parent_source_id,
+                metadata_json(source.metadata),
             ],
         ).fetchone()
         if provenance is None:

@@ -35,6 +35,10 @@ class CapturedBundle:
     native_identity_status: str
 
 
+class SnapshotSourceMismatchError(RuntimeError):
+    pass
+
+
 def capture_source(
     database_path: Path,
     source: SessionSource,
@@ -106,11 +110,11 @@ def capture_source(
             """
             INSERT INTO source_snapshots (
                 snapshot_id, source_id, agent_name, source_kind, source_path,
-                native_session_id, parent_source_id, source_metadata_json,
+                discovered_at, native_session_id, parent_source_id, source_metadata_json,
                 logical_source_id, blob_id, snapshot_content_id,
                 capture_sequence, captured_at, native_modified_at, capture_status,
                 previous_snapshot_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'captured', ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'captured', ?)
             """,
             [
                 snapshot_id,
@@ -118,6 +122,7 @@ def capture_source(
                 source.agent_name.value,
                 source.source_kind.value,
                 source.source_path,
+                source.discovered_at.isoformat() if source.discovered_at else None,
                 source.native_session_id,
                 source.parent_source_id,
                 metadata_json(source.metadata),
@@ -149,7 +154,25 @@ def create_single_source_bundle(
     native_session_identity: str,
     native_identity_status: str = "observed",
 ) -> CapturedBundle:
+    stored_source = load_snapshot_source(database_path, captured_source.snapshot_id)
+    if stored_source is None or not source_descriptors_match(stored_source, source):
+        raise SnapshotSourceMismatchError("snapshot does not belong to supplied source")
     with write_connection(database_path) as connection, transaction(connection):
+        snapshot_row = connection.execute(
+            """
+            SELECT logical_source_id, blob_id, snapshot_content_id, capture_sequence
+            FROM source_snapshots
+            WHERE snapshot_id = ?
+            """,
+            [captured_source.snapshot_id],
+        ).fetchone()
+        if snapshot_row != (
+            captured_source.logical_source_id,
+            captured_source.blob_id,
+            captured_source.snapshot_content_id,
+            captured_source.capture_sequence,
+        ):
+            raise SnapshotSourceMismatchError("captured source identity does not match storage")
         previous_bundle = connection.execute(
             """
             SELECT snapshot_bundle_id, native_bundle_capture_sequence
@@ -158,13 +181,13 @@ def create_single_source_bundle(
             ORDER BY native_bundle_capture_sequence DESC
             LIMIT 1
             """,
-            [source.agent_name.value, native_session_identity],
+            [stored_source.agent_name.value, native_session_identity],
         ).fetchone()
         bundle_sequence = int(previous_bundle[1]) + 1 if previous_bundle else 1
         previous_bundle_id = str(previous_bundle[0]) if previous_bundle else None
         bundle_content_id = stable_id(
             "bundle-content",
-            source.agent_name.value,
+            stored_source.agent_name.value,
             native_session_identity,
             "primary",
             captured_source.logical_source_id,
@@ -173,7 +196,7 @@ def create_single_source_bundle(
         )
         snapshot_bundle_id = stable_id(
             "snapshot-bundle",
-            source.agent_name.value,
+            stored_source.agent_name.value,
             native_session_identity,
             bundle_sequence,
             bundle_content_id,
@@ -182,16 +205,17 @@ def create_single_source_bundle(
             """
             INSERT INTO snapshot_bundles (
                 snapshot_bundle_id, bundle_content_id, agent_name,
-                native_session_identity, native_identity_status,
+                native_session_identity, primary_snapshot_id, native_identity_status,
                 native_bundle_capture_sequence,
                 previous_snapshot_bundle_id, captured_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 snapshot_bundle_id,
                 bundle_content_id,
-                source.agent_name.value,
+                stored_source.agent_name.value,
                 native_session_identity,
+                captured_source.snapshot_id,
                 native_identity_status,
                 bundle_sequence,
                 previous_bundle_id,
@@ -249,7 +273,7 @@ def load_snapshot_source(database_path: Path, snapshot_id: str) -> SessionSource
         row = connection.execute(
             """
             SELECT source_id, agent_name, source_path, source_kind,
-                native_session_id, parent_source_id, source_metadata_json
+                discovered_at, native_session_id, parent_source_id, source_metadata_json
             FROM source_snapshots
             WHERE snapshot_id = ?
             """,
@@ -263,8 +287,22 @@ def load_snapshot_source(database_path: Path, snapshot_id: str) -> SessionSource
             "agent_name": row[1],
             "source_path": row[2],
             "source_kind": row[3],
-            "native_session_id": row[4],
-            "parent_source_id": row[5],
-            "metadata": parse_metadata(row[6]),
+            "discovered_at": row[4],
+            "native_session_id": row[5],
+            "parent_source_id": row[6],
+            "metadata": parse_metadata(row[7]),
         }
+    )
+
+
+def source_descriptors_match(left: SessionSource, right: SessionSource) -> bool:
+    return (
+        left.source_id == right.source_id
+        and left.agent_name is right.agent_name
+        and left.source_path == right.source_path
+        and left.source_kind is right.source_kind
+        and left.discovered_at == right.discovered_at
+        and left.native_session_id == right.native_session_id
+        and left.parent_source_id == right.parent_source_id
+        and left.metadata == right.metadata
     )

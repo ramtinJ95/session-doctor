@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -126,7 +127,9 @@ def test_adapters_replay_committed_bytes_without_original_source(
     source_path = tmp_path / fixture_path.name
     source_bytes = fixture_path.read_bytes()
     source_path.write_bytes(source_bytes)
-    source = adapter.source_for_captured_parse(adapter.source_for_path(source_path))
+    source = adapter.source_for_captured_parse(adapter.source_for_path(source_path)).model_copy(
+        update={"discovered_at": datetime(2026, 7, 13, 12, 0, tzinfo=UTC)}
+    )
     store = DuckDBStore(tmp_path / "session-doctor.duckdb")
     captured = store.capture_source(source, source_bytes)
     expected_bundle = adapter.parse_source(source, source_bytes)
