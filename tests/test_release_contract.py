@@ -81,5 +81,5 @@ def test_public_docs_describe_v2_command_downtime_and_privacy_contract() -> None
     )
     assert all(marker in readme for marker in required_readme)
     assert "Schema version 10" in design
-    assert "segmentation-v1" in design
+    assert "segmentation-v2" in design
     assert "no command falls back to v1" in design

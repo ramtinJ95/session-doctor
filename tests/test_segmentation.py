@@ -22,7 +22,7 @@ from session_doctor.schemas import (
     ToolCall,
     ToolResult,
 )
-from session_doctor.segmentation import broad_goal_similarity, segment_session
+from session_doctor.segmentation import SEGMENTATION_VERSION, broad_goal_similarity, segment_session
 from session_doctor.store import DuckDBStore
 from session_doctor.store.lifecycle import LifecycleObservation
 
@@ -119,6 +119,31 @@ def test_correction_review_and_repeat_remain_one_episode(follow_up: str) -> None
     result = segment_session(bundle("Fix parser tests", follow_up), lifecycle())
     assert len(result.episodes) == 1
     assert result.boundaries[0].decision is BoundaryDecision.NO_SPLIT
+
+
+@pytest.mark.parametrize(
+    "follow_up",
+    [
+        "Resume the work.",
+        "Check the result.",
+        "Review the latest output.",
+        "Validate the change.",
+        "Confirm the final validation.",
+        "Address the remaining work.",
+        "Record the outcome.",
+    ],
+)
+def test_calibrated_anaphoric_follow_ups_remain_one_episode(follow_up: str) -> None:
+    result = segment_session(bundle("Inspect the implementation.", follow_up), lifecycle())
+    assert result.boundaries[0].decision is BoundaryDecision.NO_SPLIT
+    assert result.segmentation_version == "segmentation-v2" == SEGMENTATION_VERSION
+
+
+def test_calibration_does_not_turn_generic_reporting_into_a_new_task() -> None:
+    result = segment_session(
+        bundle("Record the outcome.", "Report the remaining work."), lifecycle()
+    )
+    assert result.boundaries[0].decision is BoundaryDecision.AMBIGUOUS
 
 
 def test_weak_topic_shift_merges_with_ambiguity() -> None:

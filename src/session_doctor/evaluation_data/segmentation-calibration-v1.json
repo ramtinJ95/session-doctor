@@ -1,0 +1,1567 @@
+{
+  "annotation_protocol_version": "annotation-protocol-v1",
+  "audit_selection_seed": "boundary-pilot-audit-seed-v1",
+  "boundary_reference_protocol_version": "boundary-reference-v1",
+  "boundary_references": [
+    {
+      "answer": "no_split",
+      "audit_selection": "not_selected",
+      "boundary_reference_id": "4d7b284aee22a4530be5c9a0fff22951996c5e847dd9e7a222d185c390e3b5aa",
+      "candidate_decision": "no_split",
+      "human_review": null,
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_06abd69894f1fe2f13e63613",
+            "ev_30300e4eb4f69ab5243445a6"
+          ],
+          "judge_annotation_id": "def393ba78cf77c7d3a6e33675a2ab72a34cd73f569741ade3db229c74c1f886",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "The right turn explicitly asks to continue the requested operation's output."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_06abd69894f1fe2f13e63613",
+            "ev_ddf4d7e09c69fdd95634f4c8",
+            "ev_30300e4eb4f69ab5243445a6"
+          ],
+          "judge_annotation_id": "7da237c6c10c63bd529f39afbff91e460a337d0d2fd1b96743b5cb5f175e159e",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "The second turn explicitly continues the prior operation after a tool result, so it stays within the same task."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_06abd69894f1fe2f13e63613",
+            "ev_ddf4d7e09c69fdd95634f4c8",
+            "ev_30300e4eb4f69ab5243445a6"
+          ],
+          "judge_annotation_id": "3391156001bed388722b4b706dae0e6c4e28023a638b5d2469dc34a9f19fb664",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "Right turn 'Continue with the output' explicitly continues the operation started in the left turn after a failed tool result; no closure and no new-task marker."
+        }
+      ],
+      "left_user_event_id": "ev_06abd69894f1fe2f13e63613",
+      "packet_id": "03380760d9c56db3f82ad9f38c4b1e322ee4b7460a6e27836fa6f2535b111b9f",
+      "panel_answer": "no_split",
+      "panel_status": "unanimous",
+      "pilot_case_id": "boundary-pilot-018",
+      "resolution_status": "judge_consensus",
+      "right_user_event_id": "ev_30300e4eb4f69ab5243445a6",
+      "source_id": "pi-pilot",
+      "source_region": 1
+    },
+    {
+      "answer": "no_split",
+      "audit_selection": "not_selected",
+      "boundary_reference_id": "0af2fd7d71523d0cd08f9be86cd28c657784bb738263c866ab1a92b12805c7e6",
+      "candidate_decision": "no_split",
+      "human_review": null,
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_8366bbda607973e32438e148",
+            "ev_294e0f50ff071f8be9c4f896"
+          ],
+          "judge_annotation_id": "e5e11300af44a42825b1b069a8fc6dbd722a58ac019e6833f6285cd1a127fa12",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "“Resume the work” directly continues the existing investigation."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_8366bbda607973e32438e148",
+            "ev_f2f53990173b6636d4a4b26e",
+            "ev_294e0f50ff071f8be9c4f896"
+          ],
+          "judge_annotation_id": "d7789fd58a2eaea5461de69a84e5f1243b6eb35a4b69742e2f9d41539721206d",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "\"Resume the work\" is a direct continuation of investigating the prior command output, not a new task."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_8366bbda607973e32438e148",
+            "ev_f2f53990173b6636d4a4b26e",
+            "ev_294e0f50ff071f8be9c4f896"
+          ],
+          "judge_annotation_id": "e6c00acf120fa9c91fc4bb0efce6e8b9c0fe3eb0d703bea26a0a68bf34f6abac",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "'Resume the work' after a failed tool result during an investigation is a direct continuation of the same goal, not a distinct new task."
+        }
+      ],
+      "left_user_event_id": "ev_8366bbda607973e32438e148",
+      "packet_id": "0d9c85b94b66e4a76aa339c222717a004b9093be061bfe191e15e077346c9334",
+      "panel_answer": "no_split",
+      "panel_status": "unanimous",
+      "pilot_case_id": "boundary-pilot-010",
+      "resolution_status": "judge_consensus",
+      "right_user_event_id": "ev_294e0f50ff071f8be9c4f896",
+      "source_id": "claude-pilot",
+      "source_region": 1
+    },
+    {
+      "answer": "no_split",
+      "audit_selection": "not_selected",
+      "boundary_reference_id": "a53ab6464015752dd1836a5a4b1f39ec2f0de85318d4c3c1b8f304aa8a905083",
+      "candidate_decision": "ambiguous",
+      "human_review": null,
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_231a452b8a2c49594e707885",
+            "ev_b7e62db61defadc06aba59db"
+          ],
+          "judge_annotation_id": "b0f9d60cff007fd3cf9a33c6dbbe1958df1fd77ad81f8f7b8652a34ab93b4c45",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "Focused tests are a plausible next step in the ongoing output-driven work, with no separate-task marker."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_231a452b8a2c49594e707885",
+            "ev_b7e62db61defadc06aba59db"
+          ],
+          "judge_annotation_id": "bf63df769190d9d9bdea4e4d6ef2c5e8e3c504a9e3e2f83885c526f2825ff3bb",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "Running focused tests looks like the next step in the same ongoing workflow after continuing with prior output."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_231a452b8a2c49594e707885",
+            "ev_1b4870e892a0fdf7d48e74f4",
+            "ev_b7e62db61defadc06aba59db"
+          ],
+          "judge_annotation_id": "9a6bb70ab3bfa531970a1a5a8bbf6dd697afe8b3716d15d4f7062bf15f4aad1f",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "Left turn is a continuation request and only a compaction intervenes; 'Run the focused tests' reads as a verification step in the same ongoing work. A compaction alone does not evidence closure or a topic shift."
+        }
+      ],
+      "left_user_event_id": "ev_231a452b8a2c49594e707885",
+      "packet_id": "118f285397375a969e07f78069c90cac9f72aadf44c29d7b23b90006d1725789",
+      "panel_answer": "no_split",
+      "panel_status": "unanimous",
+      "pilot_case_id": "boundary-pilot-019",
+      "resolution_status": "judge_consensus",
+      "right_user_event_id": "ev_b7e62db61defadc06aba59db",
+      "source_id": "pi-pilot",
+      "source_region": 2
+    },
+    {
+      "answer": "no_split",
+      "audit_selection": "not_selected",
+      "boundary_reference_id": "8ddeb6abaa12eb5feb85fd23777d7001a174f8c7a1e19f947d9ad38e70f9f9da",
+      "candidate_decision": "no_split",
+      "human_review": null,
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_22bcb10d551f842fb468a021",
+            "ev_5ac8446d02abf837c2712ba4"
+          ],
+          "judge_annotation_id": "57df3d26b029f1a6b970caf9cba4009988e7bf78d2588c74df8f3ee1771e55bb",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "The request to finish remaining work continues the same change-validation effort."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_22bcb10d551f842fb468a021",
+            "ev_b5f2fc79147e40fcee54344c",
+            "ev_5ac8446d02abf837c2712ba4"
+          ],
+          "judge_annotation_id": "85a2fd9b1235b5638e8907b416442f3b254e39a2ebefbe7a62b7d7631d773ad8",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "After validation hits an error, the user asks to finish remaining work, which is continuing the same task."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_22bcb10d551f842fb468a021",
+            "ev_b5f2fc79147e40fcee54344c",
+            "ev_5ac8446d02abf837c2712ba4"
+          ],
+          "judge_annotation_id": "20de909548ee6efffa12ddd2877e5c1766b1e66df830d0d3f4cefafcca9b716b",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "'Finish the remaining work' after a validation attempt that errored explicitly continues the same task; remaining-work phrasing ties directly back to the ongoing goal."
+        }
+      ],
+      "left_user_event_id": "ev_22bcb10d551f842fb468a021",
+      "packet_id": "12a7171d25823bbb953de6d692e8a0b77f3394f2194456608cd1ae8a7c09b680",
+      "panel_answer": "no_split",
+      "panel_status": "unanimous",
+      "pilot_case_id": "boundary-pilot-008",
+      "resolution_status": "judge_consensus",
+      "right_user_event_id": "ev_5ac8446d02abf837c2712ba4",
+      "source_id": "codex-pilot",
+      "source_region": 7
+    },
+    {
+      "answer": "no_split",
+      "audit_selection": "not_selected",
+      "boundary_reference_id": "d466f5e86949cf1012cd578c13954ed41425023f8ef0fb73f5754241b61c5da7",
+      "candidate_decision": "no_split",
+      "human_review": null,
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_c9de498d423f43be9866454d",
+            "ev_528e6da3af30e22949b86bb8"
+          ],
+          "judge_annotation_id": "3cd87d76c9a4c94e1ab5901f1a4375c32ed60da7933f0f18c121dc96e670d408",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "The right turn asks to continue with output from the parser command."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_c9de498d423f43be9866454d",
+            "ev_4ba013d932f214724c5cabdd",
+            "ev_528e6da3af30e22949b86bb8"
+          ],
+          "judge_annotation_id": "266ad8be2d98d6b65c62106b4a2717fac01364c0aaf7fdbe6a7feb9b1b665c7d",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "The second turn asks to continue with the parser command's output after it runs, so this is the same task."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_c9de498d423f43be9866454d",
+            "ev_4ba013d932f214724c5cabdd",
+            "ev_528e6da3af30e22949b86bb8"
+          ],
+          "judge_annotation_id": "a8ef172a1719115f2444989bf3448ff69c8212bb7f43bee23485ad26fa8d8514",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "'Continue with the output' after running the parser command (which exited nonzero) is a continuation/retry of the same work, not a new task."
+        }
+      ],
+      "left_user_event_id": "ev_c9de498d423f43be9866454d",
+      "packet_id": "293cc49ecc7c45740c8da2eb628fc59fd25a92aa9134f97bd326b08d48734016",
+      "panel_answer": "no_split",
+      "panel_status": "unanimous",
+      "pilot_case_id": "boundary-pilot-002",
+      "resolution_status": "judge_consensus",
+      "right_user_event_id": "ev_528e6da3af30e22949b86bb8",
+      "source_id": "codex-pilot",
+      "source_region": 1
+    },
+    {
+      "answer": "no_split",
+      "audit_selection": "selected",
+      "boundary_reference_id": "7e18e714c053031d78581027a2a291c620142862764802757957f7d47b3f50f1",
+      "candidate_decision": "no_split",
+      "human_review": {
+        "answer": "no_split",
+        "evidence_ids": [
+          "ev_b95bcf8e92add9e4cacf90c8",
+          "ev_ec357f6a941c6f10bc37f8ab"
+        ],
+        "rationale": "Maintainer adjudicated both turns as one continuing task.",
+        "review_kind": "consensus_audit",
+        "reviewer_identity": "repository-maintainer"
+      },
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_b95bcf8e92add9e4cacf90c8",
+            "ev_ec357f6a941c6f10bc37f8ab"
+          ],
+          "judge_annotation_id": "e1e4b310edf3d8443ab4f2f60d7578e3b8693e8aa37bfb7fe64539f56c78b2d3",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "Checking the result is a direct continuation of resumed work."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_b95bcf8e92add9e4cacf90c8",
+            "ev_ec357f6a941c6f10bc37f8ab"
+          ],
+          "judge_annotation_id": "784540fb8e69a3d606cdc0eac75e0e67d17fd7a14bb444638e6026fec5c72608",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "\"Check the result\" is a follow-up within the resumed work rather than a distinct new request."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_b95bcf8e92add9e4cacf90c8",
+            "ev_cd6fbea2bab14700734f1122",
+            "ev_ec357f6a941c6f10bc37f8ab"
+          ],
+          "judge_annotation_id": "59337b99acfebf33173636669b05b3bcc8e764f49b1085837d2469991d70d5e8",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "'Check the result' immediately after resuming work and a delegated tool call reviews the outcome of the same in-flight work; no closure or new-task marker."
+        }
+      ],
+      "left_user_event_id": "ev_b95bcf8e92add9e4cacf90c8",
+      "packet_id": "4845b34a9ca720e5c78db151d3d2480ad4e9c6f978aeed279d98c378be7b5f18",
+      "panel_answer": "no_split",
+      "panel_status": "unanimous",
+      "pilot_case_id": "boundary-pilot-011",
+      "resolution_status": "human_resolved",
+      "right_user_event_id": "ev_ec357f6a941c6f10bc37f8ab",
+      "source_id": "claude-pilot",
+      "source_region": 2
+    },
+    {
+      "answer": "no_split",
+      "audit_selection": "not_selected",
+      "boundary_reference_id": "640507895e4e73c33dc12fa5f8259266d5a0b26ce93575d543301c5f9f68f7af",
+      "candidate_decision": "ambiguous",
+      "human_review": null,
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_40066693ce9536766e7d4754",
+            "ev_ca5aa0bd478d454e954d5a5d"
+          ],
+          "judge_annotation_id": "67629fa1e164603f19287a56d03c12c03b583b4dc0a39966f0553ef0d954f540",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "Running the requested operation plausibly follows repository inspection within one workflow; no new-task marker appears."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_40066693ce9536766e7d4754",
+            "ev_79a01a7f45906c146617d0d0",
+            "ev_ca5aa0bd478d454e954d5a5d"
+          ],
+          "judge_annotation_id": "c83004a416fe9342ce47f1a15c3906780f1e1b5d89b6339e71cc71954c9cede7",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "Running the requested operation appears to follow the repository-state inspection as part of one workflow, with no clear closure or separation."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_40066693ce9536766e7d4754",
+            "ev_79a01a7f45906c146617d0d0",
+            "ev_ca5aa0bd478d454e954d5a5d"
+          ],
+          "judge_annotation_id": "6455e87c89916776a21045caf1a9e0408b8ebdbc38b110883670e47f200994a3",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "'Run the requested operation' is anaphoric — it refers to an operation already established in context, following an inspect-then-act flow. Tool success alone does not prove a split and there is no new-task marker."
+        }
+      ],
+      "left_user_event_id": "ev_40066693ce9536766e7d4754",
+      "packet_id": "4cf95d13da30af426fcbd01282ad7b6cd38a85ea5aa1f9ac805f920b8967a68e",
+      "panel_answer": "no_split",
+      "panel_status": "unanimous",
+      "pilot_case_id": "boundary-pilot-017",
+      "resolution_status": "judge_consensus",
+      "right_user_event_id": "ev_ca5aa0bd478d454e954d5a5d",
+      "source_id": "pi-pilot",
+      "source_region": 0
+    },
+    {
+      "answer": "no_split",
+      "audit_selection": "not_selected",
+      "boundary_reference_id": "ef44293f1402db591e03d74ff3386cc4f4f355631530e23575e42aafca4eb9de",
+      "candidate_decision": "ambiguous",
+      "human_review": null,
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_afcbe3ba02d088b77ead0dbf",
+            "ev_c925426f12ff4de8880811b3"
+          ],
+          "judge_annotation_id": "ca451ae4ac20cc8d15a89fac8e7f2c4db3c847f842795338a5803859071b816f",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "The parser command is a plausible investigative step for the failing test, not a distinct stated goal."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_afcbe3ba02d088b77ead0dbf",
+            "ev_c925426f12ff4de8880811b3"
+          ],
+          "judge_annotation_id": "76490609e478360b15e7ffaf38203e8a669b5239e4b9da19065e3d6896c83146",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "Running the parser command reads like the next debugging step after inspecting the failing test, not a separate task."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_afcbe3ba02d088b77ead0dbf",
+            "ev_b660dc34880ad94ec3cdcc95",
+            "ev_c925426f12ff4de8880811b3"
+          ],
+          "judge_annotation_id": "0cdae57b43fc1ad70ef120994159bba54d841a1b664dd258197b01006fbdea05",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "Running 'the parser command' (definite reference) right after inspecting a failing test is a coherent step in the same debugging loop; a zero exit code alone does not establish closure plus a strong topic shift."
+        }
+      ],
+      "left_user_event_id": "ev_afcbe3ba02d088b77ead0dbf",
+      "packet_id": "4e4fd099def6a67f0c424874eb044befb080aa1255ab15533fa1a84864c66146",
+      "panel_answer": "no_split",
+      "panel_status": "unanimous",
+      "pilot_case_id": "boundary-pilot-001",
+      "resolution_status": "judge_consensus",
+      "right_user_event_id": "ev_c925426f12ff4de8880811b3",
+      "source_id": "codex-pilot",
+      "source_region": 0
+    },
+    {
+      "answer": "no_split",
+      "audit_selection": "not_selected",
+      "boundary_reference_id": "25cb6d05dbca3de541ffc1f63a27f2cd9063ce9fb63160b683daeeb3df692163",
+      "candidate_decision": "no_split",
+      "human_review": null,
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_70eaa4a5ec9eb87659c658d2",
+            "ev_bb1d3cdf23a4bbc7812afb36"
+          ],
+          "judge_annotation_id": "2f41db7680c207e4e425a47d4568bf2ce3b6a75b56d2039916bd95491ef5e7c8",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "Reviewing the latest output continues the work from the prior continuation request."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_70eaa4a5ec9eb87659c658d2",
+            "ev_bb1d3cdf23a4bbc7812afb36"
+          ],
+          "judge_annotation_id": "f7950263cef2a4c00c15eac379d31772515cad546a376606e2457600c71dd47b",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "Both turns are continuation-oriented; reviewing output is part of continuing from the current state."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_70eaa4a5ec9eb87659c658d2",
+            "ev_02e80a1e18cf117b88dfb2fb",
+            "ev_bb1d3cdf23a4bbc7812afb36"
+          ],
+          "judge_annotation_id": "4e8a2697e5c6f90f6ed7e7c34bfa47f0611241432e7b4e60711c9a311c4d4899",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "'Review the latest output' after a continuation request and an intervening read reviews the same ongoing work; no closure or topic shift."
+        }
+      ],
+      "left_user_event_id": "ev_70eaa4a5ec9eb87659c658d2",
+      "packet_id": "57232f41090d7fa38d1c722611bcc92b89091c6e07740d9921a709cbb984fd6c",
+      "panel_answer": "no_split",
+      "panel_status": "unanimous",
+      "pilot_case_id": "boundary-pilot-014",
+      "resolution_status": "judge_consensus",
+      "right_user_event_id": "ev_bb1d3cdf23a4bbc7812afb36",
+      "source_id": "claude-pilot",
+      "source_region": 5
+    },
+    {
+      "answer": "no_split",
+      "audit_selection": "not_selected",
+      "boundary_reference_id": "7b04a7e8ca459c1408352b4a6c6c679500f5d8dd517790acca47ac027ab0717a",
+      "candidate_decision": "ambiguous",
+      "human_review": null,
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_5ccd8f212c849c640d5aae42",
+            "ev_4a7008d5322fbb8a3f458a58",
+            "ev_a8e79ddeefe1ca28499f0117"
+          ],
+          "judge_annotation_id": "6142a535505388e21aab30f99a0a112d7294b465cdcda6a6fa6084e278b4b952",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "Schema inspection was already identified as the next step, so the right turn continues the same work."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_5ccd8f212c849c640d5aae42",
+            "ev_a8e79ddeefe1ca28499f0117",
+            "ev_4a7008d5322fbb8a3f458a58"
+          ],
+          "judge_annotation_id": "61a9aa54ae86501d707359f2582ae601669bca492b62588a58fc1e744aec4b83",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "The assistant was already proceeding to inspect the schema, and the user's schema request remains within that same thread."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_5ccd8f212c849c640d5aae42",
+            "ev_a8e79ddeefe1ca28499f0117",
+            "ev_f0c3111596614f6615612833",
+            "ev_4a7008d5322fbb8a3f458a58"
+          ],
+          "judge_annotation_id": "6e83ddaba36ff151a5beb54fdd02dbea63d815bbbc8f9c89263a5db14533716a",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "The assistant had already announced 'I will inspect the schema next'; the user's 'Inspect the schema' directs the previously planned next step of the same work rather than starting a distinct task."
+        }
+      ],
+      "left_user_event_id": "ev_5ccd8f212c849c640d5aae42",
+      "packet_id": "5ac03b16622ab974d48732525236ec5e74717618dde5a61e78b6adb0ed0dde68",
+      "panel_answer": "no_split",
+      "panel_status": "unanimous",
+      "pilot_case_id": "boundary-pilot-012",
+      "resolution_status": "judge_consensus",
+      "right_user_event_id": "ev_4a7008d5322fbb8a3f458a58",
+      "source_id": "claude-pilot",
+      "source_region": 3
+    },
+    {
+      "answer": "no_split",
+      "audit_selection": "not_selected",
+      "boundary_reference_id": "3e52117aebb0e6b5aeccfb74a1f45819432537325f8501ed1f57d3ea7c3d31f9",
+      "candidate_decision": "no_split",
+      "human_review": null,
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_28ea512e1136adcc2bf0fc01",
+            "ev_53e7884774b7a8f842405fd0"
+          ],
+          "judge_annotation_id": "3b0c8f0eda079a26e6cb7a40d534c4389f86c1ae4e76479ed8a9c956bdb51a90",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "Addressing remaining work directly continues the final-validation effort."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_28ea512e1136adcc2bf0fc01",
+            "ev_ce36b76768bc670624a2bb73",
+            "ev_53e7884774b7a8f842405fd0"
+          ],
+          "judge_annotation_id": "2606e335af7296463ad7fbe83abe14f0d7568be804628d7a2705fe3a27909605",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "Addressing remaining work directly follows failed final validation, so it continues the same task."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_28ea512e1136adcc2bf0fc01",
+            "ev_ce36b76768bc670624a2bb73",
+            "ev_53e7884774b7a8f842405fd0"
+          ],
+          "judge_annotation_id": "b51de04fe18edb003f8174e478fe0d9b2b1ebb7a1830c8cb3fa8456242483cbf",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "'Address the remaining work' after a validation attempt that errored explicitly continues the same goal; remaining-work phrasing binds it to the ongoing task."
+        }
+      ],
+      "left_user_event_id": "ev_28ea512e1136adcc2bf0fc01",
+      "packet_id": "71865a7dbb6a19f811caa1acc1afa254dcc88d01b054294a8d815ecb51873d92",
+      "panel_answer": "no_split",
+      "panel_status": "unanimous",
+      "pilot_case_id": "boundary-pilot-016",
+      "resolution_status": "judge_consensus",
+      "right_user_event_id": "ev_53e7884774b7a8f842405fd0",
+      "source_id": "claude-pilot",
+      "source_region": 7
+    },
+    {
+      "answer": "no_split",
+      "audit_selection": "not_selected",
+      "boundary_reference_id": "1bdef5b08a023b0e075c14e17760b2b7cac40d38e6d9fdafbb187ed543c820c3",
+      "candidate_decision": "no_split",
+      "human_review": null,
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_e4650b424808f9189187cd99",
+            "ev_f445d6050f575dc320eadeaf"
+          ],
+          "judge_annotation_id": "356b6481c49f2ddb63afe69165c813d18a38f1c4e5422006023e5692ac33c2cf",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "“Continue from here” is an explicit continuation rather than a new task."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_e4650b424808f9189187cd99",
+            "ev_a603fe7f0c912ae799704c5b",
+            "ev_f445d6050f575dc320eadeaf"
+          ],
+          "judge_annotation_id": "fd90a7189397f4747e45207b39b752bba625fe40cb377f6da56e503d8d92ad76",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "\"Continue from here\" explicitly carries forward the documentation/schema inspection flow."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_e4650b424808f9189187cd99",
+            "ev_a603fe7f0c912ae799704c5b",
+            "ev_f445d6050f575dc320eadeaf"
+          ],
+          "judge_annotation_id": "5f42d759919feaf0dbbff898e7153f0e2cb969e9b2f5f51647b3429e3f86c020",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "'Continue from here' is an explicit continuation, and the intervening assistant message announces the next step of the same plan; no new-task marker or closure."
+        }
+      ],
+      "left_user_event_id": "ev_e4650b424808f9189187cd99",
+      "packet_id": "7ebd6135721b102a5878d42eeaa74dec4ec1ed1119b15bbf8d002024cff3eabc",
+      "panel_answer": "no_split",
+      "panel_status": "unanimous",
+      "pilot_case_id": "boundary-pilot-021",
+      "resolution_status": "judge_consensus",
+      "right_user_event_id": "ev_f445d6050f575dc320eadeaf",
+      "source_id": "pi-pilot",
+      "source_region": 4
+    },
+    {
+      "answer": "no_split",
+      "audit_selection": "not_selected",
+      "boundary_reference_id": "029acdd75cf6bf12a53367c486bb53739370bc3872a1a206caa934931328e272",
+      "candidate_decision": "no_split",
+      "human_review": null,
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_1c1803514bd31fa6f4444696",
+            "ev_8427db0703abe30a49f6e272"
+          ],
+          "judge_annotation_id": "92abbf194f4c833c8824f96e22f6295a0dd5a9a51fc1917d01201165d3aa7e7c",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "The right turn explicitly continues from the schema-inspection step."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_1c1803514bd31fa6f4444696",
+            "ev_cb86a5addf830dfb7d64b6f3",
+            "ev_8427db0703abe30a49f6e272"
+          ],
+          "judge_annotation_id": "57ffc9bbf3e61fa0bc2ad9ceaaac0f199bb40afa5a3750cd0878e01aeec88c10",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "The user asks to continue immediately after schema inspection is underway, so this is the same task."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_1c1803514bd31fa6f4444696",
+            "ev_cb86a5addf830dfb7d64b6f3",
+            "ev_8427db0703abe30a49f6e272"
+          ],
+          "judge_annotation_id": "5bb575084335f6dd967f1a7c6f42c7641cdb3c9f2eaeccf1227cb40ffd19f165",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "'Continue from here' directly continues the schema inspection the assistant was mid-way through announcing; explicit continuation language rules out a split."
+        }
+      ],
+      "left_user_event_id": "ev_1c1803514bd31fa6f4444696",
+      "packet_id": "88cfecfc6db8480dda8c379fa31b58359e79cdb89c7f8034055dee236f3383c9",
+      "panel_answer": "no_split",
+      "panel_status": "unanimous",
+      "pilot_case_id": "boundary-pilot-005",
+      "resolution_status": "judge_consensus",
+      "right_user_event_id": "ev_8427db0703abe30a49f6e272",
+      "source_id": "codex-pilot",
+      "source_region": 4
+    },
+    {
+      "answer": "no_split",
+      "audit_selection": "selected",
+      "boundary_reference_id": "28cf45da8a536af70f0af15d96b0c2f8dfecd6e51eae7ac2a316781b38fb72d4",
+      "candidate_decision": "no_split",
+      "human_review": {
+        "answer": "no_split",
+        "evidence_ids": [
+          "ev_acf3f18891dbb61ae5c8e6bd",
+          "ev_6ffa48dfedc1a7e4f4b552da"
+        ],
+        "rationale": "Maintainer adjudicated both turns as one continuing task.",
+        "review_kind": "consensus_audit",
+        "reviewer_identity": "repository-maintainer"
+      },
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_acf3f18891dbb61ae5c8e6bd",
+            "ev_6ffa48dfedc1a7e4f4b552da"
+          ],
+          "judge_annotation_id": "2b6f189686d4a4a34542c6ddda3d05b6abe14ebd2172e913beace0a00d12d44c",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "Validation naturally follows review of the latest output within the same change workflow."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_acf3f18891dbb61ae5c8e6bd",
+            "ev_6ffa48dfedc1a7e4f4b552da"
+          ],
+          "judge_annotation_id": "d9ccefa94d5f23b276b746937333ca51d9ef7dd9b5ef697919226414b9cd0c22",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "Validating the change is a natural follow-up to reviewing the latest output, with no strong boundary marker."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_acf3f18891dbb61ae5c8e6bd",
+            "ev_92ad5aea7d93f8fffd954e5d",
+            "ev_6ffa48dfedc1a7e4f4b552da"
+          ],
+          "judge_annotation_id": "8825dce768819226fa8f7159ad8895568b3105bced48431106e7e8f17976c3ac",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "'Validate the change' after reviewing the latest output is a verification step on the same change under discussion; review-then-validate is one continuous workflow."
+        }
+      ],
+      "left_user_event_id": "ev_acf3f18891dbb61ae5c8e6bd",
+      "packet_id": "89f3bc2a29983eac08d2497e541f1af62c4946906fb21ff0d4efe20e129fe75a",
+      "panel_answer": "no_split",
+      "panel_status": "unanimous",
+      "pilot_case_id": "boundary-pilot-007",
+      "resolution_status": "human_resolved",
+      "right_user_event_id": "ev_6ffa48dfedc1a7e4f4b552da",
+      "source_id": "codex-pilot",
+      "source_region": 6
+    },
+    {
+      "answer": "no_split",
+      "audit_selection": "not_selected",
+      "boundary_reference_id": "a8051739d5c368f9c1def32878a39ab24db9e98027cc0f12eca8944e705233d2",
+      "candidate_decision": "no_split",
+      "human_review": null,
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_7b6b0ca855bd9f914ce18ea6",
+            "ev_0f25917f677d4fa36e942bab"
+          ],
+          "judge_annotation_id": "e8e563ab683fe7f00237d42f44aefd02555c27be3aabfebb4144f006f2f32f55",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "Reviewing the latest output is a direct continuation of the existing work."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_7b6b0ca855bd9f914ce18ea6",
+            "ev_0f25917f677d4fa36e942bab"
+          ],
+          "judge_annotation_id": "e72eaada19c5ee1a66af48e19c81d2e4d6d0657f02366be7291578347351a2b6",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "The second turn is just the next step while continuing from the current state."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_7b6b0ca855bd9f914ce18ea6",
+            "ev_0a328b2224e091de6857fd5f",
+            "ev_0f25917f677d4fa36e942bab"
+          ],
+          "judge_annotation_id": "3b466de8b3cde41135a84007354f3c534b3c506408439ea5ee6847529558489c",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "'Review the latest output' after 'Continue from here' and an intervening read reviews the ongoing work's output; clear continuation with no closure."
+        }
+      ],
+      "left_user_event_id": "ev_7b6b0ca855bd9f914ce18ea6",
+      "packet_id": "985501ffde90f6da5093b444bd46a5c6b52bea22bab96b3749c34bd232c6dc84",
+      "panel_answer": "no_split",
+      "panel_status": "unanimous",
+      "pilot_case_id": "boundary-pilot-006",
+      "resolution_status": "judge_consensus",
+      "right_user_event_id": "ev_0f25917f677d4fa36e942bab",
+      "source_id": "codex-pilot",
+      "source_region": 5
+    },
+    {
+      "answer": "split",
+      "audit_selection": "not_selected",
+      "boundary_reference_id": "3a436b4000466aa4c10850765d507161fe57440eeb4d4fec4e75c6820e73c84a",
+      "candidate_decision": "ambiguous",
+      "human_review": {
+        "answer": "split",
+        "evidence_ids": [
+          "ev_40d82e2eee027f5352e70be4",
+          "ev_eab5d7ba0015ca794fb36021"
+        ],
+        "rationale": "Maintainer adjudicated the right turn as a distinct task.",
+        "review_kind": "panel_dispute",
+        "reviewer_identity": "repository-maintainer"
+      },
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_40d82e2eee027f5352e70be4",
+            "ev_eab5d7ba0015ca794fb36021"
+          ],
+          "judge_annotation_id": "48fa8a01d73bfb5a41b8cb43d13840b86b69c28083d674b5c37adbfc40f6c63c",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "Documentation inspection can be a follow-up within the same testing workflow, and no separate-task marker is present."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_40d82e2eee027f5352e70be4",
+            "ev_eab5d7ba0015ca794fb36021"
+          ],
+          "judge_annotation_id": "89074f8b58aebb04d8fcc6494eb8dc662dcb8432f1894c75a9e43f18b2c0c5a3",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "Inspecting documentation after focused tests still fits the same ongoing investigation; there is no observed closure plus strong shift."
+        },
+        {
+          "answer": "ambiguous",
+          "evidence_ids": [
+            "ev_40d82e2eee027f5352e70be4",
+            "ev_50230b6c047b03f7fc693e31",
+            "ev_eab5d7ba0015ca794fb36021",
+            "ev_17d0764df4ce57df1fdf6583"
+          ],
+          "judge_annotation_id": "cf49371a95a895a8e4a49171468ba94e5df44e87e089045e8638fbd0f18f605e",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "A successful tool result suggests possible closure of the test run, and 'Inspect the documentation' shifts activity, but the shift is generic and the surrounding context (assistant planning schema inspection, prior continuations) conflicts. Evidence is too weak to confirm a split, so it conservatively merges as ambiguous."
+        }
+      ],
+      "left_user_event_id": "ev_40d82e2eee027f5352e70be4",
+      "packet_id": "ac4eb2caeef9411efff2168dc6bd932029c6edff2046f0b08e543edc5c0b2813",
+      "panel_answer": null,
+      "panel_status": "disputed",
+      "pilot_case_id": "boundary-pilot-020",
+      "resolution_status": "human_resolved",
+      "right_user_event_id": "ev_eab5d7ba0015ca794fb36021",
+      "source_id": "pi-pilot",
+      "source_region": 3
+    },
+    {
+      "answer": "no_split",
+      "audit_selection": "not_selected",
+      "boundary_reference_id": "203f20f2d26ad97e3737c255e7e92333db1a5807620a3b8902fbc5f0fbea51c2",
+      "candidate_decision": "no_split",
+      "human_review": null,
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_e8bdcaac02b96ebc12d0e5af",
+            "ev_efb2cedec032dd7e6c43edc4"
+          ],
+          "judge_annotation_id": "fe184eac8a85b0d8c30f4390caf7fc419f46f007cb65f844ab294085cdde1749",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "Final validation is a continuation of reviewing the current work's output."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_e8bdcaac02b96ebc12d0e5af",
+            "ev_efb2cedec032dd7e6c43edc4"
+          ],
+          "judge_annotation_id": "729e5d0f6faf3b8029ad98addb4e87fcb40d75038d98f22bf6511f2c358a1b8f",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "Confirming final validation follows output review as part of the same validation workflow."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_e8bdcaac02b96ebc12d0e5af",
+            "ev_5111bc33995eb6f9ad89d871",
+            "ev_efb2cedec032dd7e6c43edc4"
+          ],
+          "judge_annotation_id": "a8ded20b0d3d0b68c49d37de9a803335b0536866483d7a41d1a266c00a257b82",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "'Confirm the final validation' after reviewing the latest output is a closing verification of the same work; review-then-confirm continues one goal."
+        }
+      ],
+      "left_user_event_id": "ev_e8bdcaac02b96ebc12d0e5af",
+      "packet_id": "ad50e6825b9d126827f6d47969c003af48536b55ab4eacb224f3fd5547415daf",
+      "panel_answer": "no_split",
+      "panel_status": "unanimous",
+      "pilot_case_id": "boundary-pilot-015",
+      "resolution_status": "judge_consensus",
+      "right_user_event_id": "ev_efb2cedec032dd7e6c43edc4",
+      "source_id": "claude-pilot",
+      "source_region": 6
+    },
+    {
+      "answer": "no_split",
+      "audit_selection": "not_selected",
+      "boundary_reference_id": "e9a0137051dea85cfa9c872ef385370586924736bdcb61fdaee9fa233caaf546",
+      "candidate_decision": "ambiguous",
+      "human_review": null,
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_6ec1f171dd0a414cff5d1380",
+            "ev_ff7bbde5cddb748c38f87e19"
+          ],
+          "judge_annotation_id": "b5146362f86d2cd3f43b62248450f9e0c147d9e6c3c31da98f8d30be4603e523",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "Focused checks are a plausible next step based on the ongoing output, without a distinct-goal marker."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_6ec1f171dd0a414cff5d1380",
+            "ev_de44c980ec2e14b9901d80fb",
+            "ev_ff7bbde5cddb748c38f87e19"
+          ],
+          "judge_annotation_id": "a6e818ab27259cc3295c76648c0080a34491d5192b1f31c6119a3ebc165fbe49",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "After continuing with output and seeing an error, the request for focused checks remains within the same task."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_6ec1f171dd0a414cff5d1380",
+            "ev_de44c980ec2e14b9901d80fb",
+            "ev_ff7bbde5cddb748c38f87e19"
+          ],
+          "judge_annotation_id": "73cc23b8e6e9564720d9459ff552e64907f666dbc70a7ff605cfc2be1b7dc1df",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "After a continuation request the intervening tool result errored; 'Run the focused checks' responds to that failure as a retry/verification within the same task."
+        }
+      ],
+      "left_user_event_id": "ev_6ec1f171dd0a414cff5d1380",
+      "packet_id": "c4e334bc6e5e24ac69eddff625d7cd8e0cacb63bf792647c1b8beb83aa988e75",
+      "panel_answer": "no_split",
+      "panel_status": "unanimous",
+      "pilot_case_id": "boundary-pilot-003",
+      "resolution_status": "judge_consensus",
+      "right_user_event_id": "ev_ff7bbde5cddb748c38f87e19",
+      "source_id": "codex-pilot",
+      "source_region": 2
+    },
+    {
+      "answer": "split",
+      "audit_selection": "selected",
+      "boundary_reference_id": "4bf3c5ee3bfb5ef9e14623dbe86eb76ff1ada782f5551798009ab8bfaa811cad",
+      "candidate_decision": "ambiguous",
+      "human_review": {
+        "answer": "split",
+        "evidence_ids": [
+          "ev_50a0aaee359c37abeb92811b",
+          "ev_ac62a719cb092de0790f5ca0"
+        ],
+        "rationale": "Maintainer adjudicated the right turn as a distinct task.",
+        "review_kind": "consensus_audit",
+        "reviewer_identity": "repository-maintainer"
+      },
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_50a0aaee359c37abeb92811b",
+            "ev_ac62a719cb092de0790f5ca0"
+          ],
+          "judge_annotation_id": "cbb58b50e61068aaf46dbb4c7dca13377e5cd041aec97b3c7690d3bf408f743c",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "Reporting remaining work continues the same outcome-recording and status-reporting activity."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_50a0aaee359c37abeb92811b",
+            "ev_ac62a719cb092de0790f5ca0"
+          ],
+          "judge_annotation_id": "4b1717bdf65b20d5cb2c477908813d43f363de19583af0d3c2484b11f5f2ef63",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "Reporting remaining work is a direct continuation of recording the outcome, not a distinct task."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_50a0aaee359c37abeb92811b",
+            "ev_d00b39e91f2d1c980ea882d9",
+            "ev_ac62a719cb092de0790f5ca0"
+          ],
+          "judge_annotation_id": "4a0f98a3577a4849e8aa99342ee19df553462a3ba6ca05c53df20aa99b1887cb",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "'Report the remaining work' after 'Record the outcome' (with an intervening error) continues wrapping up the same task; remaining-work phrasing ties it to the ongoing goal."
+        }
+      ],
+      "left_user_event_id": "ev_50a0aaee359c37abeb92811b",
+      "packet_id": "c8a05168ad57d279da1a084a7fff8d5c91a903266515c838faafccad4bc959a8",
+      "panel_answer": "no_split",
+      "panel_status": "unanimous",
+      "pilot_case_id": "boundary-pilot-024",
+      "resolution_status": "human_resolved",
+      "right_user_event_id": "ev_ac62a719cb092de0790f5ca0",
+      "source_id": "pi-pilot",
+      "source_region": 7
+    },
+    {
+      "answer": "no_split",
+      "audit_selection": "not_selected",
+      "boundary_reference_id": "5e12a893a8a72cb6fefbc5f91b43e8521a663a95eaa5e6f8e48ff903ce04c39c",
+      "candidate_decision": "ambiguous",
+      "human_review": null,
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_a1c0cc766de6cdac93f142a0",
+            "ev_991fe90e16a1b1abc71b3288",
+            "ev_ee95a6c14e4277a34168d116"
+          ],
+          "judge_annotation_id": "b48244d49970744a5cf3a4f4dde3cd9802741c00b7b0ef7ef8db8ea84101c572",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "Schema inspection was already framed as the next step, so it remains part of the same workflow."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_a1c0cc766de6cdac93f142a0",
+            "ev_ee95a6c14e4277a34168d116",
+            "ev_991fe90e16a1b1abc71b3288"
+          ],
+          "judge_annotation_id": "0f34adefa4ed71b836fca7f0bec22517153391f3640cc9d8b6fcce68b02567c9",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "The right turn matches the already-established next step of schema inspection, so the task continues."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_a1c0cc766de6cdac93f142a0",
+            "ev_ee95a6c14e4277a34168d116",
+            "ev_a5dcca7003946b72730b2e34",
+            "ev_991fe90e16a1b1abc71b3288"
+          ],
+          "judge_annotation_id": "e8ebde4d192dff7c24f097a2e0243a71dd16a056563e29b6fed585e18a1642d1",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "The assistant had announced 'I will inspect the schema next' in context; the user's 'Inspect the schema' after the checks succeed directs the already-planned next step of the same work."
+        }
+      ],
+      "left_user_event_id": "ev_a1c0cc766de6cdac93f142a0",
+      "packet_id": "cfb627afa63a7c001f23d08287574c37fa3c751878160d4b16f7fb951a155c4d",
+      "panel_answer": "no_split",
+      "panel_status": "unanimous",
+      "pilot_case_id": "boundary-pilot-004",
+      "resolution_status": "judge_consensus",
+      "right_user_event_id": "ev_991fe90e16a1b1abc71b3288",
+      "source_id": "codex-pilot",
+      "source_region": 3
+    },
+    {
+      "answer": "no_split",
+      "audit_selection": "selected",
+      "boundary_reference_id": "ab26abe76b1983c6dd7b0d8b2ac39abd1b58d159165a38ca061f2a9531d8e1d0",
+      "candidate_decision": "no_split",
+      "human_review": {
+        "answer": "no_split",
+        "evidence_ids": [
+          "ev_92c1e7d452ff3456cf8da7ad",
+          "ev_0ac376df87b301fb30767bfd"
+        ],
+        "rationale": "Maintainer adjudicated both turns as one continuing task.",
+        "review_kind": "consensus_audit",
+        "reviewer_identity": "repository-maintainer"
+      },
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_92c1e7d452ff3456cf8da7ad",
+            "ev_0ac376df87b301fb30767bfd"
+          ],
+          "judge_annotation_id": "f9bf8f57438515eaf8ff1845ccae959bd6c6994d186338a3d65c67e4abf5bfea",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "“Continue from here” explicitly continues the schema-inspection work."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_92c1e7d452ff3456cf8da7ad",
+            "ev_3c8e83a8728fffb13949d5ae",
+            "ev_0ac376df87b301fb30767bfd"
+          ],
+          "judge_annotation_id": "3c9fa3b851e5638c8a493cc45874e49b65a1304d9c7f15b0ad038e6ba91a6aba",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "\"Continue from here\" explicitly preserves the current schema-inspection thread."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_92c1e7d452ff3456cf8da7ad",
+            "ev_3c8e83a8728fffb13949d5ae",
+            "ev_0ac376df87b301fb30767bfd"
+          ],
+          "judge_annotation_id": "48bc14c3f4394ab85a5e73a4bb17014e07544c312b231f9016ad58f7fe204e43",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "'Continue from here' is explicit continuation language following the assistant's stated plan to inspect the schema; no closure or new-task marker."
+        }
+      ],
+      "left_user_event_id": "ev_92c1e7d452ff3456cf8da7ad",
+      "packet_id": "e0c38cf26e12e779614eaf1e60bf89698a55cb9c048113f8aa6492a6e4113f32",
+      "panel_answer": "no_split",
+      "panel_status": "unanimous",
+      "pilot_case_id": "boundary-pilot-013",
+      "resolution_status": "human_resolved",
+      "right_user_event_id": "ev_0ac376df87b301fb30767bfd",
+      "source_id": "claude-pilot",
+      "source_region": 4
+    },
+    {
+      "answer": "no_split",
+      "audit_selection": "not_selected",
+      "boundary_reference_id": "de0e18726612cea707133fa29d85d32868df86e650e5fa7a7eeb317c41028960",
+      "candidate_decision": "ambiguous",
+      "human_review": null,
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_cfa0baca0e61c54554c486c5",
+            "ev_24e91e977d477509949f24f0"
+          ],
+          "judge_annotation_id": "6cd47ec2d01963e64c32f4e984dab2bf5b6d49e492edc21481ab65700c5d8635",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "Investigating command output plausibly follows reading the implementation within the same diagnostic goal."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_cfa0baca0e61c54554c486c5",
+            "ev_24e91e977d477509949f24f0"
+          ],
+          "judge_annotation_id": "ced561734fe92a322aea9b1bcb810a1a5b168966d5bf63f4e85a2227bb7b53f0",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "Investigating command output reads like a follow-on diagnostic step after reading the implementation."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_cfa0baca0e61c54554c486c5",
+            "ev_b14b4f3459bead79f13cc301",
+            "ev_24e91e977d477509949f24f0"
+          ],
+          "judge_annotation_id": "a3f4a4cdbed9687e7d53aa7f7c93eb6f45d60aae99b2598a39d7f8409b26bb28",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "'Investigate the command output' uses a definite reference to output already in context; reading the implementation then investigating its command output is one continuous investigation. Exit code 0 alone does not prove a split."
+        }
+      ],
+      "left_user_event_id": "ev_cfa0baca0e61c54554c486c5",
+      "packet_id": "e63a92f75d51b020e465b6dd171e77157e8693ccd3cecbfc785b21e22c5e4274",
+      "panel_answer": "no_split",
+      "panel_status": "unanimous",
+      "pilot_case_id": "boundary-pilot-009",
+      "resolution_status": "judge_consensus",
+      "right_user_event_id": "ev_24e91e977d477509949f24f0",
+      "source_id": "claude-pilot",
+      "source_region": 0
+    },
+    {
+      "answer": "no_split",
+      "audit_selection": "selected",
+      "boundary_reference_id": "2822262a55aa964b05643b1f7f608be84d47699cb77c2d3cf944d36842d90df4",
+      "candidate_decision": "no_split",
+      "human_review": {
+        "answer": "no_split",
+        "evidence_ids": [
+          "ev_ac853a2b25bfda62285d9d8f",
+          "ev_af4b37bd91d6cba75dc44c7a"
+        ],
+        "rationale": "Maintainer adjudicated both turns as one continuing task.",
+        "review_kind": "consensus_audit",
+        "reviewer_identity": "repository-maintainer"
+      },
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_ac853a2b25bfda62285d9d8f",
+            "ev_af4b37bd91d6cba75dc44c7a"
+          ],
+          "judge_annotation_id": "c5194675ffd54de493b90f5760ecdf76149b9e3638c95f515e6c2ec70cb2be7b",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "Reviewing the latest output directly continues the current work."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_ac853a2b25bfda62285d9d8f",
+            "ev_af4b37bd91d6cba75dc44c7a"
+          ],
+          "judge_annotation_id": "1e2791bed31630b5e6101291a2cebd68f32402c651601f70293cbf7cecabf36e",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "Reviewing the latest output is part of continuing from the current work, not a new task start."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_ac853a2b25bfda62285d9d8f",
+            "ev_98cd8b253f31e042ec0f908e",
+            "ev_af4b37bd91d6cba75dc44c7a"
+          ],
+          "judge_annotation_id": "bcd9727bc004cc8d364ec6fadf097a441d8213ded71da60d72b817c28bad7e98",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "'Review the latest output' after 'Continue from here' and an intervening read reviews the same ongoing work; clear continuation."
+        }
+      ],
+      "left_user_event_id": "ev_ac853a2b25bfda62285d9d8f",
+      "packet_id": "f66d37399632e0b5e58c0395001dea9c37175cd8c2c8e9e722a786d7f0ccfb28",
+      "panel_answer": "no_split",
+      "panel_status": "unanimous",
+      "pilot_case_id": "boundary-pilot-022",
+      "resolution_status": "human_resolved",
+      "right_user_event_id": "ev_af4b37bd91d6cba75dc44c7a",
+      "source_id": "pi-pilot",
+      "source_region": 5
+    },
+    {
+      "answer": "no_split",
+      "audit_selection": "not_selected",
+      "boundary_reference_id": "04c594fe08d8794af76adc19b69e1b0b7476ba269ea60d668f772d41f7f9a7df",
+      "candidate_decision": "no_split",
+      "human_review": null,
+      "judge_annotations": [
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_9f6b247417b12846d112c031",
+            "ev_b3c5db6e7280d3fd647b2a92"
+          ],
+          "judge_annotation_id": "125d657d8c2b889f80afba14e9ef5b14d683d6a93f2c265a1010ec3e5088a104",
+          "judge_model": "gpt-5.6-sol",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai-codex",
+          "rationale": "Recording the outcome is a follow-up to reviewing the same output, not a distinct task."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_9f6b247417b12846d112c031",
+            "ev_b3c5db6e7280d3fd647b2a92"
+          ],
+          "judge_annotation_id": "e1f603adfb23e0661ed6733519d7118540fe0d452f4a187c3d47ef2e05d28b2e",
+          "judge_model": "gpt-5.4",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "openai",
+          "rationale": "Recording the outcome follows from reviewing the latest output within the same workflow."
+        },
+        {
+          "answer": "no_split",
+          "evidence_ids": [
+            "ev_9f6b247417b12846d112c031",
+            "ev_3e642ade5bd00e9a3b73a35c",
+            "ev_b3c5db6e7280d3fd647b2a92"
+          ],
+          "judge_annotation_id": "2140555fcac2f0511e4865aa3a73720ca1aee488fa49914b9cd467727809736b",
+          "judge_model": "claude-fable-5",
+          "judge_prompt_version": "boundary-calibration-prompt-v1",
+          "judge_provider": "anthropic",
+          "rationale": "'Record the outcome' after reviewing the latest output is a wrap-up step for the same work being reviewed; review-then-record continues one goal."
+        }
+      ],
+      "left_user_event_id": "ev_9f6b247417b12846d112c031",
+      "packet_id": "f74b295a4958b557f3d1ba81c1f26d0f6b16bf1c4247ae6de934b546ab1670b2",
+      "panel_answer": "no_split",
+      "panel_status": "unanimous",
+      "pilot_case_id": "boundary-pilot-023",
+      "resolution_status": "judge_consensus",
+      "right_user_event_id": "ev_b3c5db6e7280d3fd647b2a92",
+      "source_id": "pi-pilot",
+      "source_region": 6
+    }
+  ],
+  "claim_limitations": [
+    "The synthetic pilot has no verifiable target-model identity and is ineligible for a blinded quality claim.",
+    "Family partitions do not exist before PR 12, so these data are neither checkpoint nor final-test evidence.",
+    "Split support is below any public quality-claim threshold; provisional rules preserve ambiguity instead of guessing."
+  ],
+  "claim_status": "development_only_identity_unverifiable",
+  "episode_evidence_input_version": "episode-evidence-input-v1",
+  "episode_evidence_inputs": [
+    {
+      "boundary_reference_ids": [
+        "de0e18726612cea707133fa29d85d32868df86e650e5fa7a7eeb317c41028960",
+        "0af2fd7d71523d0cd08f9be86cd28c657784bb738263c866ab1a92b12805c7e6",
+        "7e18e714c053031d78581027a2a291c620142862764802757957f7d47b3f50f1",
+        "7b04a7e8ca459c1408352b4a6c6c679500f5d8dd517790acca47ac027ab0717a",
+        "ab26abe76b1983c6dd7b0d8b2ac39abd1b58d159165a38ca061f2a9531d8e1d0",
+        "25cb6d05dbca3de541ffc1f63a27f2cd9063ce9fb63160b683daeeb3df692163",
+        "203f20f2d26ad97e3737c255e7e92333db1a5807620a3b8902fbc5f0fbea51c2",
+        "3e52117aebb0e6b5aeccfb74a1f45819432537325f8501ed1f57d3ea7c3d31f9"
+      ],
+      "episode_evidence_input_id": "677247bcb93e81808c3495f191d99308f6912726280cc31d04010ca302048845",
+      "intervening_event_ids": [
+        "claude-r0",
+        "claude-r1",
+        "claude-t2",
+        "claude-r3",
+        "claude-a4",
+        "claude-t5",
+        "claude-t6",
+        "claude-r7"
+      ],
+      "segmentation_version": "segmentation-v2",
+      "source_id": "claude-pilot",
+      "user_event_ids": [
+        "claude-u0",
+        "claude-u1",
+        "claude-u2",
+        "claude-u3",
+        "claude-u4",
+        "claude-u5",
+        "claude-u6",
+        "claude-u7",
+        "claude-u8"
+      ]
+    },
+    {
+      "boundary_reference_ids": [
+        "ef44293f1402db591e03d74ff3386cc4f4f355631530e23575e42aafca4eb9de",
+        "d466f5e86949cf1012cd578c13954ed41425023f8ef0fb73f5754241b61c5da7",
+        "e9a0137051dea85cfa9c872ef385370586924736bdcb61fdaee9fa233caaf546",
+        "5e12a893a8a72cb6fefbc5f91b43e8521a663a95eaa5e6f8e48ff903ce04c39c",
+        "029acdd75cf6bf12a53367c486bb53739370bc3872a1a206caa934931328e272",
+        "a8051739d5c368f9c1def32878a39ab24db9e98027cc0f12eca8944e705233d2",
+        "28cf45da8a536af70f0af15d96b0c2f8dfecd6e51eae7ac2a316781b38fb72d4",
+        "8ddeb6abaa12eb5feb85fd23777d7001a174f8c7a1e19f947d9ad38e70f9f9da"
+      ],
+      "episode_evidence_input_id": "a4ff256a240ec36d38e3c741db8725806708131dc9de14b5f45998fc07ee72b9",
+      "intervening_event_ids": [
+        "codex-r0",
+        "codex-r1",
+        "codex-r2",
+        "codex-r3",
+        "codex-a4",
+        "codex-t5",
+        "codex-t6",
+        "codex-r7"
+      ],
+      "segmentation_version": "segmentation-v2",
+      "source_id": "codex-pilot",
+      "user_event_ids": [
+        "codex-u0",
+        "codex-u1",
+        "codex-u2",
+        "codex-u3",
+        "codex-u4",
+        "codex-u5",
+        "codex-u6",
+        "codex-u7",
+        "codex-u8"
+      ]
+    },
+    {
+      "boundary_reference_ids": [
+        "640507895e4e73c33dc12fa5f8259266d5a0b26ce93575d543301c5f9f68f7af",
+        "4d7b284aee22a4530be5c9a0fff22951996c5e847dd9e7a222d185c390e3b5aa",
+        "a53ab6464015752dd1836a5a4b1f39ec2f0de85318d4c3c1b8f304aa8a905083"
+      ],
+      "episode_evidence_input_id": "3fada079d6dc0dfc0205bfbdc51d59e36648fc855d9fa1236f776ecb25d47f1c",
+      "intervening_event_ids": [
+        "pi-r0",
+        "pi-r1",
+        "pi-c2"
+      ],
+      "segmentation_version": "segmentation-v2",
+      "source_id": "pi-pilot",
+      "user_event_ids": [
+        "pi-u0",
+        "pi-u1",
+        "pi-u2",
+        "pi-u3"
+      ]
+    },
+    {
+      "boundary_reference_ids": [
+        "1bdef5b08a023b0e075c14e17760b2b7cac40d38e6d9fdafbb187ed543c820c3",
+        "2822262a55aa964b05643b1f7f608be84d47699cb77c2d3cf944d36842d90df4",
+        "04c594fe08d8794af76adc19b69e1b0b7476ba269ea60d668f772d41f7f9a7df"
+      ],
+      "episode_evidence_input_id": "ede7ca53bde8ca60eb2da23c75b564a7ca1ea8e6b55f536eb32143be33b7dda9",
+      "intervening_event_ids": [
+        "pi-a4",
+        "pi-t5",
+        "pi-t6"
+      ],
+      "segmentation_version": "segmentation-v2",
+      "source_id": "pi-pilot",
+      "user_event_ids": [
+        "pi-u4",
+        "pi-u5",
+        "pi-u6",
+        "pi-u7"
+      ]
+    },
+    {
+      "boundary_reference_ids": [],
+      "episode_evidence_input_id": "c4e1278c0ed867951eb306860f21d2fc9a31288823bf5fe155488ddc2dbc40a3",
+      "intervening_event_ids": [],
+      "segmentation_version": "segmentation-v2",
+      "source_id": "pi-pilot",
+      "user_event_ids": [
+        "pi-u8"
+      ]
+    }
+  ],
+  "evaluation_corpus_id": "boundary-pilot-v1",
+  "evaluation_corpus_sha256": "8ed600278dd5b4b2b6e2f58c554f3675ba1570c38cbb5c8b681ae4be395dd836",
+  "frozen_at": "2026-07-13T21:35:18Z",
+  "judge_input_sha256": "0389ed4bdafd2abe027fbc7752dc414f751505d117b166aaa536f9533e09df0d",
+  "judge_prompt_sha256": "f07ddc30d86edf61f0dfad129470fec5334c0df1b344f956974c6869941296db",
+  "judge_prompt_version": "boundary-calibration-prompt-v1",
+  "metrics": {
+    "audited_consensus_error_count": 1,
+    "audited_unanimous_count": 5,
+    "audited_unanimous_rate": "5/23",
+    "candidate": {
+      "ambiguity_coverage": "9/24",
+      "exact_agreement": "15/24",
+      "no_split_precision": "15/15",
+      "no_split_recall": "15/22",
+      "prediction_counts": {
+        "ambiguous": 9,
+        "no_split": 15,
+        "split": 0
+      },
+      "split_precision": "unavailable_no_predictions",
+      "split_recall": "0/2"
+    },
+    "disputed_panel_count": 1,
+    "judge_count_per_packet": 3,
+    "packet_count": 24,
+    "reference_answer_counts": {
+      "ambiguous": 0,
+      "no_split": 22,
+      "split": 2
+    },
+    "unanimous_panel_count": 23
+  },
+  "schema_version": "segmentation-calibration-v1",
+  "segmentation_version": "segmentation-v2",
+  "task_specific_packet_ids": []
+}
