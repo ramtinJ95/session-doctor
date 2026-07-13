@@ -128,7 +128,9 @@ transcripts, the primary analysis unit.
   snapshot, config, and component versions produce the same ordered analytical
   values. Cross-runtime byte-identical serialization is not required.
 - Default commands use the latest snapshot and expose its lifecycle. Finalized
-  aggregates include only eligible settled snapshots.
+  lifecycle eligibility is `terminal_observed | settled_unknown`, subject to
+  all other support/capability rules; `possibly_active | snapshot_incomplete`
+  remain provisional and ineligible.
 
 ### Evaluation And Model Comparison
 
