@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -282,9 +282,50 @@ def capture_bundle_members(
                     },
                 )
             )
+        if topology_inputs_changed(member_sources):
+            bundle_members = [
+                replace(
+                    member,
+                    member_capture_status=(
+                        "changed_during_capture"
+                        if member.captured_source is not None
+                        else member.member_capture_status
+                    ),
+                    evidence={
+                        **(member.evidence or {}),
+                        "topology_inputs_changed": True,
+                    },
+                )
+                for member in bundle_members
+            ]
     except Exception as exc:
         raise BundleMemberCaptureError(exc, tuple(bundle_members)) from exc
     return tuple(adapter_members), tuple(bundle_members)
+
+
+def topology_inputs_changed(
+    member_sources: tuple[tuple[SessionSource, str], ...],
+) -> bool:
+    topology_inputs = next(
+        (
+            source.metadata.get("capture_topology_input_sha256")
+            for source, _role in member_sources
+            if source.metadata.get("capture_topology_input_sha256") is not None
+        ),
+        None,
+    )
+    if not isinstance(topology_inputs, dict):
+        return False
+    for raw_path, expected_hash in topology_inputs.items():
+        if not isinstance(raw_path, str):
+            return True
+        try:
+            current_hash = hashlib.sha256(Path(raw_path).read_bytes()).hexdigest()
+        except OSError:
+            current_hash = None
+        if current_hash != expected_hash:
+            return True
+    return False
 
 
 def capture_status(primary_changed: bool, members: tuple[BundleMemberCapture, ...]) -> str:
