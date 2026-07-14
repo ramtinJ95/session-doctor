@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -12,6 +14,7 @@ from session_doctor.adapters.codex import CodexAdapter
 from session_doctor.cli import app
 from session_doctor.episode_workflow import (
     AnalysisInput,
+    _child_capture_reference,
     _materialize_source_episodes,
     _warning_anchor,
     analyze_session_episodes,
@@ -21,6 +24,7 @@ from session_doctor.schemas import (
     DelegationStatus,
     EpisodeAnalysis,
     EpisodeMembershipStatus,
+    EpisodeTopologyProjection,
     Message,
     NormalizedRole,
     RawEvent,
@@ -256,6 +260,157 @@ def test_claude_delegation_uses_spawn_provenance_without_synthetic_ordering(
             ).fetchall()
         }
     assert not any("continuation" in value or "family" in value for value in tables | columns)
+
+
+def test_parent_projection_uses_only_child_analysis_selected_for_current_capture(tmp_path) -> None:
+    fixture = tmp_path / "topology"
+    shutil.copytree(Path("tests/fixtures/claude/topology"), fixture)
+    database = tmp_path / "recaptured-delegation.duckdb"
+    ingest_args = [
+        "ingest",
+        "--agent",
+        "claude",
+        "--source",
+        str(fixture),
+        "--db",
+        str(database),
+    ]
+    assert runner.invoke(app, ingest_args).exit_code == 0
+    store = DuckDBStore(database)
+    with duckdb.connect(str(database), read_only=True) as connection:
+        root_row = connection.execute(
+            "SELECT session_id FROM sessions WHERE NOT is_sidechain"
+        ).fetchone()
+    assert root_row is not None
+    root_session_id = str(root_row[0])
+
+    first = analyze_session_episodes(store, root_session_id, database)
+    assert first.topology_projection is not None
+    first_child_analysis_id = first.topology_projection.delegations[0].child_analysis_identity
+    child_path = fixture / "project/session-root/subagents/agent-a.jsonl"
+    appended = {
+        "type": "assistant",
+        "sessionId": "session-root",
+        "uuid": "subagent-recaptured",
+        "timestamp": "2026-01-01T00:00:05Z",
+        "cwd": "/tmp/session-doctor",
+        "isSidechain": True,
+        "agentId": "agent-a",
+        "message": {
+            "role": "assistant",
+            "model": "claude-test",
+            "content": [{"type": "text", "text": "Recaptured result."}],
+            "stop_reason": "end_turn",
+        },
+    }
+    child_path.write_text(f"{child_path.read_text().rstrip()}\n{json.dumps(appended)}\n")
+    assert runner.invoke(app, ingest_args).exit_code == 0
+
+    current = analyze_session_episodes(store, root_session_id, database)
+
+    assert current.topology_projection is not None
+    assert len(current.topology_projection.delegations) == 1
+    current_delegation = current.topology_projection.delegations[0]
+    assert current_delegation.child_analysis_identity != first_child_analysis_id
+    with duckdb.connect(str(database), read_only=True) as connection:
+        delegation_count = connection.execute("SELECT count(*) FROM episode_delegations").fetchone()
+    assert delegation_count is not None
+    assert delegation_count[0] > len(current.topology_projection.delegations)
+
+
+def test_child_first_analysis_finalizes_parent_after_recursion_deferral(tmp_path) -> None:
+    database = tmp_path / "child-first.duckdb"
+    ingested = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "claude",
+            "--source",
+            "tests/fixtures/claude/topology",
+            "--db",
+            str(database),
+        ],
+    )
+    assert ingested.exit_code == 0, ingested.stdout
+    store = DuckDBStore(database)
+    with duckdb.connect(str(database), read_only=True) as connection:
+        child_row = connection.execute(
+            "SELECT session_id FROM sessions "
+            "WHERE is_sidechain AND metadata_json LIKE '%agent-tool-1%'"
+        ).fetchone()
+    assert child_row is not None
+    child_session_id = str(child_row[0])
+
+    child = analyze_session_episodes(store, child_session_id, database)
+
+    parent_analysis_id = child.delegations[0].parent_analysis_identity
+    assert parent_analysis_id is not None
+    with duckdb.connect(str(database), read_only=True) as connection:
+        projection_rows = connection.execute(
+            "SELECT payload_json FROM episode_topology_projections WHERE analysis_identity = ?",
+            [parent_analysis_id],
+        ).fetchall()
+    assert len(projection_rows) == 1
+    parent_projection = EpisodeTopologyProjection.model_validate_json(str(projection_rows[0][0]))
+    assert parent_projection.unavailable_children == []
+    assert [row.child_analysis_identity for row in parent_projection.delegations] == [
+        child.analysis_identity
+    ]
+
+
+def test_child_capture_reference_uses_session_source_in_multi_source_bundle(tmp_path) -> None:
+    database = tmp_path / "child-provenance.duckdb"
+    ingested = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "claude",
+            "--source",
+            "tests/fixtures/claude/topology",
+            "--db",
+            str(database),
+        ],
+    )
+    assert ingested.exit_code == 0, ingested.stdout
+    store = DuckDBStore(database)
+    with duckdb.connect(str(database), read_only=True) as connection:
+        child_row = connection.execute(
+            """
+            SELECT child.session_id, source.source_id, member.snapshot_id,
+                member.logical_source_id, bundle.primary_snapshot_id,
+                member.snapshot_bundle_id
+            FROM sessions AS child
+            JOIN session_sources AS source USING (source_id)
+            JOIN source_snapshots AS current ON current.snapshot_id = source.snapshot_id
+            JOIN snapshot_bundle_members AS member
+              ON member.logical_source_id = current.logical_source_id
+             AND member.member_role = 'subagent_transcript'
+            JOIN snapshot_bundles AS bundle
+              ON bundle.snapshot_bundle_id = member.snapshot_bundle_id
+            WHERE child.is_sidechain AND child.metadata_json LIKE '%agent-tool-1%'
+              AND member.snapshot_id != bundle.primary_snapshot_id
+            ORDER BY bundle.captured_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    assert child_row is not None
+    assert child_row[2] != child_row[4]
+    with duckdb.connect(str(database)) as connection:
+        connection.execute(
+            "UPDATE session_sources SET snapshot_id = ?, snapshot_bundle_id = ? "
+            "WHERE source_id = ?",
+            [child_row[2], child_row[5], child_row[1]],
+        )
+    child_source = store.load_snapshot_source(str(child_row[2]))
+    assert child_source is not None
+    latest_child = store.capture_source(child_source, b"newer unnormalized child capture")
+
+    with duckdb.connect(str(database), read_only=True) as connection:
+        reference = _child_capture_reference(connection, str(child_row[0]))
+
+    assert reference == (latest_child.snapshot_id, str(child_row[3]))
 
 
 def test_message_id_fallback_anchor_receives_episode_membership(tmp_path) -> None:
@@ -622,6 +777,134 @@ def test_pruning_unnormalized_predecessor_removes_downstream_episode_analysis(
     with duckdb.connect(str(store.database_path), read_only=True) as connection:
         assert connection.execute("SELECT count(*) FROM episode_analysis_runs").fetchone() == (0,)
         assert connection.execute("SELECT count(*) FROM episodes").fetchone() == (0,)
+
+
+def test_prune_includes_child_with_unavailable_parent_analysis_and_descendants(tmp_path) -> None:
+    store, parent_session_id = persisted_conflicting_bundle(tmp_path)
+    parent_source = SessionSource(
+        source_id="source-episodes",
+        agent_name=AgentName.CODEX,
+        source_path="/sessions/episodes.jsonl",
+    )
+    with duckdb.connect(str(store.database_path), read_only=True) as connection:
+        parent_snapshot_row = connection.execute(
+            "SELECT snapshot_id FROM session_sources WHERE source_id = ?",
+            [parent_source.source_id],
+        ).fetchone()
+    assert parent_snapshot_row is not None
+    parent_snapshot_id = str(parent_snapshot_row[0])
+
+    child_source = SessionSource(
+        source_id="prune-child-source",
+        agent_name=AgentName.CODEX,
+        source_path="/sessions/prune-child.jsonl",
+    )
+    child_capture = store.capture_source(child_source, b"prune child")
+    child_bundle = store.create_single_source_bundle(
+        child_source,
+        child_capture,
+        "prune-child-native",
+    )
+    store.record_lifecycle(child_bundle.snapshot_bundle_id, terminal_observed=True)
+    child_session_id = "prune-child-session"
+    store.insert_parsed_bundle(
+        child_source,
+        ParsedSessionBundle(
+            session=Session(
+                session_id=child_session_id,
+                source_id=child_source.source_id,
+                agent_name=AgentName.CODEX,
+                native_session_id="prune-child-native",
+                parent_session_id=parent_session_id,
+                is_sidechain=True,
+                metadata={
+                    "parent_link_status": "linked",
+                    "subagent_metadata": {"tool_use_id": "native-tool-first"},
+                },
+            ),
+            raw_events=[
+                RawEvent(
+                    event_id="prune-child-event",
+                    source_id=child_source.source_id,
+                    agent_name=AgentName.CODEX,
+                    record_index=0,
+                )
+            ],
+        ),
+        child_capture,
+        child_bundle,
+        adapter_version=CodexAdapter.version,
+        capability_declarations=CodexAdapter.capabilities,
+    )
+    grandchild_source = SessionSource(
+        source_id="prune-grandchild-source",
+        agent_name=AgentName.CODEX,
+        source_path="/sessions/prune-grandchild.jsonl",
+    )
+    grandchild_capture = store.capture_source(grandchild_source, b"prune grandchild")
+    grandchild_bundle = store.create_single_source_bundle(
+        grandchild_source,
+        grandchild_capture,
+        "prune-grandchild-native",
+    )
+    store.record_lifecycle(grandchild_bundle.snapshot_bundle_id, terminal_observed=True)
+    grandchild_session_id = "prune-grandchild-session"
+    store.insert_parsed_bundle(
+        grandchild_source,
+        ParsedSessionBundle(
+            session=Session(
+                session_id=grandchild_session_id,
+                source_id=grandchild_source.source_id,
+                agent_name=AgentName.CODEX,
+                native_session_id="prune-grandchild-native",
+                parent_session_id=child_session_id,
+                is_sidechain=True,
+                metadata={
+                    "parent_link_status": "linked",
+                    "subagent_metadata": {"tool_use_id": "missing-child-spawn"},
+                },
+            ),
+            raw_events=[
+                RawEvent(
+                    event_id="prune-grandchild-event",
+                    source_id=grandchild_source.source_id,
+                    agent_name=AgentName.CODEX,
+                    record_index=0,
+                )
+            ],
+        ),
+        grandchild_capture,
+        grandchild_bundle,
+        adapter_version=CodexAdapter.version,
+        capability_declarations=CodexAdapter.capabilities,
+    )
+    store.capture_source(parent_source, b"newer unnormalized parent capture")
+    child = analyze_session_episodes(store, child_session_id, store.database_path)
+    assert child.delegations[0].parent_session_id == parent_session_id
+    assert child.delegations[0].parent_analysis_identity is None
+    with duckdb.connect(str(store.database_path), read_only=True) as connection:
+        grandchild_analysis_row = connection.execute(
+            "SELECT child_analysis_identity FROM episode_delegations WHERE parent_session_id = ?",
+            [child_session_id],
+        ).fetchone()
+    assert grandchild_analysis_row is not None
+    grandchild_analysis_id = str(grandchild_analysis_row[0])
+
+    dependencies = store.snapshot_dependencies(parent_snapshot_id)
+
+    assert child.analysis_identity in dependencies.analysis_run_ids
+    assert grandchild_analysis_id in dependencies.analysis_run_ids
+    assert dependencies.derived_row_counts["episode_topology_projections"] >= 1
+    store.prune_snapshot(parent_snapshot_id, force=True)
+    with duckdb.connect(str(store.database_path), read_only=True) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM episode_analysis_runs WHERE analysis_identity = ?",
+            [child.analysis_identity],
+        ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT count(*) FROM episode_topology_projections WHERE analysis_identity = ?",
+            [child.analysis_identity],
+        ).fetchone() == (0,)
 
 
 def test_delegated_episode_without_parent_evidence_is_explicitly_unavailable(tmp_path) -> None:

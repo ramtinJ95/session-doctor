@@ -72,8 +72,9 @@ def analyze_session_episodes(
 ) -> EpisodeAnalysis:
     with write_connection(database_path) as connection, transaction(connection):
         cache: dict[str, tuple[EpisodeAnalysis, AnalysisInput]] = {}
-        analysis, _ = _analyze_session(connection, session_id, cache, ())
-        return analysis
+        _analyze_session(connection, session_id, cache, ())
+        _finalize_topology_projections(connection, cache)
+        return cache[session_id][0]
 
 
 def _analyze_session(
@@ -162,77 +163,112 @@ def _analyze_session(
             """,
             [session_id],
         ).fetchall()
+        for child_row in child_rows:
+            child_session_id = str(child_row[0])
+            if child_session_id in (*stack, session_id):
+                continue
+            try:
+                _analyze_session(
+                    connection,
+                    child_session_id,
+                    cache,
+                    (*stack, session_id),
+                )
+            except EpisodeAnalysisUnavailable:
+                pass
+    return persisted, selected
+
+
+def _finalize_topology_projections(
+    connection: duckdb.DuckDBPyConnection,
+    cache: dict[str, tuple[EpisodeAnalysis, AnalysisInput]],
+) -> None:
+    unavailable_reasons: dict[str, str] = {}
+    attempted_children: set[str] = set()
+    while True:
+        pending_children = sorted(
+            {
+                str(row[0])
+                for parent_session_id in cache
+                for row in connection.execute(
+                    """
+                    SELECT session_id FROM sessions
+                    WHERE parent_session_id = ? AND is_sidechain
+                    ORDER BY session_id
+                    """,
+                    [parent_session_id],
+                ).fetchall()
+                if str(row[0]) not in cache and str(row[0]) not in attempted_children
+            }
+        )
+        if not pending_children:
+            break
+        for child_session_id in pending_children:
+            attempted_children.add(child_session_id)
+            try:
+                _analyze_session(connection, child_session_id, cache, ())
+            except EpisodeAnalysisUnavailable as exc:
+                unavailable_reasons[child_session_id] = f"analysis_unavailable:{exc}"
+
+    for parent_session_id in sorted(cache):
+        analysis, selected = cache[parent_session_id]
+        child_rows = connection.execute(
+            """
+            SELECT session_id FROM sessions
+            WHERE parent_session_id = ? AND is_sidechain
+            ORDER BY session_id
+            """,
+            [parent_session_id],
+        ).fetchall()
+        topology_by_id = {row.delegation_id: row for row in analysis.delegations}
         unavailable_children: list[EpisodeUnavailableChild] = []
         for child_row in child_rows:
             child_session_id = str(child_row[0])
             child_snapshot_id, child_logical_source_id = _child_capture_reference(
                 connection, child_session_id
             )
-            if child_session_id in (*stack, session_id):
+            child_cached = cache.get(child_session_id)
+            if child_cached is None:
                 unavailable_children.append(
                     EpisodeUnavailableChild(
                         child_session_id=child_session_id,
-                        reason="native_parent_cycle",
+                        reason=unavailable_reasons[child_session_id],
                         snapshot_id=child_snapshot_id,
                         logical_source_id=child_logical_source_id,
                     )
                 )
                 continue
-            try:
-                child_analysis, _ = _analyze_session(
-                    connection,
-                    child_session_id,
-                    cache,
-                    (*stack, session_id),
+            child_analysis = child_cached[0]
+            child_delegations = [
+                row
+                for row in child_analysis.delegations
+                if row.parent_session_id == parent_session_id
+            ]
+            if child_delegations:
+                topology_by_id.update((row.delegation_id, row) for row in child_delegations)
+                continue
+            unavailable_children.append(
+                EpisodeUnavailableChild(
+                    child_session_id=child_session_id,
+                    reason=(
+                        "child_has_no_episode_delegation"
+                        if not child_analysis.episodes
+                        else "child_parent_topology_unavailable"
+                    ),
+                    snapshot_id=child_snapshot_id,
+                    logical_source_id=child_logical_source_id,
                 )
-            except EpisodeAnalysisUnavailable as exc:
-                unavailable_children.append(
-                    EpisodeUnavailableChild(
-                        child_session_id=child_session_id,
-                        reason=f"analysis_unavailable:{exc}",
-                        snapshot_id=child_snapshot_id,
-                        logical_source_id=child_logical_source_id,
-                    )
-                )
-            else:
-                has_parent_topology = any(
-                    row.parent_session_id == session_id for row in child_analysis.delegations
-                )
-                if not has_parent_topology:
-                    unavailable_children.append(
-                        EpisodeUnavailableChild(
-                            child_session_id=child_session_id,
-                            reason=(
-                                "child_has_no_episode_delegation"
-                                if not child_analysis.episodes
-                                else "child_parent_topology_unavailable"
-                            ),
-                            snapshot_id=child_snapshot_id,
-                            logical_source_id=child_logical_source_id,
-                        )
-                    )
-        topology_delegations = [
-            EpisodeDelegation.model_validate_json(str(row[0]))
-            for row in connection.execute(
-                """
-                SELECT payload_json FROM episode_delegations
-                WHERE child_analysis_identity = ?
-                   OR parent_analysis_identity = ?
-                   OR parent_session_id = ?
-                ORDER BY child_analysis_identity, delegation_order, delegation_id
-                """,
-                [analysis_identity, analysis_identity, session_id],
-            ).fetchall()
-        ]
-        topology_projection = _persist_topology_projection(
+            )
+        projection = _persist_topology_projection(
             connection,
-            analysis_identity,
-            topology_delegations,
+            analysis.analysis_identity,
+            list(topology_by_id.values()),
             unavailable_children,
         )
-        persisted = persisted.model_copy(update={"topology_projection": topology_projection})
-        cache[session_id] = (persisted, selected)
-    return persisted, selected
+        cache[parent_session_id] = (
+            analysis.model_copy(update={"topology_projection": projection}),
+            selected,
+        )
 
 
 def _persist_topology_projection(
@@ -334,9 +370,8 @@ def _child_capture_reference(
         SELECT latest.snapshot_id, latest.logical_source_id
         FROM sessions
         JOIN session_sources USING (source_id)
-        JOIN snapshot_bundles AS normalized_bundle USING (snapshot_bundle_id)
         JOIN source_snapshots AS normalized_snapshot
-          ON normalized_snapshot.snapshot_id = normalized_bundle.primary_snapshot_id
+          ON normalized_snapshot.snapshot_id = session_sources.snapshot_id
         JOIN source_snapshots AS latest
           ON latest.logical_source_id = normalized_snapshot.logical_source_id
         WHERE sessions.session_id = ?

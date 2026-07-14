@@ -253,20 +253,33 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
     downstream_lifecycle_bundle_ids = tuple(str(row[0]) for row in downstream_lifecycle_rows)
     semantic_analysis_rows = connection.execute(
         """
-            WITH RECURSIVE affected (analysis_identity) AS (
-                SELECT a.analysis_identity
+            WITH RECURSIVE affected (analysis_identity, session_id) AS (
+                SELECT a.analysis_identity, episode.session_id
                 FROM semantic_analysis_runs AS a
                 JOIN lifecycle_observations AS l USING (lifecycle_observation_id)
+                LEFT JOIN episode_analysis_runs AS episode USING (analysis_identity)
                 WHERE l.snapshot_bundle_id IN (SELECT unnest(?))
                 UNION
-                SELECT delegation.child_analysis_identity
+                SELECT delegation.child_analysis_identity, child.session_id
                 FROM episode_delegations AS delegation
+                JOIN episode_analysis_runs AS child
+                  ON child.analysis_identity = delegation.child_analysis_identity
+                WHERE delegation.parent_session_id IN (SELECT unnest(?))
+                UNION
+                SELECT delegation.child_analysis_identity, child.session_id
+                FROM episode_delegations AS delegation
+                JOIN episode_analysis_runs AS child
+                  ON child.analysis_identity = delegation.child_analysis_identity
                 JOIN affected
                   ON delegation.parent_analysis_identity = affected.analysis_identity
+                  OR delegation.parent_session_id = affected.session_id
             )
             SELECT DISTINCT analysis_identity FROM affected ORDER BY analysis_identity
             """,
-        [list((*bundle_ids, *downstream_lifecycle_bundle_ids))],
+        [
+            list((*bundle_ids, *downstream_lifecycle_bundle_ids)),
+            list(session_ids),
+        ],
     ).fetchall()
     analysis_run_ids = tuple(str(row[0]) for row in semantic_analysis_rows)
     topology_projection_rows = (
