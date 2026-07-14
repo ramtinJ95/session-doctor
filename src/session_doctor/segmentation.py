@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import unicodedata
 from collections.abc import Iterable
 
+from pydantic import BaseModel
+
 from session_doctor.adapters import ParsedSessionBundle
 from session_doctor.ids import stable_id
 from session_doctor.schemas import (
+    AnalysisAnchor,
     BoundaryDecision,
     BoundaryReason,
     EpisodeAnalysis,
@@ -14,6 +19,7 @@ from session_doctor.schemas import (
     EpisodeObservation,
     Message,
     NormalizedRole,
+    RawEvent,
     TaskEpisode,
 )
 from session_doctor.store.lifecycle import FINALIZED_LIFECYCLE_STATES, LifecycleObservation
@@ -75,7 +81,7 @@ def segment_session(
     observations: list[EpisodeObservation] = []
     boundary_by_left = {row.left_user_anchor_id: row for row in boundaries}
     for group_index, group in enumerate(groups):
-        anchors = [message_anchor(message) for message in group]
+        anchors = [message_anchor(bundle, message) for message in group]
         episode_id = stable_id(
             "task-episode",
             SEGMENTATION_VERSION,
@@ -147,8 +153,8 @@ def classify_boundary(
     left: Message,
     right: Message,
 ) -> EpisodeBoundary:
-    left_anchor = message_anchor(left)
-    right_anchor = message_anchor(right)
+    left_anchor = message_anchor(bundle, left)
+    right_anchor = message_anchor(bundle, right)
     right_text = right.text or ""
     similarity = broad_goal_similarity(left.text or "", right_text)
     closure_anchor = closure_evidence_between(bundle, left, right)
@@ -239,7 +245,7 @@ def closure_evidence_between(
             or left_event.record_index < command_event.record_index < right_event.record_index
         ):
             return None
-    return message_anchor(last)
+    return message_anchor(bundle, last)
 
 
 def messages_between(messages: list[Message], left: Message, right: Message) -> list[Message]:
@@ -262,7 +268,7 @@ def episode_event_anchors(
     )
     if first_event is not None:
         anchors = [
-            event.event_id
+            raw_event_anchor(event).anchor_id
             for event in sorted(
                 bundle.raw_events,
                 key=lambda row: (row.source_id, row.record_index, row.event_id),
@@ -283,11 +289,52 @@ def episode_event_anchors(
         if next_episode_first_user is not None
         else len(bundle.messages)
     )
-    return ordered_unique(message_anchor(message) for message in bundle.messages[start:end])
+    return ordered_unique(message_anchor(bundle, message) for message in bundle.messages[start:end])
 
 
-def message_anchor(message: Message) -> str:
-    return message.source_event_id or message.message_id
+def analysis_anchors(bundle: ParsedSessionBundle) -> dict[str, AnalysisAnchor]:
+    raw_by_id = {event.event_id: event for event in bundle.raw_events}
+    anchors = {
+        anchor.anchor_id: anchor
+        for event in bundle.raw_events
+        if (anchor := raw_event_anchor(event))
+    }
+    for message in bundle.messages:
+        anchor = anchor_for_message(raw_by_id, message)
+        anchors[anchor.anchor_id] = anchor
+    return anchors
+
+
+def message_anchor(bundle: ParsedSessionBundle, message: Message) -> str:
+    raw_by_id = {event.event_id: event for event in bundle.raw_events}
+    return anchor_for_message(raw_by_id, message).anchor_id
+
+
+def anchor_for_message(raw_by_id: dict[str, RawEvent], message: Message) -> AnalysisAnchor:
+    event = raw_by_id.get(message.source_event_id or "")
+    if event is not None:
+        return raw_event_anchor(event)
+    return model_anchor("message", message.message_id, message)
+
+
+def raw_event_anchor(event: RawEvent) -> AnalysisAnchor:
+    return model_anchor("raw_event", event.event_id, event)
+
+
+def model_anchor(anchor_kind: str, entity_id: str, entity: BaseModel) -> AnalysisAnchor:
+    payload = json.dumps(
+        entity.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode()
+    payload_digest = hashlib.sha256(payload).hexdigest()
+    return AnalysisAnchor(
+        anchor_id=stable_id("episode-anchor-v1", anchor_kind, entity_id, payload_digest),
+        anchor_kind=anchor_kind,
+        entity_id=entity_id,
+        payload_digest=payload_digest,
+    )
 
 
 def ordered_unique(values: Iterable[str]) -> list[str]:

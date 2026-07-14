@@ -168,8 +168,8 @@ def test_closure_and_strong_topic_shift_split() -> None:
     )
     assert len(result.episodes) == 2
     assert result.boundaries[0].decision is BoundaryDecision.SPLIT
-    assert "event-a-0" in result.boundaries[0].evidence_anchor_ids
-    assert "event-a-0" in result.episodes[0].event_anchor_ids
+    assert result.boundaries[0].left_user_anchor_id in result.boundaries[0].evidence_anchor_ids
+    assert result.boundaries[0].left_user_anchor_id in result.episodes[0].event_anchor_ids
 
 
 def test_pending_tool_work_prevents_closure_split() -> None:
@@ -218,6 +218,23 @@ def test_sessions_never_merge_and_active_lifecycle_is_provisional() -> None:
     assert first.episodes[0].session_id == "s1"
     assert second.episodes[0].session_id == "s2"
     assert second.episodes[0].provisional
+
+
+def test_anchor_identity_changes_when_payload_changes_at_same_entity_id() -> None:
+    original = bundle("Fix parser tests", "New task: write docs")
+    edited = original.model_copy(deep=True)
+    edited.messages[0].text = "Fix parser and schema tests"
+
+    original_analysis = segment_session(original, lifecycle())
+    edited_analysis = segment_session(edited, lifecycle())
+
+    assert original.messages[0].message_id == edited.messages[0].message_id
+    assert (
+        original_analysis.episodes[0].first_user_anchor_id
+        != edited_analysis.episodes[0].first_user_anchor_id
+    )
+    assert original_analysis.episodes[0].episode_id != edited_analysis.episodes[0].episode_id
+    assert original_analysis.boundaries[0].boundary_id != edited_analysis.boundaries[0].boundary_id
 
 
 def test_broad_goal_similarity_is_unicode_aware() -> None:
@@ -355,7 +372,7 @@ def test_latest_capture_bundle_is_used_for_a_b_a_history(tmp_path) -> None:
     analysis = analyze_session_episodes(store, "session-history", store.database_path)
     latest_lifecycle = store.lifecycle_for_bundle(latest_bundle_id)
     assert latest_lifecycle is not None
-    assert analysis.episodes[0].first_user_anchor_id == "event-a"
+    assert analysis.episodes[0].first_user_anchor_id != "event-a"
     assert analysis.lifecycle_observation_id == latest_lifecycle.lifecycle_observation_id
     store.capture_source(source, b"unparsed-C")
     with pytest.raises(EpisodeAnalysisUnavailable, match="latest capture"):

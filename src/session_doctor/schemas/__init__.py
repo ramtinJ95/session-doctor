@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .common import AgentName, Confidence, NormalizedRole, SessionDoctorModel, SourceKind
 from .episodes import (
+    AnalysisAnchor,
     BoundaryDecision,
     BoundaryReason,
     EpisodeAnalysis,
@@ -36,6 +37,7 @@ from .usage import ModelUsage
 from .warnings import ParseWarning
 
 __all__ = [
+    "AnalysisAnchor",
     "AgentName",
     "BoundaryDecision",
     "BoundaryReason",

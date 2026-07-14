@@ -20,6 +20,13 @@ class BoundaryReason(StrEnum):
     WEAK_OR_CONFLICTING = "weak_or_conflicting"
 
 
+class AnalysisAnchor(SessionDoctorModel):
+    anchor_id: str
+    anchor_kind: str
+    entity_id: str
+    payload_digest: str
+
+
 class EpisodeBoundary(SessionDoctorModel):
     boundary_id: str
     segmentation_version: str
