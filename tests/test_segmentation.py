@@ -267,7 +267,7 @@ def test_episode_analysis_json_contains_no_v1_scores(tmp_path) -> None:
     assert "score" not in analyzed.stdout
 
 
-def test_schema_v10_rebuild_drops_legacy_analysis_tables(tmp_path) -> None:
+def test_schema_v11_rebuild_drops_legacy_analysis_tables(tmp_path) -> None:
     database = tmp_path / "legacy-v9.duckdb"
     store = DuckDBStore(database)
     source = SessionSource(

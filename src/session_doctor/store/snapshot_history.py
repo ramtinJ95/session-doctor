@@ -229,11 +229,18 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
     semantic_analysis_rows = (
         connection.execute(
             """
-            SELECT a.analysis_identity
-            FROM semantic_analysis_runs AS a
-            JOIN lifecycle_observations AS l USING (lifecycle_observation_id)
-            WHERE l.snapshot_bundle_id IN (SELECT unnest(?))
-            ORDER BY a.analysis_identity
+            WITH RECURSIVE affected (analysis_identity) AS (
+                SELECT a.analysis_identity
+                FROM semantic_analysis_runs AS a
+                JOIN lifecycle_observations AS l USING (lifecycle_observation_id)
+                WHERE l.snapshot_bundle_id IN (SELECT unnest(?))
+                UNION
+                SELECT delegation.child_analysis_identity
+                FROM episode_delegations AS delegation
+                JOIN affected
+                  ON delegation.parent_analysis_identity = affected.analysis_identity
+            )
+            SELECT DISTINCT analysis_identity FROM affected ORDER BY analysis_identity
             """,
             [list((*bundle_ids, *downstream_lifecycle_bundle_ids))],
         ).fetchall()
@@ -259,6 +266,23 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
     )
     derived_row_counts["normalization_semantics"] = len(normalization_run_ids)
     derived_row_counts["semantic_analysis_runs"] = len(semantic_analysis_rows)
+    for table_name, identity_column in (
+        ("episode_analysis_runs", "analysis_identity"),
+        ("episodes", "analysis_identity"),
+        ("episode_boundaries", "analysis_identity"),
+        ("episode_observations", "analysis_identity"),
+        ("episode_entity_memberships", "analysis_identity"),
+        ("episode_delegations", "child_analysis_identity"),
+    ):
+        count_row = (
+            connection.execute(
+                f"SELECT count(*) FROM {table_name} WHERE {identity_column} IN (SELECT unnest(?))",
+                [list(analysis_run_ids)],
+            ).fetchone()
+            if analysis_run_ids
+            else None
+        )
+        derived_row_counts[table_name] = int(count_row[0]) if count_row else 0
     for table_name in (
         "judge_annotations",
         "judge_panel_resolutions",
@@ -422,6 +446,7 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
         if (
             dependencies.source_ids
             or dependencies.normalization_run_ids
+            or dependencies.analysis_run_ids
             or dependencies.evaluation_packet_ids
             or dependencies.evaluation_corpus_ids
             or dependencies.audit_protocol_ids
@@ -548,16 +573,29 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
             [bundle_id],
         ).fetchall()
 
-        connection.execute(
-            """
-            DELETE FROM semantic_analysis_runs
-            WHERE lifecycle_observation_id IN (
-                SELECT lifecycle_observation_id FROM lifecycle_observations
-                WHERE snapshot_bundle_id = ?
+        if dependencies.analysis_run_ids:
+            analysis_run_ids = list(dependencies.analysis_run_ids)
+            connection.execute(
+                "DELETE FROM episode_delegations "
+                "WHERE child_analysis_identity IN (SELECT unnest(?)) "
+                "OR parent_analysis_identity IN (SELECT unnest(?))",
+                [analysis_run_ids, analysis_run_ids],
             )
-            """,
-            [bundle_id],
-        )
+            for table_name in (
+                "episode_entity_memberships",
+                "episode_observations",
+                "episode_boundaries",
+                "episodes",
+                "episode_analysis_runs",
+            ):
+                connection.execute(
+                    f"DELETE FROM {table_name} WHERE analysis_identity IN (SELECT unnest(?))",
+                    [analysis_run_ids],
+                )
+            connection.execute(
+                "DELETE FROM semantic_analysis_runs WHERE analysis_identity IN (SELECT unnest(?))",
+                [analysis_run_ids],
+            )
         if dependencies.evaluation_packet_ids:
             if dependencies.audit_protocol_ids:
                 connection.execute(

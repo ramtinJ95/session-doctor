@@ -20,6 +20,28 @@ class BoundaryReason(StrEnum):
     WEAK_OR_CONFLICTING = "weak_or_conflicting"
 
 
+class EpisodeKind(StrEnum):
+    DIRECT = "direct"
+    DELEGATED = "delegated"
+
+
+class EpisodeAggregateEligibility(StrEnum):
+    ELIGIBLE_DIRECT = "eligible_direct"
+    INELIGIBLE_DELEGATED_CHILD = "ineligible_delegated_child"
+
+
+class EpisodeMembershipStatus(StrEnum):
+    ASSIGNED = "assigned"
+    AMBIGUOUS = "ambiguous"
+    UNASSIGNED = "unassigned"
+
+
+class DelegationStatus(StrEnum):
+    LINKED = "linked"
+    AMBIGUOUS = "ambiguous"
+    UNAVAILABLE = "unavailable"
+
+
 class EpisodeBoundary(SessionDoctorModel):
     boundary_id: str
     segmentation_version: str
@@ -46,13 +68,17 @@ class TaskEpisode(SessionDoctorModel):
     episode_id: str
     segmentation_version: str
     session_id: str
-    first_user_anchor_id: str
-    last_user_anchor_id: str
-    user_anchor_ids: list[str] = Field(min_length=1)
+    first_user_anchor_id: str | None = None
+    last_user_anchor_id: str | None = None
+    user_anchor_ids: list[str] = Field(default_factory=list)
     event_anchor_ids: list[str] = Field(min_length=1)
     boundary_ids: list[str] = Field(default_factory=list)
     lifecycle_state: str
     provisional: bool
+    episode_kind: EpisodeKind = EpisodeKind.DIRECT
+    parent_episode_id: str | None = None
+    rollup_owner_episode_id: str | None = None
+    aggregate_eligibility: EpisodeAggregateEligibility = EpisodeAggregateEligibility.ELIGIBLE_DIRECT
 
 
 class EpisodeObservation(SessionDoctorModel):
@@ -62,7 +88,42 @@ class EpisodeObservation(SessionDoctorModel):
     evidence_anchor_ids: list[str] = Field(min_length=1)
 
 
+class EpisodeEntityMembership(SessionDoctorModel):
+    membership_id: str
+    analysis_identity: str
+    normalization_run_id: str
+    entity_kind: str
+    entity_id: str
+    status: EpisodeMembershipStatus
+    reason: str
+    source_episode_id: str | None = None
+    rollup_owner_episode_id: str | None = None
+    candidate_episode_ids: list[str] = Field(default_factory=list)
+    evidence_anchor_ids: list[str] = Field(default_factory=list)
+    additive_aggregate_eligible: bool
+
+
+class EpisodeDelegation(SessionDoctorModel):
+    delegation_id: str
+    topology_version: str
+    status: DelegationStatus
+    child_analysis_identity: str
+    child_episode_id: str
+    child_session_id: str
+    parent_analysis_identity: str | None = None
+    parent_episode_id: str | None = None
+    parent_session_id: str | None = None
+    rollup_owner_episode_id: str
+    spawn_tool_call_id: str | None = None
+    spawn_event_id: str | None = None
+    parent_candidate_episode_ids: list[str] = Field(default_factory=list)
+    provenance: dict[str, object] = Field(default_factory=dict)
+
+
 class EpisodeAnalysis(SessionDoctorModel):
+    schema_version: str = "episode-analysis-v2"
+    analysis_identity: str
+    normalization_run_id: str
     segmentation_version: str
     session_id: str
     lifecycle_observation_id: str
@@ -70,3 +131,5 @@ class EpisodeAnalysis(SessionDoctorModel):
     episodes: list[TaskEpisode] = Field(default_factory=list)
     boundaries: list[EpisodeBoundary] = Field(default_factory=list)
     observations: list[EpisodeObservation] = Field(default_factory=list)
+    entity_memberships: list[EpisodeEntityMembership] = Field(default_factory=list)
+    delegations: list[EpisodeDelegation] = Field(default_factory=list)

@@ -132,6 +132,8 @@ def segment_session(
                     )
                 )
     return EpisodeAnalysis(
+        analysis_identity="unpersisted",
+        normalization_run_id="unpersisted",
         segmentation_version=SEGMENTATION_VERSION,
         session_id=bundle.session.session_id,
         lifecycle_observation_id=lifecycle.lifecycle_observation_id,

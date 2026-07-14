@@ -711,7 +711,8 @@ def analyze(
     console.print(
         f"[bold]Episode analysis[/bold] {session_id}: "
         f"{len(analysis.episodes)} episodes, {len(analysis.boundaries)} boundaries, "
-        f"lifecycle={analysis.lifecycle_state}"
+        f"{len(analysis.entity_memberships)} memberships, "
+        f"{len(analysis.delegations)} delegations, lifecycle={analysis.lifecycle_state}"
     )
     for episode in analysis.episodes:
         console.print(

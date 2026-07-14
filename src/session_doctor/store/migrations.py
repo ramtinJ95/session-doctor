@@ -6,7 +6,7 @@ import duckdb
 
 from session_doctor.ids import stable_id
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 BASE_DURABLE_TABLE_NAMES = (
     "source_blobs",
@@ -37,6 +37,12 @@ DERIVED_TABLE_NAMES = (
     "normalized_entities",
     "normalization_semantics",
     "semantic_analysis_runs",
+    "episode_analysis_runs",
+    "episodes",
+    "episode_boundaries",
+    "episode_observations",
+    "episode_entity_memberships",
+    "episode_delegations",
     "session_sources",
     "sessions",
     "raw_events",
@@ -350,6 +356,85 @@ CREATE_TABLE_STATEMENTS = (
         started_at TIMESTAMP,
         completed_at TIMESTAMP,
         metadata_json VARCHAR NOT NULL DEFAULT '{}'
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_analysis_runs (
+        analysis_identity VARCHAR PRIMARY KEY,
+        normalization_run_id VARCHAR NOT NULL,
+        lifecycle_observation_id VARCHAR NOT NULL,
+        segmentation_version VARCHAR NOT NULL,
+        session_id VARCHAR NOT NULL,
+        schema_version VARCHAR NOT NULL,
+        episode_count INTEGER NOT NULL CHECK (episode_count >= 0),
+        boundary_count INTEGER NOT NULL CHECK (boundary_count >= 0),
+        observation_count INTEGER NOT NULL CHECK (observation_count >= 0),
+        membership_count INTEGER NOT NULL CHECK (membership_count >= 0),
+        delegation_count INTEGER NOT NULL CHECK (delegation_count >= 0),
+        created_at TIMESTAMP NOT NULL DEFAULT current_timestamp
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episodes (
+        analysis_identity VARCHAR NOT NULL,
+        episode_id VARCHAR NOT NULL,
+        episode_order INTEGER NOT NULL CHECK (episode_order >= 0),
+        session_id VARCHAR NOT NULL,
+        rollup_owner_episode_id VARCHAR NOT NULL,
+        aggregate_eligibility VARCHAR NOT NULL,
+        payload_json VARCHAR NOT NULL,
+        PRIMARY KEY (analysis_identity, episode_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_boundaries (
+        analysis_identity VARCHAR NOT NULL,
+        boundary_id VARCHAR NOT NULL,
+        boundary_order INTEGER NOT NULL CHECK (boundary_order >= 0),
+        payload_json VARCHAR NOT NULL,
+        PRIMARY KEY (analysis_identity, boundary_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_observations (
+        analysis_identity VARCHAR NOT NULL,
+        observation_id VARCHAR NOT NULL,
+        observation_order INTEGER NOT NULL CHECK (observation_order >= 0),
+        payload_json VARCHAR NOT NULL,
+        PRIMARY KEY (analysis_identity, observation_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_entity_memberships (
+        membership_id VARCHAR PRIMARY KEY,
+        analysis_identity VARCHAR NOT NULL,
+        normalization_run_id VARCHAR NOT NULL,
+        entity_kind VARCHAR NOT NULL,
+        entity_id VARCHAR NOT NULL,
+        membership_order INTEGER NOT NULL CHECK (membership_order >= 0),
+        membership_status VARCHAR NOT NULL,
+        source_episode_id VARCHAR,
+        rollup_owner_episode_id VARCHAR,
+        additive_aggregate_eligible BOOLEAN NOT NULL,
+        payload_json VARCHAR NOT NULL,
+        UNIQUE (analysis_identity, entity_kind, entity_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_delegations (
+        delegation_id VARCHAR PRIMARY KEY,
+        topology_version VARCHAR NOT NULL,
+        delegation_status VARCHAR NOT NULL,
+        child_analysis_identity VARCHAR NOT NULL,
+        child_episode_id VARCHAR NOT NULL,
+        delegation_order INTEGER NOT NULL CHECK (delegation_order >= 0),
+        parent_analysis_identity VARCHAR,
+        parent_episode_id VARCHAR,
+        rollup_owner_episode_id VARCHAR NOT NULL,
+        spawn_tool_call_id VARCHAR,
+        spawn_event_id VARCHAR,
+        payload_json VARCHAR NOT NULL,
+        UNIQUE (child_analysis_identity, child_episode_id)
     )
     """,
     """
