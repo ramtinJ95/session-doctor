@@ -13,6 +13,7 @@ from .episodes import (
     EpisodeKind,
     EpisodeMembershipStatus,
     EpisodeObservation,
+    EpisodeTopologyProjection,
     TaskEpisode,
 )
 from .events import RawEvent
@@ -56,6 +57,7 @@ __all__ = [
     "EpisodeEntityMembership",
     "EpisodeKind",
     "EpisodeMembershipStatus",
+    "EpisodeTopologyProjection",
     "EpisodeObservation",
     "Message",
     "ModelUsage",

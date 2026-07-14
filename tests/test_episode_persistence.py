@@ -175,6 +175,8 @@ def test_force_prune_reports_and_removes_episode_projections(tmp_path) -> None:
             "episode_observations",
             "episode_entity_memberships",
             "episode_delegations",
+            "episode_topology_projections",
+            "episode_topology_projection_delegations",
         ):
             assert connection.execute(f"SELECT count(*) FROM {table_name}").fetchone() == (0,)
 
@@ -204,9 +206,11 @@ def test_claude_delegation_uses_spawn_provenance_without_synthetic_ordering(
 
     root_analysis = analyze_session_episodes(store, str(root_row[0]), database)
 
-    assert len(root_analysis.delegations) == 1
-    assert root_analysis.delegations[0].status is DelegationStatus.LINKED
-    assert root_analysis.delegations[0].parent_analysis_identity == (
+    assert root_analysis.delegations == []
+    assert root_analysis.topology_projection is not None
+    assert len(root_analysis.topology_projection.delegations) == 1
+    assert root_analysis.topology_projection.delegations[0].status is DelegationStatus.LINKED
+    assert root_analysis.topology_projection.delegations[0].parent_analysis_identity == (
         root_analysis.analysis_identity
     )
     with duckdb.connect(str(database), read_only=True) as connection:
@@ -222,6 +226,10 @@ def test_claude_delegation_uses_spawn_provenance_without_synthetic_ordering(
     assert delegation.parent_episode_id is not None
     assert delegation.rollup_owner_episode_id != analysis.episodes[0].episode_id
     assert analysis.episodes[0].aggregate_eligibility.value == "ineligible_delegated_child"
+    assert analysis.topology_projection is not None
+    assert delegation.delegation_id in {
+        row.delegation_id for row in analysis.topology_projection.delegations
+    }
     assert delegation.provenance["ordering"] == "source_local_only"
     assert all(
         not membership.additive_aggregate_eligible for membership in analysis.entity_memberships
@@ -283,6 +291,68 @@ def test_message_id_fallback_anchor_receives_episode_membership(tmp_path) -> Non
     )
     assert membership.status is EpisodeMembershipStatus.ASSIGNED
     assert membership.evidence_anchor_ids == ["fallback-message-anchor"]
+
+
+def test_parent_topology_preserves_unavailable_child_without_failing(tmp_path) -> None:
+    store, parent_session_id = persisted_conflicting_bundle(tmp_path)
+    child_source = SessionSource(
+        source_id="unavailable-child-source",
+        agent_name=AgentName.CODEX,
+        source_path="/sessions/unavailable-child.jsonl",
+    )
+    captured = store.capture_source(child_source, b"captured-child")
+    child_bundle = store.create_single_source_bundle(
+        child_source,
+        captured,
+        "unavailable-child-native",
+    )
+    store.record_lifecycle(child_bundle.snapshot_bundle_id, terminal_observed=False)
+    child_session_id = "unavailable-child-session"
+    parsed = ParsedSessionBundle(
+        session=Session(
+            session_id=child_session_id,
+            source_id=child_source.source_id,
+            agent_name=AgentName.CODEX,
+            native_session_id="unavailable-child-native",
+            parent_session_id=parent_session_id,
+            is_sidechain=True,
+            metadata={
+                "parent_link_status": "linked",
+                "subagent_metadata": {"tool_use_id": "native-tool-first"},
+            },
+        ),
+        raw_events=[
+            RawEvent(
+                event_id="unavailable-child-event",
+                source_id=child_source.source_id,
+                agent_name=AgentName.CODEX,
+                record_index=0,
+            )
+        ],
+    )
+    store.insert_parsed_bundle(
+        child_source,
+        parsed,
+        captured,
+        child_bundle,
+        adapter_version=CodexAdapter.version,
+        capability_declarations=CodexAdapter.capabilities,
+    )
+    store.capture_source(child_source, b"newer-unparsed-child")
+
+    parent = analyze_session_episodes(store, parent_session_id, store.database_path)
+
+    assert parent.topology_projection is not None
+    assert parent.topology_projection.delegations == []
+    assert parent.topology_projection.unavailable_child_session_ids == [child_session_id]
+    with duckdb.connect(str(store.database_path), read_only=True) as connection:
+        payload = connection.execute(
+            "SELECT payload_json FROM episode_topology_projections "
+            "WHERE topology_projection_id = ?",
+            [parent.topology_projection.topology_projection_id],
+        ).fetchone()
+    assert payload is not None
+    assert child_session_id in str(payload[0])
 
 
 def test_pruning_unnormalized_predecessor_removes_downstream_episode_analysis(

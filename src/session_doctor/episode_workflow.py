@@ -18,6 +18,7 @@ from session_doctor.schemas import (
     EpisodeEntityMembership,
     EpisodeKind,
     EpisodeMembershipStatus,
+    EpisodeTopologyProjection,
     SemanticAnalysisComponents,
     TaskEpisode,
 )
@@ -160,35 +161,99 @@ def _analyze_session(
             """,
             [session_id],
         ).fetchall()
+        unavailable_child_session_ids: list[str] = []
         for child_row in child_rows:
             child_session_id = str(child_row[0])
             if child_session_id in (*stack, session_id):
                 continue
-            _analyze_session(
-                connection,
-                child_session_id,
-                cache,
-                (*stack, session_id),
-            )
-        inbound_delegations = [
+            try:
+                _analyze_session(
+                    connection,
+                    child_session_id,
+                    cache,
+                    (*stack, session_id),
+                )
+            except EpisodeAnalysisUnavailable:
+                unavailable_child_session_ids.append(child_session_id)
+        topology_delegations = [
             EpisodeDelegation.model_validate_json(str(row[0]))
             for row in connection.execute(
                 """
                 SELECT payload_json FROM episode_delegations
-                WHERE parent_analysis_identity = ?
-                ORDER BY child_analysis_identity, delegation_order
+                WHERE child_analysis_identity = ? OR parent_analysis_identity = ?
+                ORDER BY child_analysis_identity, delegation_order, delegation_id
                 """,
-                [analysis_identity],
+                [analysis_identity, analysis_identity],
             ).fetchall()
         ]
-        topology = {
-            row.delegation_id: row for row in (*persisted.delegations, *inbound_delegations)
-        }
-        persisted = persisted.model_copy(
-            update={"delegations": [topology[key] for key in sorted(topology)]}
+        topology_projection = _persist_topology_projection(
+            connection,
+            analysis_identity,
+            topology_delegations,
+            unavailable_child_session_ids,
         )
+        persisted = persisted.model_copy(update={"topology_projection": topology_projection})
         cache[session_id] = (persisted, selected)
     return persisted, selected
+
+
+def _persist_topology_projection(
+    connection: duckdb.DuckDBPyConnection,
+    analysis_identity: str,
+    delegations: list[EpisodeDelegation],
+    unavailable_child_session_ids: list[str],
+) -> EpisodeTopologyProjection:
+    ordered_delegations = sorted(delegations, key=lambda row: row.delegation_id)
+    unavailable_children = sorted(set(unavailable_child_session_ids))
+    projection = EpisodeTopologyProjection(
+        topology_projection_id=stable_id(
+            "episode-topology-projection",
+            DELEGATION_TOPOLOGY_VERSION,
+            analysis_identity,
+            *(row.delegation_id for row in ordered_delegations),
+            *unavailable_children,
+        ),
+        topology_version=DELEGATION_TOPOLOGY_VERSION,
+        analysis_identity=analysis_identity,
+        delegations=ordered_delegations,
+        unavailable_child_session_ids=unavailable_children,
+    )
+    values = (
+        projection.topology_projection_id,
+        projection.topology_version,
+        projection.analysis_identity,
+        canonical_model_json(projection),
+    )
+    connection.execute(
+        "INSERT INTO episode_topology_projections "
+        "(topology_projection_id, topology_version, analysis_identity, payload_json) "
+        "VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
+        list(values),
+    )
+    stored = connection.execute(
+        "SELECT * EXCLUDE (created_at) FROM episode_topology_projections "
+        "WHERE topology_projection_id = ?",
+        [projection.topology_projection_id],
+    ).fetchone()
+    if stored is None or stored != values:
+        raise EpisodePersistenceConflict("episode topology projection identity collision")
+    if ordered_delegations:
+        connection.executemany(
+            "INSERT INTO episode_topology_projection_delegations VALUES (?, ?, ?) "
+            "ON CONFLICT DO NOTHING",
+            [
+                (projection.topology_projection_id, row.delegation_id, row_order)
+                for row_order, row in enumerate(ordered_delegations)
+            ],
+        )
+    stored_links = connection.execute(
+        "SELECT delegation_id FROM episode_topology_projection_delegations "
+        "WHERE topology_projection_id = ? ORDER BY delegation_order",
+        [projection.topology_projection_id],
+    ).fetchall()
+    if stored_links != [(row.delegation_id,) for row in ordered_delegations]:
+        raise EpisodePersistenceConflict("episode topology projection is incomplete")
+    return EpisodeTopologyProjection.model_validate_json(str(stored[3]))
 
 
 def _select_analysis_input(

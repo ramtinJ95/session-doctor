@@ -43,6 +43,8 @@ DERIVED_TABLE_NAMES = (
     "episode_observations",
     "episode_entity_memberships",
     "episode_delegations",
+    "episode_topology_projections",
+    "episode_topology_projection_delegations",
     "session_sources",
     "sessions",
     "raw_events",
@@ -435,6 +437,24 @@ CREATE_TABLE_STATEMENTS = (
         spawn_event_id VARCHAR,
         payload_json VARCHAR NOT NULL,
         UNIQUE (child_analysis_identity, child_episode_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_topology_projections (
+        topology_projection_id VARCHAR PRIMARY KEY,
+        topology_version VARCHAR NOT NULL,
+        analysis_identity VARCHAR NOT NULL,
+        payload_json VARCHAR NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT current_timestamp
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_topology_projection_delegations (
+        topology_projection_id VARCHAR NOT NULL,
+        delegation_id VARCHAR NOT NULL,
+        delegation_order INTEGER NOT NULL CHECK (delegation_order >= 0),
+        PRIMARY KEY (topology_projection_id, delegation_id),
+        UNIQUE (topology_projection_id, delegation_order)
     )
     """,
     """

@@ -714,6 +714,13 @@ def analyze(
         f"{len(analysis.entity_memberships)} memberships, "
         f"{len(analysis.delegations)} delegations, lifecycle={analysis.lifecycle_state}"
     )
+    topology = analysis.topology_projection
+    if topology is not None:
+        console.print(
+            f"- topology {topology.topology_projection_id} "
+            f"links={len(topology.delegations)} "
+            f"unavailable_children={len(topology.unavailable_child_session_ids)}"
+        )
     for episode in analysis.episodes:
         console.print(
             f"- {episode.episode_id} users={len(episode.user_anchor_ids)} "

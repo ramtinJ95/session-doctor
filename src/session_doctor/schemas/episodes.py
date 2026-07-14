@@ -120,6 +120,14 @@ class EpisodeDelegation(SessionDoctorModel):
     provenance: dict[str, object] = Field(default_factory=dict)
 
 
+class EpisodeTopologyProjection(SessionDoctorModel):
+    topology_projection_id: str
+    topology_version: str
+    analysis_identity: str
+    delegations: list[EpisodeDelegation] = Field(default_factory=list)
+    unavailable_child_session_ids: list[str] = Field(default_factory=list)
+
+
 class EpisodeAnalysis(SessionDoctorModel):
     schema_version: str = "episode-analysis-v2"
     analysis_identity: str
@@ -133,3 +141,4 @@ class EpisodeAnalysis(SessionDoctorModel):
     observations: list[EpisodeObservation] = Field(default_factory=list)
     entity_memberships: list[EpisodeEntityMembership] = Field(default_factory=list)
     delegations: list[EpisodeDelegation] = Field(default_factory=list)
+    topology_projection: EpisodeTopologyProjection | None = None

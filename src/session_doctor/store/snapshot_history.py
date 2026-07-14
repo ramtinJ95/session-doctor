@@ -244,6 +244,25 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
         [list((*bundle_ids, *downstream_lifecycle_bundle_ids))],
     ).fetchall()
     analysis_run_ids = tuple(str(row[0]) for row in semantic_analysis_rows)
+    topology_projection_rows = (
+        connection.execute(
+            """
+            SELECT DISTINCT projection.topology_projection_id
+            FROM episode_topology_projections AS projection
+            LEFT JOIN episode_topology_projection_delegations AS link
+              USING (topology_projection_id)
+            LEFT JOIN episode_delegations AS delegation USING (delegation_id)
+            WHERE projection.analysis_identity IN (SELECT unnest(?))
+               OR delegation.child_analysis_identity IN (SELECT unnest(?))
+               OR delegation.parent_analysis_identity IN (SELECT unnest(?))
+            ORDER BY projection.topology_projection_id
+            """,
+            [list(analysis_run_ids), list(analysis_run_ids), list(analysis_run_ids)],
+        ).fetchall()
+        if analysis_run_ids
+        else []
+    )
+    topology_projection_ids = tuple(str(row[0]) for row in topology_projection_rows)
     derived_row_counts: dict[str, int] = {
         "session_sources": len(source_ids),
         "sessions": len(session_ids),
@@ -279,6 +298,19 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
             else None
         )
         derived_row_counts[table_name] = int(count_row[0]) if count_row else 0
+    derived_row_counts["episode_topology_projections"] = len(topology_projection_ids)
+    topology_link_count = (
+        connection.execute(
+            "SELECT count(*) FROM episode_topology_projection_delegations "
+            "WHERE topology_projection_id IN (SELECT unnest(?))",
+            [list(topology_projection_ids)],
+        ).fetchone()
+        if topology_projection_ids
+        else None
+    )
+    derived_row_counts["episode_topology_projection_delegations"] = (
+        int(topology_link_count[0]) if topology_link_count else 0
+    )
     for table_name in (
         "judge_annotations",
         "judge_panel_resolutions",
@@ -571,6 +603,31 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
 
         if dependencies.analysis_run_ids:
             analysis_run_ids = list(dependencies.analysis_run_ids)
+            topology_projection_rows = connection.execute(
+                """
+                SELECT DISTINCT projection.topology_projection_id
+                FROM episode_topology_projections AS projection
+                LEFT JOIN episode_topology_projection_delegations AS link
+                  USING (topology_projection_id)
+                LEFT JOIN episode_delegations AS delegation USING (delegation_id)
+                WHERE projection.analysis_identity IN (SELECT unnest(?))
+                   OR delegation.child_analysis_identity IN (SELECT unnest(?))
+                   OR delegation.parent_analysis_identity IN (SELECT unnest(?))
+                """,
+                [analysis_run_ids, analysis_run_ids, analysis_run_ids],
+            ).fetchall()
+            topology_projection_ids = [str(row[0]) for row in topology_projection_rows]
+            if topology_projection_ids:
+                connection.execute(
+                    "DELETE FROM episode_topology_projection_delegations "
+                    "WHERE topology_projection_id IN (SELECT unnest(?))",
+                    [topology_projection_ids],
+                )
+                connection.execute(
+                    "DELETE FROM episode_topology_projections "
+                    "WHERE topology_projection_id IN (SELECT unnest(?))",
+                    [topology_projection_ids],
+                )
             connection.execute(
                 "DELETE FROM episode_delegations "
                 "WHERE child_analysis_identity IN (SELECT unnest(?)) "
