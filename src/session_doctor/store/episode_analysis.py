@@ -7,7 +7,7 @@ from typing import Any, cast
 
 import duckdb
 
-from session_doctor.adapters import BaseAdapter
+from session_doctor.adapters import BaseAdapter, built_in_adapters
 from session_doctor.ids import stable_id
 from session_doctor.schemas import (
     AnalysisAnchor,
@@ -17,6 +17,8 @@ from session_doctor.schemas import (
     EpisodeAnalysisPayload,
     EpisodeBoundary,
     EpisodeDelegation,
+    EpisodeDelegationBinding,
+    EpisodeDelegationEdge,
     EpisodeExactInput,
     EpisodeMembership,
     EpisodeObservation,
@@ -25,6 +27,7 @@ from session_doctor.schemas import (
     SemanticAnalysisComponents,
     SemanticFoundation,
     Session,
+    SessionSource,
     TaskEpisode,
 )
 from session_doctor.segmentation import SEGMENTATION_VERSION, analysis_anchors, segment_session
@@ -68,6 +71,25 @@ class ExactEpisodeInput:
         if session is None:
             raise EpisodePersistenceConflict("normalization has no native session")
         return session
+
+
+@dataclass(frozen=True)
+class TopologyWitness:
+    bundle_id: str
+    parent_snapshot_id: str
+    child_snapshot_id: str
+
+
+@dataclass(frozen=True)
+class TopologyCandidateState:
+    candidate: EpisodeTopologyCandidate
+    parent: ExactEpisodeInput | None
+    child: ExactEpisodeInput | None
+    witnesses: tuple[TopologyWitness, ...]
+    child_source: SessionSource | None = None
+    spawn_entity_id: str | None = None
+    spawn_anchor_id: str | None = None
+    parent_episode_id: str | None = None
 
 
 def select_exact_episode_input(
@@ -276,25 +298,430 @@ def persist_requested_episode_analysis(
     connection: duckdb.DuckDBPyConnection,
     exact: ExactEpisodeInput,
 ) -> EpisodeAnalysisPayload:
+    adapter = next(
+        item for item in built_in_adapters() if item.name.value == exact.stored.run.adapter_name
+    )
+    inputs, roles, unresolved = discover_topology_inputs(connection, exact, adapter)
+    analyses: dict[str, EpisodeAnalysis] = {}
+    for item in inputs.values():
+        components = episode_analysis_components(item.stored, item.lifecycle, item.foundation)
+        if semantic_analysis_identity(components) != item.analysis_identity:
+            raise EpisodePersistenceConflict("analysis identity is not canonical")
+        persist_semantic_run(connection, item.analysis_identity, components)
+        analysis = segment_session(item.stored.bundle, item.lifecycle)
+        analyses[item.analysis_identity] = analysis
+        persist_segmentation(connection, item, analysis)
+    candidates = derive_topology_candidates(
+        connection,
+        inputs,
+        roles,
+        analyses,
+        exact,
+        unresolved,
+    )
+    ordered_inputs = sorted(
+        inputs.values(),
+        key=lambda item: (
+            {"requested": 0, "ancestor": 1, "descendant": 2, "candidate": 3}[
+                roles[item.analysis_identity]
+            ],
+            item.session.session_id,
+            item.analysis_identity,
+        ),
+    )
+    role_tuples = [
+        (item.analysis_identity, roles[item.analysis_identity]) for item in ordered_inputs
+    ]
+    candidate_identity = [
+        {
+            **state.candidate.model_dump(mode="json"),
+            "witnesses": [witness.bundle_id for witness in state.witnesses],
+        }
+        for state in sorted(candidates, key=lambda row: row.candidate.topology_candidate_id)
+    ]
     components = episode_analysis_components(exact.stored, exact.lifecycle, exact.foundation)
-    if semantic_analysis_identity(components) != exact.analysis_identity:
-        raise EpisodePersistenceConflict("analysis identity is not canonical")
-    persist_semantic_run(connection, exact.analysis_identity, components)
-    analysis = segment_session(exact.stored.bundle, exact.lifecycle)
-    persist_segmentation(connection, exact, analysis)
-    candidate = root_topology_candidate(exact)
-    role_tuple = (exact.analysis_identity, "requested")
     projection_id = stable_id(
         "episode-projection-v1",
         exact.analysis_identity,
-        json.dumps([role_tuple], separators=(",", ":")),
-        json.dumps(candidate.model_dump(mode="json"), sort_keys=True, separators=(",", ":")),
+        json.dumps(role_tuples, separators=(",", ":")),
+        json.dumps(candidate_identity, sort_keys=True, separators=(",", ":")),
         components.configuration_hash,
     )
-    persist_projection(connection, exact, projection_id, components.configuration_hash, candidate)
-    memberships = derive_memberships(exact, analysis, projection_id)
-    persist_memberships(connection, projection_id, memberships)
+    persist_topology_projection(
+        connection,
+        exact,
+        projection_id,
+        components.configuration_hash,
+        ordered_inputs,
+        roles,
+        candidates,
+        analyses,
+    )
     return load_episode_analysis(connection, projection_id, exact.session.session_id)
+
+
+def discover_topology_inputs(
+    connection: duckdb.DuckDBPyConnection,
+    requested: ExactEpisodeInput,
+    adapter: BaseAdapter,
+) -> tuple[
+    dict[str, ExactEpisodeInput],
+    dict[str, str],
+    list[tuple[ExactEpisodeInput, SessionSource, str]],
+]:
+    inputs = {requested.analysis_identity: requested}
+    roles = {requested.analysis_identity: "requested"}
+    by_source = immutable_sessions_by_source(connection)
+    source_models = immutable_source_models(connection)
+    session_models = immutable_session_models(connection)
+    unresolved: list[tuple[ExactEpisodeInput, SessionSource, str]] = []
+    queue = [requested]
+    while queue:
+        current = queue.pop(0)
+        source = current.stored.source
+        related: list[tuple[str, str, str]] = []
+        if source.parent_source_id:
+            related.extend(
+                (session_id, "ancestor", source.parent_source_id)
+                for session_id in by_source.get(source.parent_source_id, set())
+            )
+        if current.session.parent_session_id:
+            parent_endpoint = session_models.get(current.session.parent_session_id)
+            if parent_endpoint is not None:
+                related.append((current.session.parent_session_id, "ancestor", parent_endpoint[1]))
+        related.extend(
+            (session_id, "descendant", child_source.source_id)
+            for child_source in source_models.values()
+            if child_source.parent_source_id == source.source_id
+            for session_id in by_source.get(child_source.source_id, set())
+        )
+        related.extend(
+            (session_id, "descendant", source_id)
+            for session_id, (session, source_id) in session_models.items()
+            if session.parent_session_id == current.session.session_id
+        )
+        for session_id, proposed_role, related_source_id in sorted(set(related)):
+            try:
+                candidate = select_exact_episode_input(connection, session_id, adapter)
+            except (ValueError, EpisodePersistenceConflict) as exc:
+                source_model = source_models.get(related_source_id)
+                if source_model is not None:
+                    unresolved.append((current, source_model, str(exc)))
+                continue
+            existing = inputs.get(candidate.analysis_identity)
+            if existing is None:
+                inputs[candidate.analysis_identity] = candidate
+                roles[candidate.analysis_identity] = proposed_role
+                queue.append(candidate)
+            elif roles[candidate.analysis_identity] != proposed_role and candidate is not requested:
+                roles[candidate.analysis_identity] = "candidate"
+    return inputs, roles, unresolved
+
+
+def immutable_sessions_by_source(
+    connection: duckdb.DuckDBPyConnection,
+) -> dict[str, set[str]]:
+    rows = connection.execute(
+        """
+        SELECT normalization_run_id, entity_kind, payload_json
+        FROM normalized_entities
+        WHERE entity_kind IN ('session_source', 'session')
+        ORDER BY normalization_run_id, entity_kind
+        """
+    ).fetchall()
+    by_run: dict[str, dict[str, list[str]]] = {}
+    for run_id, kind, payload in rows:
+        by_run.setdefault(str(run_id), {}).setdefault(str(kind), []).append(str(payload))
+    result: dict[str, set[str]] = {}
+    for entities in by_run.values():
+        sources = entities.get("session_source", [])
+        sessions = entities.get("session", [])
+        if len(sources) != 1 or len(sessions) != 1:
+            continue
+        source_id = json.loads(sources[0]).get("source_id")
+        session_id = json.loads(sessions[0]).get("session_id")
+        if isinstance(source_id, str) and isinstance(session_id, str):
+            result.setdefault(source_id, set()).add(session_id)
+    return result
+
+
+def immutable_source_models(
+    connection: duckdb.DuckDBPyConnection,
+) -> dict[str, SessionSource]:
+    rows = connection.execute(
+        "SELECT payload_json FROM normalized_entities "
+        "WHERE entity_kind = 'session_source' ORDER BY payload_json"
+    ).fetchall()
+    result: dict[str, SessionSource] = {}
+    for (payload,) in rows:
+        source = SessionSource.model_validate_json(str(payload))
+        existing = result.get(source.source_id)
+        if existing is None or (
+            (source.parent_source_id is not None, len(source.metadata))
+            > (existing.parent_source_id is not None, len(existing.metadata))
+        ):
+            result[source.source_id] = source
+    return result
+
+
+def immutable_session_models(
+    connection: duckdb.DuckDBPyConnection,
+) -> dict[str, tuple[Session, str]]:
+    rows = connection.execute(
+        """
+        SELECT sessions.payload_json, sources.payload_json
+        FROM normalized_entities AS sessions
+        JOIN normalized_entities AS sources USING (normalization_run_id)
+        WHERE sessions.entity_kind = 'session'
+            AND sources.entity_kind = 'session_source'
+        ORDER BY sessions.payload_json, sources.payload_json
+        """
+    ).fetchall()
+    result: dict[str, tuple[Session, str]] = {}
+    for session_payload, source_payload in rows:
+        session = Session.model_validate_json(str(session_payload))
+        source = SessionSource.model_validate_json(str(source_payload))
+        existing = result.get(session.session_id)
+        if existing is None or (
+            session.parent_session_id is not None,
+            len(session.metadata),
+        ) > (
+            existing[0].parent_session_id is not None,
+            len(existing[0].metadata),
+        ):
+            result[session.session_id] = (session, source.source_id)
+    return result
+
+
+def derive_topology_candidates(
+    connection: duckdb.DuckDBPyConnection,
+    inputs: dict[str, ExactEpisodeInput],
+    roles: dict[str, str],
+    analyses: dict[str, EpisodeAnalysis],
+    requested: ExactEpisodeInput,
+    unresolved: list[tuple[ExactEpisodeInput, SessionSource, str]],
+) -> list[TopologyCandidateState]:
+    by_source = {item.stored.source.source_id: item for item in inputs.values()}
+    states: list[TopologyCandidateState] = []
+    parent_by_child: dict[str, str] = {}
+    for child in sorted(inputs.values(), key=lambda item: item.analysis_identity):
+        source = child.stored.source
+        parent = by_source.get(source.parent_source_id or "")
+        sidecar = source.metadata.get("claude_subagent_metadata")
+        spawn_identity = sidecar.get("tool_use_id") if isinstance(sidecar, dict) else None
+        if not isinstance(spawn_identity, str):
+            spawn_identity = None
+        native_child = (
+            source.parent_source_id is not None or child.session.parent_session_id is not None
+        )
+        if parent is None and not native_child:
+            if child is requested:
+                candidate = root_topology_candidate(child)
+                states.append(
+                    TopologyCandidateState(
+                        candidate=candidate,
+                        parent=None,
+                        child=child,
+                        witnesses=(),
+                    )
+                )
+            continue
+        witnesses = topology_witnesses(connection, parent, child) if parent else ()
+        status = "unavailable"
+        reason = "parent_exact_input_unavailable"
+        spawn_entity_id = None
+        spawn_anchor_id = None
+        parent_episode_id = None
+        if parent is not None:
+            parent_by_child[child.analysis_identity] = parent.analysis_identity
+            calls = [
+                call
+                for call in parent.stored.bundle.tool_calls
+                if call.native_tool_call_id == spawn_identity
+            ]
+            if spawn_identity is None:
+                reason = "native_spawn_identity_unavailable"
+            elif not witnesses:
+                reason = "complete_topology_witness_unavailable"
+            elif len(calls) != 1:
+                reason = "native_spawn_not_unique"
+                status = "ambiguous" if len(calls) > 1 else "unavailable"
+            elif calls[0].source_event_id is None:
+                reason = "spawn_event_unavailable"
+            else:
+                anchors = analysis_anchors(parent.stored.bundle)
+                spawn_anchor = next(
+                    (
+                        anchor
+                        for anchor in anchors.values()
+                        if anchor.anchor_kind == "raw_event"
+                        and anchor.entity_id == calls[0].source_event_id
+                    ),
+                    None,
+                )
+                parent_episodes = (
+                    [
+                        episode.episode_id
+                        for episode in analyses[parent.analysis_identity].episodes
+                        if spawn_anchor is not None
+                        and spawn_anchor.anchor_id in episode.event_anchor_ids
+                    ]
+                    if spawn_anchor is not None
+                    else []
+                )
+                if len(parent_episodes) != 1:
+                    reason = "spawn_parent_episode_unavailable"
+                    status = "ambiguous" if len(parent_episodes) > 1 else "unavailable"
+                else:
+                    assert spawn_anchor is not None
+                    status = "linked"
+                    reason = "native_spawn_exact_handshake"
+                    spawn_entity_id = calls[0].tool_call_id
+                    spawn_anchor_id = spawn_anchor.anchor_id
+                    parent_episode_id = parent_episodes[0]
+        witness_ids = [witness.bundle_id for witness in witnesses]
+        candidate_id = stable_id(
+            "topology-candidate",
+            TOPOLOGY_POLICY_VERSION,
+            "parent",
+            parent.stored.source.source_id if parent else "missing",
+            parent.logical_source_id if parent else "missing",
+            parent.snapshot_content_id if parent else "unavailable",
+            child.stored.source.source_id,
+            child.logical_source_id,
+            child.snapshot_content_id,
+            spawn_identity or "missing",
+            status,
+            json.dumps(witness_ids, separators=(",", ":")),
+        )
+        candidate = EpisodeTopologyCandidate(
+            topology_candidate_id=candidate_id,
+            direction="parent",
+            native_spawn_identity=spawn_identity,
+            parent_analysis_identity=parent.analysis_identity if parent else None,
+            child_analysis_identity=child.analysis_identity,
+            status=status,
+            reason=reason,
+            endpoint_status="observed" if parent else "unavailable",
+            witness_bundle_ids=witness_ids,
+        )
+        states.append(
+            TopologyCandidateState(
+                candidate=candidate,
+                parent=parent,
+                child=child,
+                witnesses=witnesses,
+                spawn_entity_id=spawn_entity_id,
+                spawn_anchor_id=spawn_anchor_id,
+                parent_episode_id=parent_episode_id,
+            )
+        )
+    cyclic = cyclic_analysis_ids(parent_by_child)
+    if cyclic:
+        roles.update(
+            {
+                identity: "candidate"
+                for identity in cyclic
+                if identity != requested.analysis_identity
+            }
+        )
+        states = [
+            TopologyCandidateState(
+                candidate=state.candidate.model_copy(
+                    update={"status": "ambiguous", "reason": "delegation_cycle"}
+                ),
+                parent=state.parent,
+                child=state.child,
+                witnesses=state.witnesses,
+            )
+            if state.child is not None and state.child.analysis_identity in cyclic
+            else state
+            for state in states
+        ]
+    for observed, missing_source, detail in sorted(
+        unresolved, key=lambda row: (row[0].analysis_identity, row[1].source_id)
+    ):
+        missing_is_parent = observed.stored.source.parent_source_id == missing_source.source_id
+        candidate_id = stable_id(
+            "topology-candidate",
+            TOPOLOGY_POLICY_VERSION,
+            "parent" if missing_is_parent else "child",
+            missing_source.source_id,
+            observed.analysis_identity,
+            detail,
+        )
+        states.append(
+            TopologyCandidateState(
+                candidate=EpisodeTopologyCandidate(
+                    topology_candidate_id=candidate_id,
+                    direction="parent" if missing_is_parent else "child",
+                    parent_analysis_identity=(
+                        None if missing_is_parent else observed.analysis_identity
+                    ),
+                    child_analysis_identity=(
+                        observed.analysis_identity if missing_is_parent else None
+                    ),
+                    status="unavailable",
+                    reason="counterpart_exact_input_unavailable",
+                    endpoint_status="unavailable",
+                ),
+                parent=None if missing_is_parent else observed,
+                child=observed if missing_is_parent else None,
+                child_source=observed.stored.source if missing_is_parent else missing_source,
+                witnesses=(),
+            )
+        )
+    return states
+
+
+def topology_witnesses(
+    connection: duckdb.DuckDBPyConnection,
+    parent: ExactEpisodeInput,
+    child: ExactEpisodeInput,
+) -> tuple[TopologyWitness, ...]:
+    rows = connection.execute(
+        """
+        SELECT members.snapshot_bundle_id,
+            max(CASE WHEN snapshots.source_id = ? AND snapshots.snapshot_content_id = ?
+                THEN snapshots.snapshot_id END) AS parent_snapshot_id,
+            max(CASE WHEN snapshots.source_id = ? AND snapshots.snapshot_content_id = ?
+                THEN snapshots.snapshot_id END) AS child_snapshot_id
+        FROM snapshot_bundle_members AS members
+        JOIN source_snapshots AS snapshots USING (snapshot_id, logical_source_id)
+        JOIN bundle_capture_metadata AS capture USING (snapshot_bundle_id)
+        WHERE capture.capture_status = 'complete'
+        GROUP BY members.snapshot_bundle_id
+        HAVING parent_snapshot_id IS NOT NULL AND child_snapshot_id IS NOT NULL
+        ORDER BY members.snapshot_bundle_id
+        """,
+        [
+            parent.stored.source.source_id,
+            parent.snapshot_content_id,
+            child.stored.source.source_id,
+            child.snapshot_content_id,
+        ],
+    ).fetchall()
+    return tuple(
+        TopologyWitness(
+            bundle_id=str(row[0]),
+            parent_snapshot_id=str(row[1]),
+            child_snapshot_id=str(row[2]),
+        )
+        for row in rows
+    )
+
+
+def cyclic_analysis_ids(parent_by_child: dict[str, str]) -> set[str]:
+    cyclic: set[str] = set()
+    for start in parent_by_child:
+        path: list[str] = []
+        current = start
+        while current in parent_by_child and current not in path:
+            path.append(current)
+            current = parent_by_child[current]
+        if current in path:
+            cyclic.update(path[path.index(current) :])
+    return cyclic
 
 
 def persist_semantic_run(
@@ -548,6 +975,258 @@ def persist_projection(
         "episode_projection_id = ?",
         [projection_id],
     )
+
+
+def persist_topology_projection(
+    connection: duckdb.DuckDBPyConnection,
+    requested: ExactEpisodeInput,
+    projection_id: str,
+    configuration_hash: str,
+    ordered_inputs: list[ExactEpisodeInput],
+    roles: dict[str, str],
+    candidates: list[TopologyCandidateState],
+    analyses: dict[str, EpisodeAnalysis],
+) -> None:
+    projection_values = (
+        projection_id,
+        requested.analysis_identity,
+        requested.session.session_id,
+        TOPOLOGY_POLICY_VERSION,
+        configuration_hash,
+    )
+    connection.execute(
+        """
+        INSERT INTO episode_projection_runs (
+            episode_projection_id, requested_analysis_identity,
+            requested_session_id, topology_policy_version, configuration_hash
+        ) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING
+        """,
+        list(projection_values),
+    )
+    stored = connection.execute(
+        "SELECT * EXCLUDE (created_at) FROM episode_projection_runs "
+        "WHERE episode_projection_id = ?",
+        [projection_id],
+    ).fetchone()
+    if stored != projection_values:
+        raise EpisodePersistenceConflict("episode projection identity collision")
+    input_rows = [
+        (
+            projection_id,
+            item.analysis_identity,
+            order,
+            roles[item.analysis_identity],
+            item.session.session_id,
+            item.stored.run.normalization_run_id,
+            item.stored.run.snapshot_bundle_id,
+            item.lifecycle.lifecycle_observation_id,
+        )
+        for order, item in enumerate(ordered_inputs)
+    ]
+    insert_and_compare(
+        connection,
+        "episode_projection_inputs",
+        input_rows,
+        "episode_projection_id = ?",
+        [projection_id],
+    )
+    candidate_rows = []
+    witness_rows = []
+    for state in candidates:
+        parent = state.parent
+        child = state.child
+        child_source = child.stored.source if child is not None else state.child_source
+        candidate_rows.append(
+            (
+                projection_id,
+                state.candidate.topology_candidate_id,
+                state.candidate.direction,
+                state.candidate.native_spawn_identity,
+                parent.stored.source.source_id if parent else None,
+                parent.logical_source_id if parent else None,
+                parent.snapshot_content_id if parent else None,
+                child_source.source_id if child_source else None,
+                child.logical_source_id if child else None,
+                child.snapshot_content_id if child else None,
+                state.candidate.parent_analysis_identity,
+                state.candidate.child_analysis_identity,
+                state.candidate.status,
+                state.candidate.reason,
+                state.candidate.endpoint_status,
+            )
+        )
+        witness_rows.extend(
+            (
+                projection_id,
+                state.candidate.topology_candidate_id,
+                witness.bundle_id,
+                witness.parent_snapshot_id,
+                witness.child_snapshot_id,
+                "tool_call" if state.spawn_entity_id else None,
+                state.spawn_entity_id,
+                state.spawn_anchor_id,
+            )
+            for witness in state.witnesses
+        )
+    insert_and_compare(
+        connection,
+        "episode_topology_candidates",
+        candidate_rows,
+        "episode_projection_id = ?",
+        [projection_id],
+    )
+    insert_and_compare(
+        connection,
+        "episode_topology_candidate_witnesses",
+        witness_rows,
+        "episode_projection_id = ?",
+        [projection_id],
+    )
+    linked = {
+        state.child.analysis_identity: state
+        for state in candidates
+        if state.candidate.status == "linked"
+        and state.child is not None
+        and state.parent is not None
+        and state.spawn_entity_id is not None
+        and state.spawn_anchor_id is not None
+        and state.parent_episode_id is not None
+    }
+    binding_rows = []
+    binding_witness_rows = []
+    delegation_rows = []
+    for child_identity, state in sorted(linked.items()):
+        assert state.parent is not None
+        assert state.parent_episode_id is not None
+        assert state.spawn_entity_id is not None
+        assert state.spawn_anchor_id is not None
+        witness_ids = [witness.bundle_id for witness in state.witnesses]
+        binding_rows.append(
+            (
+                projection_id,
+                child_identity,
+                state.parent.analysis_identity,
+                state.parent_episode_id,
+                "tool_call",
+                state.spawn_entity_id,
+                state.spawn_anchor_id,
+                TOPOLOGY_POLICY_VERSION,
+                json.dumps(
+                    {"witness_bundle_ids": witness_ids},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            )
+        )
+        for witness in state.witnesses:
+            binding_witness_rows.append(
+                (
+                    projection_id,
+                    child_identity,
+                    witness.bundle_id,
+                    state.candidate.topology_candidate_id,
+                    witness.parent_snapshot_id,
+                    witness.child_snapshot_id,
+                    "tool_call",
+                    state.spawn_entity_id,
+                    state.spawn_anchor_id,
+                )
+            )
+        for episode in analyses[child_identity].episodes:
+            delegation_id = stable_id(
+                "episode-delegation",
+                TOPOLOGY_POLICY_VERSION,
+                state.parent.analysis_identity,
+                state.parent_episode_id,
+                child_identity,
+                episode.episode_id,
+                "tool_call",
+                state.spawn_entity_id,
+                state.spawn_anchor_id,
+                json.dumps(witness_ids, separators=(",", ":")),
+            )
+            delegation_rows.append(
+                (
+                    projection_id,
+                    child_identity,
+                    episode.episode_id,
+                    state.parent.analysis_identity,
+                    state.parent_episode_id,
+                    delegation_id,
+                )
+            )
+    for table, rows in (
+        ("episode_delegation_bindings", binding_rows),
+        ("episode_delegation_binding_witnesses", binding_witness_rows),
+        ("episode_delegations", delegation_rows),
+    ):
+        insert_and_compare(
+            connection,
+            table,
+            rows,
+            "episode_projection_id = ?",
+            [projection_id],
+        )
+    unresolved_children = {
+        state.child.analysis_identity
+        for state in candidates
+        if state.child is not None and state.candidate.status not in {"linked", "not_child"}
+    }
+
+    def top_owner(analysis_identity: str, episode_id: str) -> tuple[str, str] | None:
+        visited: set[str] = set()
+        current_identity = analysis_identity
+        current_episode = episode_id
+        while current_identity in linked:
+            if current_identity in visited:
+                return None
+            visited.add(current_identity)
+            state = linked[current_identity]
+            assert state.parent is not None and state.parent_episode_id is not None
+            current_identity = state.parent.analysis_identity
+            current_episode = state.parent_episode_id
+        if current_identity in unresolved_children:
+            return None
+        return current_identity, current_episode
+
+    memberships: list[EpisodeMembership] = []
+    for item in ordered_inputs:
+        for membership in derive_memberships(
+            item,
+            analyses[item.analysis_identity],
+            projection_id,
+        ):
+            if membership.membership_status != "assigned":
+                memberships.append(membership)
+                continue
+            assert membership.source_episode_id is not None
+            owner = top_owner(item.analysis_identity, membership.source_episode_id)
+            if owner is None:
+                memberships.append(
+                    membership.model_copy(
+                        update={
+                            "rollup_owner_status": "unavailable",
+                            "rollup_owner_analysis_identity": None,
+                            "rollup_owner_episode_id": None,
+                            "aggregate_eligibility": "ineligible",
+                            "reason": "delegation_ancestry_unavailable",
+                        }
+                    )
+                )
+            elif item.analysis_identity in linked:
+                memberships.append(
+                    membership.model_copy(
+                        update={
+                            "rollup_owner_analysis_identity": owner[0],
+                            "rollup_owner_episode_id": owner[1],
+                            "aggregate_eligibility": "excluded_delegated",
+                            "reason": "delegated_to_top_level_owner",
+                        }
+                    )
+                )
+            else:
+                memberships.append(membership)
+    persist_memberships(connection, projection_id, memberships)
 
 
 def derive_memberships(
@@ -857,6 +1536,50 @@ def load_episode_analysis(
         )
         for row in candidate_rows
     ]
+    binding_rows = connection.execute(
+        """
+        SELECT child_analysis_identity, parent_analysis_identity,
+            parent_episode_id, spawn_entity_kind, spawn_entity_id,
+            spawn_anchor_id, provenance_json
+        FROM episode_delegation_bindings WHERE episode_projection_id = ?
+        ORDER BY child_analysis_identity
+        """,
+        [projection_id],
+    ).fetchall()
+    bindings = [
+        EpisodeDelegationBinding(
+            child_analysis_identity=str(row[0]),
+            parent_analysis_identity=str(row[1]),
+            parent_episode_id=str(row[2]),
+            spawn_entity_kind=str(row[3]),
+            spawn_entity_id=str(row[4]),
+            spawn_anchor_id=str(row[5]),
+            witness_bundle_ids=[
+                str(item) for item in json.loads(str(row[6]))["witness_bundle_ids"]
+            ],
+        )
+        for row in binding_rows
+    ]
+    edge_rows = connection.execute(
+        """
+        SELECT delegation_id, child_analysis_identity, child_episode_id,
+            parent_analysis_identity, parent_episode_id
+        FROM episode_delegations WHERE episode_projection_id = ?
+        ORDER BY parent_analysis_identity, parent_episode_id,
+            child_analysis_identity, child_episode_id
+        """,
+        [projection_id],
+    ).fetchall()
+    edges = [
+        EpisodeDelegationEdge(
+            delegation_id=str(row[0]),
+            child_analysis_identity=str(row[1]),
+            child_episode_id=str(row[2]),
+            parent_analysis_identity=str(row[3]),
+            parent_episode_id=str(row[4]),
+        )
+        for row in edge_rows
+    ]
     return EpisodeAnalysisPayload(
         requested_session_id=requested_session_id,
         analysis_identity=identity,
@@ -866,7 +1589,11 @@ def load_episode_analysis(
         boundaries=boundaries,
         observations=observations,
         memberships=memberships,
-        delegation=EpisodeDelegation(candidates=candidates),
+        delegation=EpisodeDelegation(
+            candidates=candidates,
+            bindings=bindings,
+            child_episode_edges=edges,
+        ),
     )
 
 

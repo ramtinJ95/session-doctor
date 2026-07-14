@@ -797,6 +797,144 @@ def test_claude_multifile_bundle_replays_without_live_files(tmp_path) -> None:
     assert remaining_session_parent_references == (0,)
 
 
+def test_claude_native_delegation_persists_unavailable_latest_counterparts(tmp_path) -> None:
+    source_root = tmp_path / "topology-analysis"
+    copytree(CLAUDE_TOPOLOGY_FIXTURE_DIR, source_root)
+    database_path = tmp_path / "delegation.duckdb"
+    ingested = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "claude",
+            "--source",
+            str(source_root),
+            "--db",
+            str(database_path),
+        ],
+    )
+    assert ingested.exit_code == 0
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        root = connection.execute(
+            """
+            SELECT sessions.session_id, bundles.primary_snapshot_id
+            FROM sessions
+            JOIN session_sources USING (source_id)
+            JOIN snapshot_bundles AS bundles USING (snapshot_bundle_id)
+            WHERE session_sources.source_kind = 'root_session'
+            """
+        ).fetchone()
+    assert root is not None
+
+    analyzed = runner.invoke(
+        app,
+        [
+            "analyze",
+            str(root[0]),
+            "--db",
+            str(database_path),
+            "--snapshot-id",
+            str(root[1]),
+            "--format",
+            "json",
+        ],
+    )
+    assert analyzed.exit_code == 0, analyzed.stdout
+    payload = json.loads(analyzed.stdout)
+    assert len(payload["exact_inputs"]) == 1
+    assert any(
+        candidate["status"] == "unavailable"
+        and candidate["reason"] == "counterpart_exact_input_unavailable"
+        for candidate in payload["delegation"]["candidates"]
+    ), payload["delegation"]["candidates"]
+    assert not payload["delegation"]["bindings"]
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        assert connection.execute("SELECT count(*) FROM episode_projection_inputs").fetchone() == (
+            1,
+        )
+        assert connection.execute(
+            "SELECT count(*) FROM episode_delegation_bindings"
+        ).fetchone() == (0,)
+
+
+def test_claude_native_delegation_accepts_complete_exact_handshake(tmp_path) -> None:
+    source_root = tmp_path / "topology-linked"
+    copytree(CLAUDE_TOPOLOGY_FIXTURE_DIR, source_root)
+    database_path = tmp_path / "delegation-linked.duckdb"
+    ingested = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--agent",
+            "claude",
+            "--source",
+            str(source_root),
+            "--db",
+            str(database_path),
+        ],
+    )
+    assert ingested.exit_code == 0
+    store = DuckDBStore(database_path)
+    adapter = ClaudeCodeAdapter()
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        original_bundle_ids = [
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT snapshot_bundle_id FROM session_sources
+                WHERE source_kind IN ('root_session', 'subsession')
+                ORDER BY source_kind, source_id
+                """
+            ).fetchall()
+        ]
+    root_session_id = ""
+    for bundle_id in original_bundle_ids:
+        members = store.load_bundle_members(bundle_id)
+        primary = members[0]
+        assert primary.source is not None and primary.source_bytes is not None
+        context = tuple(
+            CapturedAdapterMember(member.source, member.member_role, member.source_bytes)
+            for member in members
+            if member.source is not None and member.source_bytes is not None
+        )
+        prepared = adapter.prepare_captured_source(primary.source, context)
+        parsed = adapter.parse_source(prepared, primary.source_bytes)
+        assert parsed.session is not None
+        if prepared.source_kind.value == "root_session":
+            root_session_id = parsed.session.session_id
+        captured = store.capture_source(prepared, primary.source_bytes)
+        latest_bundle = store.create_single_source_bundle(
+            prepared,
+            captured,
+            parsed.session.native_session_id or prepared.source_id,
+        )
+        store.insert_parsed_bundle(
+            prepared,
+            parsed,
+            captured,
+            latest_bundle,
+            adapter_version=adapter.version,
+            capability_declarations=adapter.capabilities,
+        )
+        store.record_lifecycle(latest_bundle.snapshot_bundle_id, terminal_observed=True)
+    assert root_session_id
+
+    analyzed = runner.invoke(
+        app,
+        ["analyze", root_session_id, "--db", str(database_path), "--format", "json"],
+    )
+    assert analyzed.exit_code == 0, analyzed.stdout
+    payload = json.loads(analyzed.stdout)
+    assert len(payload["exact_inputs"]) == 3
+    assert any(
+        candidate["status"] == "linked" and candidate["reason"] == "native_spawn_exact_handshake"
+        for candidate in payload["delegation"]["candidates"]
+    )
+    assert len(payload["delegation"]["bindings"]) == 1
+    assert payload["delegation"]["bindings"][0]["witness_bundle_ids"]
+    assert not payload["delegation"]["child_episode_edges"]
+
+
 def test_ingest_single_file_fails_immediately_on_recoverable_source_error(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
