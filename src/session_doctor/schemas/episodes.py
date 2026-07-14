@@ -123,6 +123,8 @@ class EpisodeDelegation(SessionDoctorModel):
 class EpisodeUnavailableChild(SessionDoctorModel):
     child_session_id: str
     reason: str
+    snapshot_id: str | None = None
+    logical_source_id: str | None = None
 
 
 class EpisodeTopologyProjection(SessionDoctorModel):

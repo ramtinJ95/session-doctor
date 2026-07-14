@@ -165,11 +165,16 @@ def _analyze_session(
         unavailable_children: list[EpisodeUnavailableChild] = []
         for child_row in child_rows:
             child_session_id = str(child_row[0])
+            child_snapshot_id, child_logical_source_id = _child_capture_reference(
+                connection, child_session_id
+            )
             if child_session_id in (*stack, session_id):
                 unavailable_children.append(
                     EpisodeUnavailableChild(
                         child_session_id=child_session_id,
                         reason="native_parent_cycle",
+                        snapshot_id=child_snapshot_id,
+                        logical_source_id=child_logical_source_id,
                     )
                 )
                 continue
@@ -185,18 +190,25 @@ def _analyze_session(
                     EpisodeUnavailableChild(
                         child_session_id=child_session_id,
                         reason=f"analysis_unavailable:{exc}",
+                        snapshot_id=child_snapshot_id,
+                        logical_source_id=child_logical_source_id,
                     )
                 )
             else:
-                has_parent_link = any(
-                    row.parent_analysis_identity == analysis_identity
-                    for row in child_analysis.delegations
+                has_parent_topology = any(
+                    row.parent_session_id == session_id for row in child_analysis.delegations
                 )
-                if not has_parent_link:
+                if not has_parent_topology:
                     unavailable_children.append(
                         EpisodeUnavailableChild(
                             child_session_id=child_session_id,
-                            reason="child_has_no_episode_delegation",
+                            reason=(
+                                "child_has_no_episode_delegation"
+                                if not child_analysis.episodes
+                                else "child_parent_topology_unavailable"
+                            ),
+                            snapshot_id=child_snapshot_id,
+                            logical_source_id=child_logical_source_id,
                         )
                     )
         topology_delegations = [
@@ -204,10 +216,12 @@ def _analyze_session(
             for row in connection.execute(
                 """
                 SELECT payload_json FROM episode_delegations
-                WHERE child_analysis_identity = ? OR parent_analysis_identity = ?
+                WHERE child_analysis_identity = ?
+                   OR parent_analysis_identity = ?
+                   OR parent_session_id = ?
                 ORDER BY child_analysis_identity, delegation_order, delegation_id
                 """,
-                [analysis_identity, analysis_identity],
+                [analysis_identity, analysis_identity, session_id],
             ).fetchall()
         ]
         topology_projection = _persist_topology_projection(
@@ -236,7 +250,10 @@ def _persist_topology_projection(
             DELEGATION_TOPOLOGY_VERSION,
             analysis_identity,
             *(row.delegation_id for row in ordered_delegations),
-            *(f"{row.child_session_id}:{row.reason}" for row in ordered_unavailable),
+            *(
+                f"{row.child_session_id}:{row.reason}:{row.snapshot_id}:{row.logical_source_id}"
+                for row in ordered_unavailable
+            ),
         ),
         topology_version=DELEGATION_TOPOLOGY_VERSION,
         analysis_identity=analysis_identity,
@@ -281,26 +298,54 @@ def _persist_topology_projection(
     if ordered_unavailable:
         connection.executemany(
             "INSERT INTO episode_topology_projection_unavailable_children "
-            "VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
+            "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
             [
                 (
                     projection.topology_projection_id,
                     row.child_session_id,
                     row.reason,
+                    row.snapshot_id,
+                    row.logical_source_id,
                     row_order,
                 )
                 for row_order, row in enumerate(ordered_unavailable)
             ],
         )
     stored_unavailable = connection.execute(
-        "SELECT child_session_id, unavailable_reason "
+        "SELECT child_session_id, unavailable_reason, snapshot_id, logical_source_id "
         "FROM episode_topology_projection_unavailable_children "
         "WHERE topology_projection_id = ? ORDER BY child_order",
         [projection.topology_projection_id],
     ).fetchall()
-    if stored_unavailable != [(row.child_session_id, row.reason) for row in ordered_unavailable]:
+    if stored_unavailable != [
+        (row.child_session_id, row.reason, row.snapshot_id, row.logical_source_id)
+        for row in ordered_unavailable
+    ]:
         raise EpisodePersistenceConflict("episode unavailable-child projection is incomplete")
     return EpisodeTopologyProjection.model_validate_json(str(stored[3]))
+
+
+def _child_capture_reference(
+    connection: duckdb.DuckDBPyConnection,
+    session_id: str,
+) -> tuple[str | None, str | None]:
+    row = connection.execute(
+        """
+        SELECT latest.snapshot_id, latest.logical_source_id
+        FROM sessions
+        JOIN session_sources USING (source_id)
+        JOIN snapshot_bundles AS normalized_bundle USING (snapshot_bundle_id)
+        JOIN source_snapshots AS normalized_snapshot
+          ON normalized_snapshot.snapshot_id = normalized_bundle.primary_snapshot_id
+        JOIN source_snapshots AS latest
+          ON latest.logical_source_id = normalized_snapshot.logical_source_id
+        WHERE sessions.session_id = ?
+        ORDER BY latest.capture_sequence DESC
+        LIMIT 1
+        """,
+        [session_id],
+    ).fetchone()
+    return (str(row[0]), str(row[1])) if row is not None else (None, None)
 
 
 def _select_analysis_input(
@@ -460,9 +505,15 @@ def _materialize_source_episodes(
     if not session.is_sidechain or not selected.stored.bundle.raw_events:
         return []
     ordered_events = sorted(
-        selected.stored.bundle.raw_events,
-        key=lambda event: (event.source_id, event.record_index, event.event_id),
+        (
+            event
+            for event in selected.stored.bundle.raw_events
+            if event.source_id == session.source_id
+        ),
+        key=lambda event: (event.record_index, event.event_id),
     )
+    if not ordered_events:
+        return []
     anchors = [event.event_id for event in ordered_events]
     episode_id = stable_id(
         "task-episode",
@@ -735,7 +786,9 @@ def _derive_memberships(
     episode_by_anchor = {
         anchor: episode for episode in episodes for anchor in episode.event_anchor_ids
     }
-    raw_by_record = {event.record_index: event.event_id for event in stored.bundle.raw_events}
+    raw_by_source_record = {
+        (event.source_id, event.record_index): event.event_id for event in stored.bundle.raw_events
+    }
     tool_call_by_id = {call.tool_call_id: call for call in stored.bundle.tool_calls}
     episode_by_tool_call = {
         call_id: episode_by_anchor.get(call.source_event_id or "")
@@ -778,9 +831,8 @@ def _derive_memberships(
                     if source_episode := episode_by_tool_call.get(tool_call_id):
                         candidate_episodes.append(source_episode)
             if str(entity_kind) == "parse_warning":
-                record_index = payload.get("record_index")
-                if isinstance(record_index, int) and record_index in raw_by_record:
-                    warning_anchor = raw_by_record[record_index]
+                warning_anchor = _warning_anchor(payload, raw_by_source_record)
+                if warning_anchor is not None:
                     anchors.append(warning_anchor)
                     if source_episode := episode_by_anchor.get(warning_anchor):
                         candidate_episodes.append(source_episode)
@@ -834,6 +886,17 @@ def _derive_memberships(
             )
         )
     return memberships
+
+
+def _warning_anchor(
+    payload: dict[str, object],
+    raw_by_source_record: dict[tuple[str, int], str],
+) -> str | None:
+    source_id = payload.get("source_id")
+    record_index = payload.get("record_index")
+    if not isinstance(source_id, str) or not isinstance(record_index, int):
+        return None
+    return raw_by_source_record.get((source_id, record_index))
 
 
 def _persist_and_load(
@@ -948,6 +1011,7 @@ def _persist_and_load(
                 row.child_analysis_identity,
                 row.child_episode_id,
                 row_order,
+                row.parent_session_id,
                 row.parent_analysis_identity,
                 row.parent_episode_id,
                 row.rollup_owner_episode_id,
@@ -957,7 +1021,7 @@ def _persist_and_load(
             )
             for row_order, row in enumerate(analysis.delegations)
         ),
-        12,
+        13,
     )
     loaded = _load_persisted_analysis(connection, analysis.analysis_identity)
     if loaded != analysis:

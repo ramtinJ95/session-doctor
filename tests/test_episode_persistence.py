@@ -10,10 +10,16 @@ from typer.testing import CliRunner
 from session_doctor.adapters import ParsedSessionBundle
 from session_doctor.adapters.codex import CodexAdapter
 from session_doctor.cli import app
-from session_doctor.episode_workflow import analyze_session_episodes
+from session_doctor.episode_workflow import (
+    AnalysisInput,
+    _materialize_source_episodes,
+    _warning_anchor,
+    analyze_session_episodes,
+)
 from session_doctor.schemas import (
     AgentName,
     DelegationStatus,
+    EpisodeAnalysis,
     EpisodeMembershipStatus,
     Message,
     NormalizedRole,
@@ -24,6 +30,8 @@ from session_doctor.schemas import (
     ToolResult,
 )
 from session_doctor.store import DuckDBStore, SnapshotPruneBlocked
+from session_doctor.store.lifecycle import LifecycleObservation
+from session_doctor.store.normalization_runs import NormalizationRun, StoredNormalization
 
 runner = CliRunner()
 
@@ -339,7 +347,7 @@ def test_parent_topology_preserves_unavailable_child_without_failing(tmp_path) -
         adapter_version=CodexAdapter.version,
         capability_declarations=CodexAdapter.capabilities,
     )
-    store.capture_source(child_source, b"newer-unparsed-child")
+    newer = store.capture_source(child_source, b"newer-unparsed-child")
 
     parent = analyze_session_episodes(store, parent_session_id, store.database_path)
 
@@ -362,11 +370,11 @@ def test_parent_topology_preserves_unavailable_child_without_failing(tmp_path) -
         ).fetchone()
     assert payload is not None
     assert child_session_id in str(payload[0])
-    dependencies = store.snapshot_dependencies(captured.snapshot_id)
+    dependencies = store.snapshot_dependencies(newer.snapshot_id)
     assert dependencies.derived_row_counts["episode_topology_projections"] == 1
     assert dependencies.derived_row_counts["episode_topology_projection_unavailable_children"] == 1
 
-    store.prune_snapshot(captured.snapshot_id, force=True)
+    store.prune_snapshot(newer.snapshot_id, force=True)
 
     with duckdb.connect(str(store.database_path), read_only=True) as connection:
         assert connection.execute(
@@ -418,6 +426,138 @@ def test_parent_topology_records_child_with_no_episode(tmp_path) -> None:
         (row.child_session_id, row.reason)
         for row in parent.topology_projection.unavailable_children
     ] == [(child_session_id, "child_has_no_episode_delegation")]
+
+
+def test_parent_topology_projects_ambiguous_child_delegation(tmp_path) -> None:
+    store, parent_session_id = persisted_conflicting_bundle(tmp_path)
+    child_source = SessionSource(
+        source_id="ambiguous-child-source",
+        agent_name=AgentName.CODEX,
+        source_path="/sessions/ambiguous-child.jsonl",
+    )
+    captured = store.capture_source(child_source, b"ambiguous-child")
+    child_bundle = store.create_single_source_bundle(
+        child_source,
+        captured,
+        "ambiguous-child-native",
+    )
+    store.record_lifecycle(child_bundle.snapshot_bundle_id, terminal_observed=True)
+    child_session_id = "ambiguous-child-session"
+    store.insert_parsed_bundle(
+        child_source,
+        ParsedSessionBundle(
+            session=Session(
+                session_id=child_session_id,
+                source_id=child_source.source_id,
+                agent_name=AgentName.CODEX,
+                native_session_id="ambiguous-child-native",
+                parent_session_id=parent_session_id,
+                is_sidechain=True,
+                metadata={"parent_link_status": "ambiguous"},
+            ),
+            raw_events=[
+                RawEvent(
+                    event_id="ambiguous-child-event",
+                    source_id=child_source.source_id,
+                    agent_name=AgentName.CODEX,
+                    record_index=0,
+                )
+            ],
+        ),
+        captured,
+        child_bundle,
+        adapter_version=CodexAdapter.version,
+        capability_declarations=CodexAdapter.capabilities,
+    )
+
+    parent = analyze_session_episodes(store, parent_session_id, store.database_path)
+
+    assert parent.topology_projection is not None
+    assert parent.topology_projection.unavailable_children == []
+    assert len(parent.topology_projection.delegations) == 1
+    assert parent.topology_projection.delegations[0].status is DelegationStatus.AMBIGUOUS
+    assert parent.topology_projection.delegations[0].parent_session_id == parent_session_id
+
+
+def test_delegated_fallback_keeps_source_local_order_and_warning_source_identity() -> None:
+    session = Session(
+        session_id="delegated-source-local",
+        source_id="source-child",
+        agent_name=AgentName.CODEX,
+        is_sidechain=True,
+    )
+    parsed = ParsedSessionBundle(
+        session=session,
+        raw_events=[
+            RawEvent(
+                event_id="foreign-event",
+                source_id="source-foreign",
+                agent_name=AgentName.CODEX,
+                record_index=0,
+            ),
+            RawEvent(
+                event_id="child-second",
+                source_id="source-child",
+                agent_name=AgentName.CODEX,
+                record_index=2,
+            ),
+            RawEvent(
+                event_id="child-first",
+                source_id="source-child",
+                agent_name=AgentName.CODEX,
+                record_index=1,
+            ),
+        ],
+    )
+    selected = AnalysisInput(
+        stored=StoredNormalization(
+            run=NormalizationRun(
+                normalization_run_id="normalization-test",
+                bundle_content_id="content-test",
+                snapshot_bundle_id="bundle-test",
+                adapter_name="codex",
+                adapter_version=CodexAdapter.version,
+                normalization_version="normalization-v3",
+                configuration_hash="configuration-test",
+            ),
+            source=SessionSource(
+                source_id=session.source_id,
+                agent_name=session.agent_name,
+                source_path="/sessions/child.jsonl",
+            ),
+            bundle=parsed,
+        ),
+        lifecycle=LifecycleObservation(
+            lifecycle_observation_id="lifecycle-test",
+            snapshot_bundle_id="bundle-test",
+            state="terminal_observed",
+            observed_at=datetime(2026, 7, 14, tzinfo=UTC),
+            evidence={},
+        ),
+        lifecycle_policy_version="lifecycle-v1",
+    )
+    segmented = EpisodeAnalysis(
+        analysis_identity="unpersisted",
+        normalization_run_id="unpersisted",
+        segmentation_version="segmentation-v2",
+        session_id=session.session_id,
+        lifecycle_observation_id="lifecycle-test",
+        lifecycle_state="terminal_observed",
+    )
+
+    episodes = _materialize_source_episodes(segmented, selected)
+
+    assert episodes[0].event_anchor_ids == ["child-first", "child-second"]
+    assert (
+        _warning_anchor(
+            {"source_id": "source-child", "record_index": 0},
+            {
+                ("source-foreign", 0): "foreign-event",
+                ("source-child", 0): "child-event",
+            },
+        )
+        == "child-event"
+    )
 
 
 def test_pruning_unnormalized_predecessor_removes_downstream_episode_analysis(

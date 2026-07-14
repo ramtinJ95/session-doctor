@@ -58,6 +58,7 @@ class PruneDependencies:
     source_ids: tuple[str, ...]
     session_ids: tuple[str, ...]
     analysis_run_ids: tuple[str, ...]
+    topology_projection_ids: tuple[str, ...]
     normalization_run_ids: tuple[str, ...]
     evaluation_packet_ids: tuple[str, ...]
     evaluation_corpus_ids: tuple[str, ...]
@@ -108,11 +109,30 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
             raise ValueError(
                 "Only primary snapshots can be pruned; prune the owning bundle's primary"
             )
+        topology_projection_rows = connection.execute(
+            """
+            SELECT DISTINCT topology_projection_id
+            FROM episode_topology_projection_unavailable_children
+            WHERE snapshot_id = ? ORDER BY topology_projection_id
+            """,
+            [snapshot_id],
+        ).fetchall()
+        topology_projection_ids = tuple(str(row[0]) for row in topology_projection_rows)
+        unavailable_count = (
+            connection.execute(
+                "SELECT count(*) FROM episode_topology_projection_unavailable_children "
+                "WHERE topology_projection_id IN (SELECT unnest(?))",
+                [list(topology_projection_ids)],
+            ).fetchone()
+            if topology_projection_ids
+            else None
+        )
         return PruneDependencies(
             bundle_ids=(),
             source_ids=(),
             session_ids=(),
             analysis_run_ids=(),
+            topology_projection_ids=topology_projection_ids,
             normalization_run_ids=(),
             evaluation_packet_ids=(),
             evaluation_corpus_ids=(),
@@ -122,7 +142,12 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
             inbound_source_ids=(),
             inbound_session_ids=(),
             downstream_lifecycle_bundle_ids=(),
-            derived_row_counts={},
+            derived_row_counts={
+                "episode_topology_projections": len(topology_projection_ids),
+                "episode_topology_projection_unavailable_children": (
+                    int(unavailable_count[0]) if unavailable_count else 0
+                ),
+            },
         )
     if len(bundle_rows) != 1:
         raise RuntimeError(f"Snapshot has multiple owning bundles: {snapshot_id}")
@@ -258,6 +283,7 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
                OR delegation.child_analysis_identity IN (SELECT unnest(?))
                OR delegation.parent_analysis_identity IN (SELECT unnest(?))
                OR unavailable.child_session_id IN (SELECT unnest(?))
+               OR unavailable.snapshot_id = ?
             ORDER BY projection.topology_projection_id
             """,
             [
@@ -265,6 +291,7 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
                 list(analysis_run_ids),
                 list(analysis_run_ids),
                 list(session_ids),
+                snapshot_id,
             ],
         ).fetchall()
         if analysis_run_ids or session_ids
@@ -379,6 +406,7 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
         source_ids=source_ids,
         session_ids=session_ids,
         analysis_run_ids=analysis_run_ids,
+        topology_projection_ids=topology_projection_ids,
         normalization_run_ids=normalization_run_ids,
         evaluation_packet_ids=evaluation_packet_ids,
         evaluation_corpus_ids=evaluation_corpus_ids,
@@ -495,6 +523,7 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
             dependencies.source_ids
             or dependencies.normalization_run_ids
             or dependencies.analysis_run_ids
+            or dependencies.topology_projection_ids
             or dependencies.evaluation_packet_ids
             or dependencies.evaluation_corpus_ids
             or dependencies.audit_protocol_ids
@@ -622,45 +651,23 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
         ).fetchall()
 
         analysis_run_ids = list(dependencies.analysis_run_ids)
-        if dependencies.analysis_run_ids or dependencies.session_ids:
-            topology_projection_rows = connection.execute(
-                """
-                SELECT DISTINCT projection.topology_projection_id
-                FROM episode_topology_projections AS projection
-                LEFT JOIN episode_topology_projection_delegations AS link
-                  USING (topology_projection_id)
-                LEFT JOIN episode_delegations AS delegation USING (delegation_id)
-                LEFT JOIN episode_topology_projection_unavailable_children AS unavailable
-                  USING (topology_projection_id)
-                WHERE projection.analysis_identity IN (SELECT unnest(?))
-                   OR delegation.child_analysis_identity IN (SELECT unnest(?))
-                   OR delegation.parent_analysis_identity IN (SELECT unnest(?))
-                   OR unavailable.child_session_id IN (SELECT unnest(?))
-                """,
-                [
-                    analysis_run_ids,
-                    analysis_run_ids,
-                    analysis_run_ids,
-                    list(dependencies.session_ids),
-                ],
-            ).fetchall()
-            topology_projection_ids = [str(row[0]) for row in topology_projection_rows]
-            if topology_projection_ids:
-                connection.execute(
-                    "DELETE FROM episode_topology_projection_unavailable_children "
-                    "WHERE topology_projection_id IN (SELECT unnest(?))",
-                    [topology_projection_ids],
-                )
-                connection.execute(
-                    "DELETE FROM episode_topology_projection_delegations "
-                    "WHERE topology_projection_id IN (SELECT unnest(?))",
-                    [topology_projection_ids],
-                )
-                connection.execute(
-                    "DELETE FROM episode_topology_projections "
-                    "WHERE topology_projection_id IN (SELECT unnest(?))",
-                    [topology_projection_ids],
-                )
+        topology_projection_ids = list(dependencies.topology_projection_ids)
+        if topology_projection_ids:
+            connection.execute(
+                "DELETE FROM episode_topology_projection_unavailable_children "
+                "WHERE topology_projection_id IN (SELECT unnest(?))",
+                [topology_projection_ids],
+            )
+            connection.execute(
+                "DELETE FROM episode_topology_projection_delegations "
+                "WHERE topology_projection_id IN (SELECT unnest(?))",
+                [topology_projection_ids],
+            )
+            connection.execute(
+                "DELETE FROM episode_topology_projections "
+                "WHERE topology_projection_id IN (SELECT unnest(?))",
+                [topology_projection_ids],
+            )
         if dependencies.analysis_run_ids:
             connection.execute(
                 "DELETE FROM episode_delegations "

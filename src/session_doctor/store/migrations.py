@@ -431,6 +431,7 @@ CREATE_TABLE_STATEMENTS = (
         child_analysis_identity VARCHAR NOT NULL,
         child_episode_id VARCHAR NOT NULL,
         delegation_order INTEGER NOT NULL CHECK (delegation_order >= 0),
+        parent_session_id VARCHAR,
         parent_analysis_identity VARCHAR,
         parent_episode_id VARCHAR,
         rollup_owner_episode_id VARCHAR NOT NULL,
@@ -463,6 +464,8 @@ CREATE_TABLE_STATEMENTS = (
         topology_projection_id VARCHAR NOT NULL,
         child_session_id VARCHAR NOT NULL,
         unavailable_reason VARCHAR NOT NULL,
+        snapshot_id VARCHAR,
+        logical_source_id VARCHAR,
         child_order INTEGER NOT NULL CHECK (child_order >= 0),
         PRIMARY KEY (topology_projection_id, child_session_id),
         UNIQUE (topology_projection_id, child_order)
