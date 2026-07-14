@@ -5,6 +5,9 @@ artifact, payload, and CLI contracts may change incompatibly during dogfooding.
 
 ## Unreleased
 
+- persist schema-v11 episode analyses, boundaries, observations, complete
+  normalized-entity membership, and native-spawn delegation provenance with one
+  canonical rollup owner and explicit delegated-child aggregate ineligibility
 - calibrate and freeze provisional `segmentation-v2` with three-judge panels,
   maintainer audit, synthetic regressions, boundary references, and deterministic
   episode-evidence inputs without making a checkpoint or final quality claim

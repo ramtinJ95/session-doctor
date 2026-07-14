@@ -29,9 +29,14 @@ uv run session-doctor analyze <session-id>
 uv run session-doctor analyze <session-id> --format json
 ```
 
-Output contains deterministic episodes, event-anchored boundary decisions,
-lifecycle state, provisionality, and observable segmentation observations. It
-does not contain v1 scores, labels, recommendations, or LLM judgments.
+Output contains persisted deterministic episodes, event-anchored boundary
+decisions, lifecycle state, provisionality, normalized-entity membership, and
+native-spawn delegation provenance. Ambiguous and unassigned entities remain
+explicit. Child evidence names one canonical parent rollup owner but stays
+ineligible for additive child denominators. Cross-session continuation and
+family identity remain unavailable until their versioned relation rules ship.
+The output does not contain v1 scores, labels, recommendations, or LLM
+judgments.
 
 ## Snapshot and normalization history
 
@@ -97,7 +102,7 @@ There is no v1 fallback.
 | `db init` / `db info` | Initialize or inspect DuckDB |
 | `ingest` | Capture exact bytes and normalize selected sessions |
 | `sessions list` | List stored native sessions |
-| `analyze SESSION_ID` | Emit deterministic episode/lifecycle/observation output |
+| `analyze SESSION_ID` | Persist and emit deterministic episode/membership/delegation output |
 | `snapshots list/show/replay/prune` | Inspect and explicitly manage exact history |
 | `normalizations status/replay` | Inspect or explicitly add parser projections |
 | `evaluation export-boundaries` | Register routing privately and export judge packets |

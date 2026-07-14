@@ -48,7 +48,16 @@ PR 7 completed the analyzer cutover:
 - restored v2 analysis surfaces are marked experimental until PR 23 passes the
   untouched final-test gate.
 
-Schema version 10 drops the four v1 analysis tables. Calibrated
+Schema version 11 persists semantic-run-keyed episodes, boundaries,
+observations, normalized-entity memberships, and delegation links. Every
+normalized entity has one assigned, ambiguous, or unassigned membership row.
+Native spawn evidence links child episodes without timestamp interleaving;
+delegated evidence names one top-level rollup owner and is excluded from
+additive child denominators. Missing or conflicting topology remains explicitly
+unavailable or ambiguous. No continuation or family identity is produced before
+the versioned relation framework.
+
+Schema version 10 dropped the four v1 analysis tables. Calibrated
 `segmentation-v2` emits
 event-anchored task episodes and boundary annotations using explicit-new-task,
 correction/repeat, closure-plus-topic-shift, and conservative ambiguous-merge
@@ -209,6 +218,13 @@ semantics; mixed row semantics make aggregate usage unavailable.
 declared analysis identity. Execution timestamps are metadata and do not alter
 the identity. A run is accepted only when its normalization foundation,
 lifecycle observation, and ordering version exist and match.
+
+Episode persistence uses the same exact normalization run, immutable lifecycle
+observation, ordering version, and `segmentation-v2` identity in one transaction.
+Schema-versioned JSON is round-tripped from persisted rows. Container entities,
+missing event provenance, and conflicting source/tool provenance are not
+guessed into an episode; they are stored as explicit unassigned or ambiguous
+memberships.
 
 Every delegated evidence row has one source episode and one canonical rollup
 owner. Parent reports may project delegated components, but additive aggregates

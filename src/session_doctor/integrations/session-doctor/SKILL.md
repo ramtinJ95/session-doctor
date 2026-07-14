@@ -39,9 +39,13 @@ session-doctor analyze SESSION_ID
 session-doctor analyze SESSION_ID --format json
 ```
 
-The analysis output contains event-anchored episodes, boundary decisions,
-lifecycle state, provisionality, and observable segmentation observations. It
-does not contain v1 labels, risk scores, recommendations, or LLM judgments.
+The analysis output contains persisted event-anchored episodes, boundary
+decisions, lifecycle state, provisionality, normalized-entity memberships, and
+native-spawn delegation provenance. Preserve explicit ambiguous/unassigned
+membership, canonical rollup owners, and delegated-child aggregate
+ineligibility. Continuation and family identity remain unavailable until the
+versioned relation framework. The output does not contain v1 labels, risk scores,
+recommendations, or LLM judgments.
 
 Inspect exact captured history or replay normalization when requested:
 
