@@ -347,11 +347,17 @@ def test_latest_capture_bundle_is_used_for_a_b_a_history(tmp_path) -> None:
             ),
             raw_events=[
                 RawEvent(
-                    event_id=event_id,
+                    event_id="event-before-user",
                     source_id=source.source_id,
                     agent_name=AgentName.CODEX,
                     record_index=0,
-                )
+                ),
+                RawEvent(
+                    event_id=event_id,
+                    source_id=source.source_id,
+                    agent_name=AgentName.CODEX,
+                    record_index=1,
+                ),
             ],
             messages=[
                 Message(
@@ -379,6 +385,12 @@ def test_latest_capture_bundle_is_used_for_a_b_a_history(tmp_path) -> None:
     assert analysis.exact_inputs[0].lifecycle_observation_id == (
         latest_lifecycle.lifecycle_observation_id
     )
+    membership_by_key = {(row.entity_kind, row.entity_id): row for row in analysis.memberships}
+    assert membership_by_key[("raw_event", "event-before-user")].reason == ("before_first_episode")
+    assert membership_by_key[("session", "session-history")].reason == (
+        "container_not_episode_evidence"
+    )
+    assert membership_by_key[("raw_event", "event-a")].membership_status == "assigned"
     replay = analyze_session_episodes(store, "session-history", store.database_path)
     assert replay.model_dump(mode="json") == analysis.model_dump(mode="json")
     historical = analyze_session_episodes(

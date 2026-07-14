@@ -24,6 +24,7 @@ from session_doctor.schemas import (
     EpisodeObservation,
     EpisodeTopologyCandidate,
     ParseWarning,
+    RawEvent,
     SemanticAnalysisComponents,
     SemanticFoundation,
     Session,
@@ -1241,6 +1242,22 @@ def derive_memberships(
         for anchor_id in episode.event_anchor_ids:
             episode_by_anchor.setdefault(anchor_id, set()).add(episode.episode_id)
     raw_by_id = {event.event_id: event for event in bundle.raw_events}
+    anchor_by_raw_event_id = {
+        anchor.entity_id: anchor for anchor in anchors.values() if anchor.anchor_kind == "raw_event"
+    }
+    anchored_event_ids = {
+        anchor.entity_id
+        for episode in analysis.episodes
+        for anchor_id in episode.event_anchor_ids
+        if (anchor := anchors[anchor_id]).anchor_kind == "raw_event"
+    }
+    first_anchored_record_by_source: dict[str, int] = {}
+    for event_id in anchored_event_ids:
+        event = raw_by_id[event_id]
+        first_anchored_record_by_source[event.source_id] = min(
+            event.record_index,
+            first_anchored_record_by_source.get(event.source_id, event.record_index),
+        )
     message_by_id = {message.message_id: message for message in bundle.messages}
     call_by_id = {call.tool_call_id: call for call in bundle.tool_calls}
     entity_objects = {
@@ -1263,17 +1280,12 @@ def derive_memberships(
         entity = entity_objects[entity_kind][entity_id]
         candidates: set[str] = set()
         reason = "no_deterministic_anchor"
+        related_events: list[RawEvent] = []
         if entity_kind in {"session", "session_source"}:
             reason = "container_not_episode_evidence"
         elif entity_kind == "raw_event":
-            anchor = next(
-                (
-                    anchor
-                    for anchor in anchors.values()
-                    if anchor.entity_id == entity_id and anchor.anchor_kind == "raw_event"
-                ),
-                None,
-            )
+            related_events = [cast(RawEvent, entity)]
+            anchor = anchor_by_raw_event_id.get(entity_id)
             if anchor is not None:
                 candidates.update(episode_by_anchor.get(anchor.anchor_id, set()))
         elif entity_kind == "parse_warning":
@@ -1285,6 +1297,7 @@ def derive_memberships(
                     if event.source_id == warning.source_id
                     and event.record_index == warning.record_index
                 ]
+                related_events = event_matches
                 for event in event_matches:
                     anchor = next(
                         row for row in anchors.values() if row.entity_id == event.event_id
@@ -1294,6 +1307,7 @@ def derive_memberships(
             source_event_id = getattr(entity, "source_event_id", None)
             if source_event_id in raw_by_id:
                 event = raw_by_id[source_event_id]
+                related_events = [event]
                 anchor = next(row for row in anchors.values() if row.entity_id == event.event_id)
                 candidates.update(episode_by_anchor.get(anchor.anchor_id, set()))
             if not candidates and entity_kind in {"tool_result", "command_run", "file_activity"}:
@@ -1356,10 +1370,17 @@ def derive_memberships(
                 )
             )
         else:
-            if reason == "no_deterministic_anchor" and analysis.episodes:
-                reason = "before_first_episode"
-            elif reason == "no_deterministic_anchor" and not analysis.episodes:
+            if reason == "no_deterministic_anchor" and not analysis.episodes:
                 reason = "no_episode_anchor"
+            elif reason == "no_deterministic_anchor" and related_events:
+                event_sources = {event.source_id for event in related_events}
+                if not event_sources.intersection(first_anchored_record_by_source):
+                    reason = "cross_source_partial_order"
+                elif all(
+                    event.record_index < first_anchored_record_by_source.get(event.source_id, -1)
+                    for event in related_events
+                ):
+                    reason = "before_first_episode"
             memberships.append(
                 EpisodeMembership(
                     source_analysis_identity=exact.analysis_identity,
