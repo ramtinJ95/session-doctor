@@ -239,7 +239,9 @@ def test_built_distributions_and_clean_wheel_install_include_skill(tmp_path) -> 
         "json",
     )
     analysis_payload = json.loads(analysis_result.stdout)
-    assert analysis_payload["session_id"] == session_id
+    assert analysis_payload["requested_session_id"] == session_id
+    assert analysis_payload["schema_version"] == "episode-analysis-v2"
+    assert analysis_payload["memberships"]
     assert analysis_payload["episodes"]
     assert not (tmp_path / "artifacts").exists()
     assert not tuple(tmp_path.glob("*.css"))

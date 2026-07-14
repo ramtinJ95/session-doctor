@@ -27,11 +27,16 @@ Analyze one normalized native session:
 ```bash
 uv run session-doctor analyze <session-id>
 uv run session-doctor analyze <session-id> --format json
+uv run session-doctor analyze <session-id> --snapshot-id <snapshot-id>
+uv run session-doctor analyze <session-id> --projection-id <projection-id>
 ```
 
-Output contains deterministic episodes, event-anchored boundary decisions,
-lifecycle state, provisionality, and observable segmentation observations. It
-does not contain v1 scores, labels, recommendations, or LLM judgments.
+Output contains persisted deterministic episodes, total normalized-entity
+membership, event-anchored boundary decisions, lifecycle provenance, and exact
+native delegation status. `--snapshot-id` writes an explicit historical
+analysis; `--projection-id` only reads already-persisted rows. It does not
+contain v1 scores, labels, recommendations, aggregates, continuation/family
+inference, or LLM judgments.
 
 ## Snapshot and normalization history
 
@@ -97,7 +102,7 @@ There is no v1 fallback.
 | `db init` / `db info` | Initialize or inspect DuckDB |
 | `ingest` | Capture exact bytes and normalize selected sessions |
 | `sessions list` | List stored native sessions |
-| `analyze SESSION_ID` | Emit deterministic episode/lifecycle/observation output |
+| `analyze SESSION_ID` | Persist or retrieve exact episode membership and delegation output |
 | `snapshots list/show/replay/prune` | Inspect and explicitly manage exact history |
 | `normalizations status/replay` | Inspect or explicitly add parser projections |
 | `evaluation export-boundaries` | Register routing privately and export judge packets |

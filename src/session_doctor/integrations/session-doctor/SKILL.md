@@ -37,11 +37,15 @@ Analyze one normalized native session into deterministic task episodes:
 ```bash
 session-doctor analyze SESSION_ID
 session-doctor analyze SESSION_ID --format json
+session-doctor analyze SESSION_ID --snapshot-id SNAPSHOT_ID
+session-doctor analyze SESSION_ID --projection-id PROJECTION_ID
 ```
 
-The analysis output contains event-anchored episodes, boundary decisions,
-lifecycle state, provisionality, and observable segmentation observations. It
-does not contain v1 labels, risk scores, recommendations, or LLM judgments.
+The analysis output contains persisted event-anchored episodes, total entity
+membership, boundary decisions, lifecycle provenance, and exact native
+delegation status. Snapshot selection writes one explicit historical analysis;
+projection selection is read-only. It does not contain v1 labels, risk scores,
+aggregates, continuation/family inference, recommendations, or LLM judgments.
 
 Inspect exact captured history or replay normalization when requested:
 

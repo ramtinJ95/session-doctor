@@ -48,8 +48,14 @@ PR 7 completed the analyzer cutover:
 - restored v2 analysis surfaces are marked experimental until PR 23 passes the
   untouched final-test gate.
 
-Schema version 10 drops the four v1 analysis tables. Calibrated
-`segmentation-v2` emits
+Schema version 11 drops the four v1 analysis tables and persists immutable
+episode anchors, boundaries, observations, total normalized-entity membership,
+and exact native delegation projections. Historical snapshot analysis is an
+explicit write; stored projection retrieval is read-only. Child evidence stays
+in its source episode and records one top-level rollup owner or an explicit
+unavailable owner. Continuation and task-family identity remain unavailable.
+
+Calibrated `segmentation-v2` emits
 event-anchored task episodes and boundary annotations using explicit-new-task,
 correction/repeat, closure-plus-topic-shift, and conservative ambiguous-merge
 precedence. Its calibrated continuation vocabulary covers narrow anaphoric
