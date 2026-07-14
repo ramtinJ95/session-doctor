@@ -584,19 +584,25 @@ def _delegation_configuration_identity(
         return stable_id("delegation-configuration", DELEGATION_TOPOLOGY_VERSION, "direct")
     sidecar = session.metadata.get("subagent_metadata")
     spawn_native_id = sidecar.get("tool_use_id") if isinstance(sidecar, dict) else None
+    parent_session_id = session.parent_session_id
+    parent_edge_is_cycle = isinstance(parent_session_id, str) and _native_parent_edge_is_cyclic(
+        connection,
+        session.session_id,
+        parent_session_id,
+    )
     parent_analysis_identity = "unavailable"
     parent_snapshot_bundle_id = "unavailable"
     parent_capture_status = "unavailable"
     if (
         session.metadata.get("parent_link_status") == "linked"
-        and isinstance(session.parent_session_id, str)
+        and isinstance(parent_session_id, str)
         and isinstance(spawn_native_id, str)
-        and (session.parent_session_id not in stack or session.parent_session_id in cache)
+        and not parent_edge_is_cycle
     ):
         try:
             parent_analysis, parent_input = _analyze_session(
                 connection,
-                session.parent_session_id,
+                parent_session_id,
                 cache,
                 stack,
             )
@@ -610,11 +616,13 @@ def _delegation_configuration_identity(
                 if _parent_capture_matches(connection, selected, parent_input)
                 else "mismatched"
             )
+    elif parent_edge_is_cycle:
+        parent_capture_status = "native_parent_cycle"
     return stable_id(
         "delegation-configuration",
         DELEGATION_TOPOLOGY_VERSION,
         session.metadata.get("parent_link_status"),
-        session.parent_session_id,
+        parent_session_id,
         spawn_native_id,
         parent_analysis_identity,
         parent_snapshot_bundle_id,
@@ -637,6 +645,11 @@ def _resolve_delegation(
     parent_link_status = session.metadata.get("parent_link_status")
     sidecar = session.metadata.get("subagent_metadata")
     spawn_native_id = sidecar.get("tool_use_id") if isinstance(sidecar, dict) else None
+    parent_edge_is_cycle = isinstance(parent_session_id, str) and _native_parent_edge_is_cyclic(
+        connection,
+        session.session_id,
+        parent_session_id,
+    )
     status = DelegationStatus.UNAVAILABLE
     parent_analysis: EpisodeAnalysis | None = None
     parent_input: AnalysisInput | None = None
@@ -650,54 +663,55 @@ def _resolve_delegation(
         parent_link_status == "linked"
         and isinstance(parent_session_id, str)
         and isinstance(spawn_native_id, str)
-        and (parent_session_id not in stack or parent_session_id in cache)
     ):
-        try:
-            parent_analysis, parent_input = _analyze_session(
-                connection,
-                parent_session_id,
-                cache,
-                stack,
-            )
-        except EpisodeAnalysisUnavailable:
-            reason = "parent_analysis_input_unavailable"
+        if parent_edge_is_cycle:
+            reason = "native_parent_cycle"
         else:
-            if not _parent_capture_matches(connection, selected, parent_input):
-                reason = "parent_capture_does_not_match_child_topology_evidence"
-            else:
-                spawn_calls = [
-                    call
-                    for call in parent_input.stored.bundle.tool_calls
-                    if call.native_tool_call_id == spawn_native_id
-                ]
-                membership_by_entity = {
-                    row.entity_id: row for row in parent_analysis.entity_memberships
-                }
-                candidates = sorted(
-                    {
-                        membership.source_episode_id
-                        for call in spawn_calls
-                        if (membership := membership_by_entity.get(call.tool_call_id)) is not None
-                        and membership.status is EpisodeMembershipStatus.ASSIGNED
-                        and membership.source_episode_id is not None
-                    }
+            try:
+                parent_analysis, parent_input = _analyze_session(
+                    connection,
+                    parent_session_id,
+                    cache,
+                    stack,
                 )
-                if len(spawn_calls) == 1 and len(candidates) == 1:
-                    status = DelegationStatus.LINKED
-                    parent_episode_id = candidates[0]
-                    spawn_tool_call_id = spawn_calls[0].tool_call_id
-                    spawn_event_id = spawn_calls[0].source_event_id
-                    reason = "native_spawn_tool_link"
-                elif len(spawn_calls) > 1 or len(candidates) > 1:
-                    status = DelegationStatus.AMBIGUOUS
-                    reason = "native_spawn_evidence_ambiguous"
+            except EpisodeAnalysisUnavailable:
+                reason = "parent_analysis_input_unavailable"
+            else:
+                if not _parent_capture_matches(connection, selected, parent_input):
+                    reason = "parent_capture_does_not_match_child_topology_evidence"
                 else:
-                    reason = "native_spawn_event_has_no_parent_episode"
+                    spawn_calls = [
+                        call
+                        for call in parent_input.stored.bundle.tool_calls
+                        if call.native_tool_call_id == spawn_native_id
+                    ]
+                    membership_by_entity = {
+                        row.entity_id: row for row in parent_analysis.entity_memberships
+                    }
+                    candidates = sorted(
+                        {
+                            membership.source_episode_id
+                            for call in spawn_calls
+                            if (membership := membership_by_entity.get(call.tool_call_id))
+                            is not None
+                            and membership.status is EpisodeMembershipStatus.ASSIGNED
+                            and membership.source_episode_id is not None
+                        }
+                    )
+                    if len(spawn_calls) == 1 and len(candidates) == 1:
+                        status = DelegationStatus.LINKED
+                        parent_episode_id = candidates[0]
+                        spawn_tool_call_id = spawn_calls[0].tool_call_id
+                        spawn_event_id = spawn_calls[0].source_event_id
+                        reason = "native_spawn_tool_link"
+                    elif len(spawn_calls) > 1 or len(candidates) > 1:
+                        status = DelegationStatus.AMBIGUOUS
+                        reason = "native_spawn_evidence_ambiguous"
+                    else:
+                        reason = "native_spawn_event_has_no_parent_episode"
     elif parent_link_status == "ambiguous":
         status = DelegationStatus.AMBIGUOUS
         reason = "native_parent_link_ambiguous"
-    elif parent_session_id in stack:
-        reason = "native_parent_cycle"
 
     parent_episode = (
         next(
@@ -773,6 +787,25 @@ def _resolve_delegation(
             )
         )
     return resolved, delegations
+
+
+def _native_parent_edge_is_cyclic(
+    connection: duckdb.DuckDBPyConnection,
+    child_session_id: str,
+    parent_session_id: str,
+) -> bool:
+    current_session_id: str | None = parent_session_id
+    visited: set[str] = set()
+    while current_session_id is not None and current_session_id not in visited:
+        if current_session_id == child_session_id:
+            return True
+        visited.add(current_session_id)
+        row = connection.execute(
+            "SELECT parent_session_id FROM sessions WHERE session_id = ?",
+            [current_session_id],
+        ).fetchone()
+        current_session_id = str(row[0]) if row is not None and row[0] is not None else None
+    return False
 
 
 def _parent_capture_matches(

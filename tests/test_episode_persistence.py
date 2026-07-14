@@ -23,6 +23,7 @@ from session_doctor.schemas import (
     AgentName,
     DelegationStatus,
     EpisodeAnalysis,
+    EpisodeDelegation,
     EpisodeMembershipStatus,
     EpisodeTopologyProjection,
     Message,
@@ -124,6 +125,54 @@ def persisted_conflicting_bundle(tmp_path: Path) -> tuple[DuckDBStore, str]:
         capability_declarations=CodexAdapter.capabilities,
     )
     return store, session_id
+
+
+def persisted_parent_cycle(database: Path) -> DuckDBStore:
+    store = DuckDBStore(database)
+    captured_at = datetime(2026, 7, 14, 12, tzinfo=UTC)
+    for session_id, parent_session_id in (("cycle-a", "cycle-b"), ("cycle-b", "cycle-a")):
+        source = SessionSource(
+            source_id=f"{session_id}-source",
+            agent_name=AgentName.CODEX,
+            source_path=f"/sessions/{session_id}.jsonl",
+        )
+        captured = store.capture_source(
+            source,
+            session_id.encode(),
+            captured_at=captured_at,
+        )
+        captured_bundle = store.create_single_source_bundle(source, captured, session_id)
+        store.record_lifecycle(captured_bundle.snapshot_bundle_id, terminal_observed=True)
+        store.insert_parsed_bundle(
+            source,
+            ParsedSessionBundle(
+                session=Session(
+                    session_id=session_id,
+                    source_id=source.source_id,
+                    agent_name=AgentName.CODEX,
+                    native_session_id=session_id,
+                    parent_session_id=parent_session_id,
+                    is_sidechain=True,
+                    metadata={
+                        "parent_link_status": "linked",
+                        "subagent_metadata": {"tool_use_id": f"spawn-{session_id}"},
+                    },
+                ),
+                raw_events=[
+                    RawEvent(
+                        event_id=f"{session_id}-event",
+                        source_id=source.source_id,
+                        agent_name=AgentName.CODEX,
+                        record_index=0,
+                    )
+                ],
+            ),
+            captured,
+            captured_bundle,
+            adapter_version=CodexAdapter.version,
+            capability_declarations=CodexAdapter.capabilities,
+        )
+    return store
 
 
 def test_episode_analysis_persists_deterministic_round_trip_and_membership(tmp_path) -> None:
@@ -357,6 +406,38 @@ def test_child_first_analysis_finalizes_parent_after_recursion_deferral(tmp_path
     assert [row.child_analysis_identity for row in parent_projection.delegations] == [
         child.analysis_identity
     ]
+
+
+def test_native_parent_cycle_is_deterministic_from_either_entry_session(tmp_path) -> None:
+    first_store = persisted_parent_cycle(tmp_path / "cycle-first.duckdb")
+    second_store = persisted_parent_cycle(tmp_path / "cycle-second.duckdb")
+
+    analyze_session_episodes(first_store, "cycle-a", first_store.database_path)
+    analyze_session_episodes(second_store, "cycle-b", second_store.database_path)
+
+    def persisted_cycle_rows(database: Path) -> dict[str, tuple[str, str]]:
+        with duckdb.connect(str(database), read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT run.session_id, run.analysis_identity, delegation.payload_json
+                FROM episode_analysis_runs AS run
+                JOIN episode_delegations AS delegation
+                  ON delegation.child_analysis_identity = run.analysis_identity
+                ORDER BY run.session_id
+                """
+            ).fetchall()
+        return {
+            str(session_id): (
+                str(analysis_identity),
+                str(EpisodeDelegation.model_validate_json(str(payload)).provenance["reason"]),
+            )
+            for session_id, analysis_identity, payload in rows
+        }
+
+    first_rows = persisted_cycle_rows(first_store.database_path)
+    second_rows = persisted_cycle_rows(second_store.database_path)
+    assert first_rows == second_rows
+    assert {reason for _, reason in first_rows.values()} == {"native_parent_cycle"}
 
 
 def test_child_capture_reference_uses_session_source_in_multi_source_bundle(tmp_path) -> None:
@@ -878,22 +959,110 @@ def test_prune_includes_child_with_unavailable_parent_analysis_and_descendants(t
         adapter_version=CodexAdapter.version,
         capability_declarations=CodexAdapter.capabilities,
     )
+    empty_child_source = SessionSource(
+        source_id="prune-empty-child-source",
+        agent_name=AgentName.CODEX,
+        source_path="/sessions/prune-empty-child.jsonl",
+    )
+    empty_child_capture = store.capture_source(empty_child_source, b"prune empty child")
+    empty_child_bundle = store.create_single_source_bundle(
+        empty_child_source,
+        empty_child_capture,
+        "prune-empty-child-native",
+    )
+    store.record_lifecycle(empty_child_bundle.snapshot_bundle_id, terminal_observed=True)
+    empty_child_session_id = "prune-empty-child-session"
+    store.insert_parsed_bundle(
+        empty_child_source,
+        ParsedSessionBundle(
+            session=Session(
+                session_id=empty_child_session_id,
+                source_id=empty_child_source.source_id,
+                agent_name=AgentName.CODEX,
+                native_session_id="prune-empty-child-native",
+                parent_session_id=parent_session_id,
+                is_sidechain=True,
+                metadata={"parent_link_status": "missing"},
+            )
+        ),
+        empty_child_capture,
+        empty_child_bundle,
+        adapter_version=CodexAdapter.version,
+        capability_declarations=CodexAdapter.capabilities,
+    )
+    empty_descendant_source = SessionSource(
+        source_id="prune-empty-descendant-source",
+        agent_name=AgentName.CODEX,
+        source_path="/sessions/prune-empty-descendant.jsonl",
+    )
+    empty_descendant_capture = store.capture_source(
+        empty_descendant_source,
+        b"prune empty descendant",
+    )
+    empty_descendant_bundle = store.create_single_source_bundle(
+        empty_descendant_source,
+        empty_descendant_capture,
+        "prune-empty-descendant-native",
+    )
+    store.record_lifecycle(empty_descendant_bundle.snapshot_bundle_id, terminal_observed=True)
+    empty_descendant_session_id = "prune-empty-descendant-session"
+    store.insert_parsed_bundle(
+        empty_descendant_source,
+        ParsedSessionBundle(
+            session=Session(
+                session_id=empty_descendant_session_id,
+                source_id=empty_descendant_source.source_id,
+                agent_name=AgentName.CODEX,
+                native_session_id="prune-empty-descendant-native",
+                parent_session_id=empty_child_session_id,
+                is_sidechain=True,
+                metadata={"parent_link_status": "missing"},
+            ),
+            raw_events=[
+                RawEvent(
+                    event_id="prune-empty-descendant-event",
+                    source_id=empty_descendant_source.source_id,
+                    agent_name=AgentName.CODEX,
+                    record_index=0,
+                )
+            ],
+        ),
+        empty_descendant_capture,
+        empty_descendant_bundle,
+        adapter_version=CodexAdapter.version,
+        capability_declarations=CodexAdapter.capabilities,
+    )
     store.capture_source(parent_source, b"newer unnormalized parent capture")
     child = analyze_session_episodes(store, child_session_id, store.database_path)
+    empty_child = analyze_session_episodes(
+        store,
+        empty_child_session_id,
+        store.database_path,
+    )
     assert child.delegations[0].parent_session_id == parent_session_id
     assert child.delegations[0].parent_analysis_identity is None
+    assert empty_child.episodes == []
+    assert empty_child.delegations == []
     with duckdb.connect(str(store.database_path), read_only=True) as connection:
         grandchild_analysis_row = connection.execute(
             "SELECT child_analysis_identity FROM episode_delegations WHERE parent_session_id = ?",
             [child_session_id],
         ).fetchone()
+        empty_descendant_analysis_row = connection.execute(
+            "SELECT analysis_identity FROM episode_analysis_runs WHERE session_id = ?",
+            [empty_descendant_session_id],
+        ).fetchone()
     assert grandchild_analysis_row is not None
+    assert empty_descendant_analysis_row is not None
     grandchild_analysis_id = str(grandchild_analysis_row[0])
+    empty_descendant_analysis_id = str(empty_descendant_analysis_row[0])
 
     dependencies = store.snapshot_dependencies(parent_snapshot_id)
 
     assert child.analysis_identity in dependencies.analysis_run_ids
     assert grandchild_analysis_id in dependencies.analysis_run_ids
+    assert empty_child.analysis_identity in dependencies.analysis_run_ids
+    assert empty_descendant_analysis_id in dependencies.analysis_run_ids
     assert dependencies.derived_row_counts["episode_topology_projections"] >= 1
     store.prune_snapshot(parent_snapshot_id, force=True)
     with duckdb.connect(str(store.database_path), read_only=True) as connection:
@@ -904,6 +1073,11 @@ def test_prune_includes_child_with_unavailable_parent_analysis_and_descendants(t
         assert connection.execute(
             "SELECT count(*) FROM episode_topology_projections WHERE analysis_identity = ?",
             [child.analysis_identity],
+        ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT count(*) FROM episode_analysis_runs "
+            "WHERE analysis_identity IN (SELECT unnest(?))",
+            [[empty_child.analysis_identity, empty_descendant_analysis_id]],
         ).fetchone() == (0,)
 
 
