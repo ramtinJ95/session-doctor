@@ -70,7 +70,7 @@ def analyze_session_episodes(
 ) -> EpisodeAnalysis:
     with write_connection(database_path) as connection, transaction(connection):
         cache: dict[str, tuple[EpisodeAnalysis, AnalysisInput]] = {}
-        analysis, _ = _analyze_session(connection, session_id, cache, (), False)
+        analysis, _ = _analyze_session(connection, session_id, cache, ())
         return analysis
 
 
@@ -79,18 +79,13 @@ def _analyze_session(
     session_id: str,
     cache: dict[str, tuple[EpisodeAnalysis, AnalysisInput]],
     stack: tuple[str, ...],
-    allow_equivalent_recapture: bool,
 ) -> tuple[EpisodeAnalysis, AnalysisInput]:
     if session_id in cache:
         return cache[session_id]
     if session_id in stack:
         raise EpisodeAnalysisUnavailable("delegation topology contains a session cycle")
 
-    selected = _select_analysis_input(
-        connection,
-        session_id,
-        allow_equivalent_recapture=allow_equivalent_recapture,
-    )
+    selected = _select_analysis_input(connection, session_id)
     segmented = segment_session(selected.stored.bundle, selected.lifecycle)
     episodes = _materialize_source_episodes(segmented, selected)
     topology_configuration = _delegation_configuration_identity(
@@ -156,14 +151,49 @@ def _analyze_session(
     )
     persisted = _persist_and_load(connection, analysis)
     cache[session_id] = (persisted, selected)
+    if selected.stored.bundle.session is not None:
+        child_rows = connection.execute(
+            """
+            SELECT session_id FROM sessions
+            WHERE parent_session_id = ? AND is_sidechain
+            ORDER BY session_id
+            """,
+            [session_id],
+        ).fetchall()
+        for child_row in child_rows:
+            child_session_id = str(child_row[0])
+            if child_session_id in (*stack, session_id):
+                continue
+            _analyze_session(
+                connection,
+                child_session_id,
+                cache,
+                (*stack, session_id),
+            )
+        inbound_delegations = [
+            EpisodeDelegation.model_validate_json(str(row[0]))
+            for row in connection.execute(
+                """
+                SELECT payload_json FROM episode_delegations
+                WHERE parent_analysis_identity = ?
+                ORDER BY child_analysis_identity, delegation_order
+                """,
+                [analysis_identity],
+            ).fetchall()
+        ]
+        topology = {
+            row.delegation_id: row for row in (*persisted.delegations, *inbound_delegations)
+        }
+        persisted = persisted.model_copy(
+            update={"delegations": [topology[key] for key in sorted(topology)]}
+        )
+        cache[session_id] = (persisted, selected)
     return persisted, selected
 
 
 def _select_analysis_input(
     connection: duckdb.DuckDBPyConnection,
     session_id: str,
-    *,
-    allow_equivalent_recapture: bool = False,
 ) -> AnalysisInput:
     row = connection.execute(
         """
@@ -180,8 +210,8 @@ def _select_analysis_input(
     latest = connection.execute(
         """
         SELECT latest_bundle.snapshot_bundle_id,
-            latest_snapshot.snapshot_content_id,
-            current_snapshot.snapshot_content_id
+            latest_bundle.primary_snapshot_id = latest_snapshot.snapshot_id,
+            latest_snapshot.snapshot_content_id = current_snapshot.snapshot_content_id
         FROM snapshot_bundles AS current_bundle
         JOIN source_snapshots AS current_snapshot
           ON current_snapshot.snapshot_id = current_bundle.primary_snapshot_id
@@ -197,16 +227,16 @@ def _select_analysis_input(
         """,
         [snapshot_bundle_id],
     ).fetchone()
-    latest_is_current_bundle = (
-        latest is not None and latest[0] is not None and str(latest[0]) == snapshot_bundle_id
-    )
-    latest_is_equivalent_recapture = (
-        allow_equivalent_recapture
-        and latest is not None
+    latest_is_current_primary = (
+        latest is not None
         and latest[0] is not None
-        and latest[1] == latest[2]
+        and bool(latest[1])
+        and str(latest[0]) == snapshot_bundle_id
     )
-    if not latest_is_current_bundle and not latest_is_equivalent_recapture:
+    latest_is_equivalent_member = (
+        latest is not None and latest[0] is not None and not bool(latest[1]) and bool(latest[2])
+    )
+    if not latest_is_current_primary and not latest_is_equivalent_member:
         raise EpisodeAnalysisUnavailable("latest capture has no current normalized projection")
 
     agent_name = AgentName(str(row[1]))
@@ -363,7 +393,7 @@ def _delegation_configuration_identity(
         session.metadata.get("parent_link_status") == "linked"
         and isinstance(session.parent_session_id, str)
         and isinstance(spawn_native_id, str)
-        and session.parent_session_id not in stack
+        and (session.parent_session_id not in stack or session.parent_session_id in cache)
     ):
         try:
             parent_analysis, parent_input = _analyze_session(
@@ -371,7 +401,6 @@ def _delegation_configuration_identity(
                 session.parent_session_id,
                 cache,
                 stack,
-                True,
             )
         except EpisodeAnalysisUnavailable:
             pass
@@ -423,7 +452,7 @@ def _resolve_delegation(
         parent_link_status == "linked"
         and isinstance(parent_session_id, str)
         and isinstance(spawn_native_id, str)
-        and parent_session_id not in stack
+        and (parent_session_id not in stack or parent_session_id in cache)
     ):
         try:
             parent_analysis, parent_input = _analyze_session(
@@ -431,7 +460,6 @@ def _resolve_delegation(
                 parent_session_id,
                 cache,
                 stack,
-                True,
             )
         except EpisodeAnalysisUnavailable:
             reason = "parent_analysis_input_unavailable"
@@ -616,6 +644,12 @@ def _derive_memberships(
                     candidate_episodes.append(source_episode)
                 else:
                     reason = "source_event_outside_episode"
+            if str(entity_kind) == "message" and payload.get("source_event_id") is None:
+                anchors.append(str(entity_id))
+                if source_episode := episode_by_anchor.get(str(entity_id)):
+                    candidate_episodes.append(source_episode)
+                else:
+                    reason = "message_anchor_outside_episode"
             source_event_id = payload.get("source_event_id")
             if isinstance(source_event_id, str):
                 anchors.append(source_event_id)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import duckdb
@@ -191,13 +191,26 @@ def test_claude_delegation_uses_spawn_provenance_without_synthetic_ordering(
     assert ingested.exit_code == 0, ingested.stdout
     store = DuckDBStore(database)
     with duckdb.connect(str(database), read_only=True) as connection:
+        root_row = connection.execute(
+            "SELECT session_id FROM sessions WHERE NOT is_sidechain"
+        ).fetchone()
         child_row = connection.execute(
             """
             SELECT session_id FROM sessions
             WHERE is_sidechain AND metadata_json LIKE '%agent-tool-2%'
             """
         ).fetchone()
-    assert child_row is not None
+    assert root_row is not None and child_row is not None
+
+    root_analysis = analyze_session_episodes(store, str(root_row[0]), database)
+
+    assert len(root_analysis.delegations) == 1
+    assert root_analysis.delegations[0].status is DelegationStatus.LINKED
+    assert root_analysis.delegations[0].parent_analysis_identity == (
+        root_analysis.analysis_identity
+    )
+    with duckdb.connect(str(database), read_only=True) as connection:
+        assert connection.execute("SELECT count(*) FROM episode_delegations").fetchone() == (2,)
 
     analysis = analyze_session_episodes(store, str(child_row[0]), database)
 
@@ -226,6 +239,114 @@ def test_claude_delegation_uses_spawn_provenance_without_synthetic_ordering(
             ).fetchall()
         }
     assert not any("continuation" in value or "family" in value for value in tables | columns)
+
+
+def test_message_id_fallback_anchor_receives_episode_membership(tmp_path) -> None:
+    store = DuckDBStore(tmp_path / "message-anchor.duckdb")
+    source = SessionSource(
+        source_id="message-source",
+        agent_name=AgentName.CODEX,
+        source_path="/sessions/message.jsonl",
+    )
+    captured = store.capture_source(source, b"message")
+    captured_bundle = store.create_single_source_bundle(source, captured, source.source_id)
+    store.record_lifecycle(captured_bundle.snapshot_bundle_id, terminal_observed=True)
+    session_id = "message-session"
+    parsed = ParsedSessionBundle(
+        session=Session(
+            session_id=session_id,
+            source_id=source.source_id,
+            agent_name=AgentName.CODEX,
+        ),
+        messages=[
+            Message(
+                message_id="fallback-message-anchor",
+                session_id=session_id,
+                role=NormalizedRole.USER,
+                text="Inspect this exact input",
+            )
+        ],
+    )
+    store.insert_parsed_bundle(
+        source,
+        parsed,
+        captured,
+        captured_bundle,
+        adapter_version=CodexAdapter.version,
+        capability_declarations=CodexAdapter.capabilities,
+    )
+
+    analysis = analyze_session_episodes(store, session_id, store.database_path)
+
+    membership = next(
+        row for row in analysis.entity_memberships if row.entity_id == "fallback-message-anchor"
+    )
+    assert membership.status is EpisodeMembershipStatus.ASSIGNED
+    assert membership.evidence_anchor_ids == ["fallback-message-anchor"]
+
+
+def test_pruning_unnormalized_predecessor_removes_downstream_episode_analysis(
+    tmp_path,
+) -> None:
+    store = DuckDBStore(tmp_path / "settled-prune.duckdb")
+    source = SessionSource(
+        source_id="settled-source",
+        agent_name=AgentName.CODEX,
+        source_path="/sessions/settled.jsonl",
+    )
+    first_at = datetime(2026, 7, 14, 12, tzinfo=UTC)
+    first = store.capture_source(source, b"same", captured_at=first_at)
+    first_bundle = store.create_single_source_bundle(source, first, source.source_id)
+    store.record_lifecycle(first_bundle.snapshot_bundle_id, terminal_observed=False)
+    second = store.capture_source(
+        source,
+        b"same",
+        captured_at=first_at + timedelta(seconds=31),
+    )
+    second_bundle = store.create_single_source_bundle(source, second, source.source_id)
+    store.record_lifecycle(second_bundle.snapshot_bundle_id, terminal_observed=False)
+    session_id = "settled-session"
+    parsed = ParsedSessionBundle(
+        session=Session(
+            session_id=session_id,
+            source_id=source.source_id,
+            agent_name=AgentName.CODEX,
+        ),
+        raw_events=[
+            RawEvent(
+                event_id="settled-event",
+                source_id=source.source_id,
+                agent_name=AgentName.CODEX,
+                record_index=0,
+            )
+        ],
+        messages=[
+            Message(
+                message_id="settled-message",
+                session_id=session_id,
+                source_event_id="settled-event",
+                role=NormalizedRole.USER,
+                text="Inspect settlement",
+            )
+        ],
+    )
+    store.insert_parsed_bundle(
+        source,
+        parsed,
+        second,
+        second_bundle,
+        adapter_version=CodexAdapter.version,
+        capability_declarations=CodexAdapter.capabilities,
+    )
+    analysis = analyze_session_episodes(store, session_id, store.database_path)
+
+    dependencies = store.snapshot_dependencies(first.snapshot_id)
+
+    assert dependencies.analysis_run_ids == (analysis.analysis_identity,)
+    store.prune_snapshot(first.snapshot_id, force=True)
+    with duckdb.connect(str(store.database_path), read_only=True) as connection:
+        assert connection.execute("SELECT count(*) FROM episode_analysis_runs").fetchone() == (0,)
+        assert connection.execute("SELECT count(*) FROM episodes").fetchone() == (0,)
 
 
 def test_delegated_episode_without_parent_evidence_is_explicitly_unavailable(tmp_path) -> None:

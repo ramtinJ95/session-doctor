@@ -226,9 +226,8 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
         [list(bundle_ids)],
     ).fetchall()
     downstream_lifecycle_bundle_ids = tuple(str(row[0]) for row in downstream_lifecycle_rows)
-    semantic_analysis_rows = (
-        connection.execute(
-            """
+    semantic_analysis_rows = connection.execute(
+        """
             WITH RECURSIVE affected (analysis_identity) AS (
                 SELECT a.analysis_identity
                 FROM semantic_analysis_runs AS a
@@ -242,11 +241,8 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
             )
             SELECT DISTINCT analysis_identity FROM affected ORDER BY analysis_identity
             """,
-            [list((*bundle_ids, *downstream_lifecycle_bundle_ids))],
-        ).fetchall()
-        if normalization_run_ids
-        else []
-    )
+        [list((*bundle_ids, *downstream_lifecycle_bundle_ids))],
+    ).fetchall()
     analysis_run_ids = tuple(str(row[0]) for row in semantic_analysis_rows)
     derived_row_counts: dict[str, int] = {
         "session_sources": len(source_ids),
