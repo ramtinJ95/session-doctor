@@ -416,6 +416,26 @@ def test_latest_capture_bundle_is_used_for_a_b_a_history(tmp_path) -> None:
         projection_id=analysis.episode_projection_id,
     )
     assert stored == analysis
+    dependencies = store.snapshot_dependencies(first_snapshot_id)
+    assert historical.episode_projection_id in dependencies.episode_projection_ids
+    assert analysis.episode_projection_id not in dependencies.episode_projection_ids
+    store.prune_snapshot(first_snapshot_id, force=True)
+    with pytest.raises(EpisodeAnalysisUnavailable, match="projection is unavailable"):
+        analyze_session_episodes(
+            store,
+            "session-history",
+            store.database_path,
+            projection_id=historical.episode_projection_id,
+        )
+    assert (
+        analyze_session_episodes(
+            store,
+            "session-history",
+            store.database_path,
+            projection_id=analysis.episode_projection_id,
+        )
+        == analysis
+    )
 
 
 def test_v1_payload_and_producer_modules_are_absent() -> None:

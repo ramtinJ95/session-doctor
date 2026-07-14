@@ -38,6 +38,7 @@ class PruneResult:
     dependent_source_ids: tuple[str, ...]
     dependent_session_ids: tuple[str, ...]
     dependent_analysis_run_ids: tuple[str, ...]
+    dependent_episode_projection_ids: tuple[str, ...]
     dependent_normalization_run_ids: tuple[str, ...]
     dependent_evaluation_packet_ids: tuple[str, ...]
     dependent_evaluation_corpus_ids: tuple[str, ...]
@@ -58,6 +59,7 @@ class PruneDependencies:
     source_ids: tuple[str, ...]
     session_ids: tuple[str, ...]
     analysis_run_ids: tuple[str, ...]
+    episode_projection_ids: tuple[str, ...]
     normalization_run_ids: tuple[str, ...]
     evaluation_packet_ids: tuple[str, ...]
     evaluation_corpus_ids: tuple[str, ...]
@@ -113,6 +115,7 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
             source_ids=(),
             session_ids=(),
             analysis_run_ids=(),
+            episode_projection_ids=(),
             normalization_run_ids=(),
             evaluation_packet_ids=(),
             evaluation_corpus_ids=(),
@@ -233,14 +236,38 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
             FROM semantic_analysis_runs AS a
             JOIN lifecycle_observations AS l USING (lifecycle_observation_id)
             WHERE l.snapshot_bundle_id IN (SELECT unnest(?))
+                OR (
+                    l.snapshot_bundle_id IN (SELECT unnest(?))
+                    AND l.state = 'settled_unknown'
+                )
             ORDER BY a.analysis_identity
             """,
-            [list((*bundle_ids, *downstream_lifecycle_bundle_ids))],
+            [list(bundle_ids), list(downstream_lifecycle_bundle_ids)],
         ).fetchall()
         if normalization_run_ids
         else []
     )
     analysis_run_ids = tuple(str(row[0]) for row in semantic_analysis_rows)
+    projection_rows = connection.execute(
+        """
+        SELECT DISTINCT projection.episode_projection_id
+        FROM episode_projection_runs AS projection
+        LEFT JOIN episode_projection_inputs AS inputs USING (episode_projection_id)
+        WHERE inputs.analysis_identity IN (SELECT unnest(?))
+            OR projection.episode_projection_id IN (
+                SELECT episode_projection_id
+                FROM episode_topology_candidate_witnesses
+                WHERE witness_bundle_id IN (SELECT unnest(?))
+                UNION
+                SELECT episode_projection_id
+                FROM episode_delegation_binding_witnesses
+                WHERE witness_bundle_id IN (SELECT unnest(?))
+            )
+        ORDER BY projection.episode_projection_id
+        """,
+        [list(analysis_run_ids), list(bundle_ids), list(bundle_ids)],
+    ).fetchall()
+    episode_projection_ids = tuple(str(row[0]) for row in projection_rows)
     derived_row_counts: dict[str, int] = {
         "session_sources": len(source_ids),
         "sessions": len(session_ids),
@@ -259,6 +286,36 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
     )
     derived_row_counts["normalization_semantics"] = len(normalization_run_ids)
     derived_row_counts["semantic_analysis_runs"] = len(semantic_analysis_rows)
+    for table_name in (
+        "episode_projection_runs",
+        "episode_projection_inputs",
+        "episode_topology_candidates",
+        "episode_topology_candidate_witnesses",
+        "episode_delegation_bindings",
+        "episode_delegation_binding_witnesses",
+        "episode_delegations",
+        "episode_entity_memberships",
+    ):
+        count_row = connection.execute(
+            f"SELECT count(*) FROM {table_name} WHERE episode_projection_id IN (SELECT unnest(?))",
+            [list(episode_projection_ids)],
+        ).fetchone()
+        derived_row_counts[table_name] = int(count_row[0]) if count_row else 0
+    for table_name in (
+        "episode_analysis_episodes",
+        "episode_analysis_user_anchors",
+        "episode_analysis_event_anchors",
+        "episode_analysis_boundaries",
+        "episode_boundary_evidence",
+        "episode_episode_boundaries",
+        "episode_analysis_observations",
+        "episode_observation_evidence",
+    ):
+        count_row = connection.execute(
+            f"SELECT count(*) FROM {table_name} WHERE analysis_identity IN (SELECT unnest(?))",
+            [list(analysis_run_ids)],
+        ).fetchone()
+        derived_row_counts[table_name] = int(count_row[0]) if count_row else 0
     for table_name in (
         "judge_annotations",
         "judge_panel_resolutions",
@@ -307,6 +364,7 @@ def _snapshot_dependencies(connection: DuckDBPyConnection, snapshot_id: str) -> 
         source_ids=source_ids,
         session_ids=session_ids,
         analysis_run_ids=analysis_run_ids,
+        episode_projection_ids=episode_projection_ids,
         normalization_run_ids=normalization_run_ids,
         evaluation_packet_ids=evaluation_packet_ids,
         evaluation_corpus_ids=evaluation_corpus_ids,
@@ -414,6 +472,50 @@ def latest_snapshot(
     )
 
 
+def delete_episode_projections(
+    connection: DuckDBPyConnection,
+    projection_ids: tuple[str, ...],
+) -> None:
+    if not projection_ids:
+        return
+    for table_name in (
+        "episode_entity_memberships",
+        "episode_delegations",
+        "episode_delegation_binding_witnesses",
+        "episode_delegation_bindings",
+        "episode_topology_candidate_witnesses",
+        "episode_topology_candidates",
+        "episode_projection_inputs",
+        "episode_projection_runs",
+    ):
+        connection.execute(
+            f"DELETE FROM {table_name} WHERE episode_projection_id IN (SELECT unnest(?))",
+            [list(projection_ids)],
+        )
+
+
+def delete_episode_analyses(
+    connection: DuckDBPyConnection,
+    analysis_ids: tuple[str, ...],
+) -> None:
+    if not analysis_ids:
+        return
+    for table_name in (
+        "episode_observation_evidence",
+        "episode_analysis_observations",
+        "episode_boundary_evidence",
+        "episode_episode_boundaries",
+        "episode_analysis_boundaries",
+        "episode_analysis_event_anchors",
+        "episode_analysis_user_anchors",
+        "episode_analysis_episodes",
+    ):
+        connection.execute(
+            f"DELETE FROM {table_name} WHERE analysis_identity IN (SELECT unnest(?))",
+            [list(analysis_ids)],
+        )
+
+
 def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> PruneResult:
     with write_connection(database_path) as connection, transaction(connection):
         dependencies = _snapshot_dependencies(connection, snapshot_id)
@@ -422,6 +524,7 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
         if (
             dependencies.source_ids
             or dependencies.normalization_run_ids
+            or dependencies.episode_projection_ids
             or dependencies.evaluation_packet_ids
             or dependencies.evaluation_corpus_ids
             or dependencies.audit_protocol_ids
@@ -547,6 +650,9 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
             """,
             [bundle_id],
         ).fetchall()
+
+        delete_episode_projections(connection, dependencies.episode_projection_ids)
+        delete_episode_analyses(connection, dependencies.analysis_run_ids)
 
         connection.execute(
             """
@@ -748,6 +854,7 @@ def prune_snapshot(database_path: Path, snapshot_id: str, *, force: bool) -> Pru
         dependent_source_ids=dependencies.source_ids,
         dependent_session_ids=dependencies.session_ids,
         dependent_analysis_run_ids=dependencies.analysis_run_ids,
+        dependent_episode_projection_ids=dependencies.episode_projection_ids,
         dependent_normalization_run_ids=dependencies.normalization_run_ids,
         dependent_evaluation_packet_ids=dependencies.evaluation_packet_ids,
         dependent_evaluation_corpus_ids=dependencies.evaluation_corpus_ids,

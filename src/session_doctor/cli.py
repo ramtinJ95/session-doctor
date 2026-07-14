@@ -549,6 +549,7 @@ def snapshots_prune(
                         "sources": dependencies.source_ids,
                         "sessions": dependencies.session_ids,
                         "semantic_analysis_runs": dependencies.analysis_run_ids,
+                        "episode_projections": dependencies.episode_projection_ids,
                         "normalization_runs": dependencies.normalization_run_ids,
                         "evaluation_packets": dependencies.evaluation_packet_ids,
                         "evaluation_corpora": dependencies.evaluation_corpus_ids,

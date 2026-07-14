@@ -933,6 +933,25 @@ def test_claude_native_delegation_accepts_complete_exact_handshake(tmp_path) -> 
     assert len(payload["delegation"]["bindings"]) == 1
     assert payload["delegation"]["bindings"][0]["witness_bundle_ids"]
     assert not payload["delegation"]["child_episode_edges"]
+    witness_bundle_id = payload["delegation"]["bindings"][0]["witness_bundle_ids"][0]
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        witness_snapshot = connection.execute(
+            "SELECT primary_snapshot_id FROM snapshot_bundles WHERE snapshot_bundle_id = ?",
+            [witness_bundle_id],
+        ).fetchone()
+        analysis_count = connection.execute(
+            "SELECT count(*) FROM semantic_analysis_runs"
+        ).fetchone()
+    assert witness_snapshot is not None
+    dependencies = store.snapshot_dependencies(str(witness_snapshot[0]))
+    assert payload["episode_projection_id"] in dependencies.episode_projection_ids
+    store.prune_snapshot(str(witness_snapshot[0]), force=True)
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        assert connection.execute("SELECT count(*) FROM episode_projection_runs").fetchone() == (0,)
+        assert (
+            connection.execute("SELECT count(*) FROM semantic_analysis_runs").fetchone()
+            == analysis_count
+        )
 
 
 def test_ingest_single_file_fails_immediately_on_recoverable_source_error(
