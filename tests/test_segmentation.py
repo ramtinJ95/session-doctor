@@ -331,8 +331,11 @@ def test_latest_capture_bundle_is_used_for_a_b_a_history(tmp_path) -> None:
         source_path="/sessions/history.jsonl",
     )
     latest_bundle_id = ""
+    first_snapshot_id = ""
     for content, event_id in ((b"A", "event-a"), (b"B", "event-b"), (b"A", "event-a")):
         captured = store.capture_source(source, content)
+        if not first_snapshot_id:
+            first_snapshot_id = captured.snapshot_id
         captured_bundle = store.create_single_source_bundle(source, captured, "native-history")
         latest_bundle_id = captured_bundle.snapshot_bundle_id
         parsed = ParsedSessionBundle(
@@ -373,10 +376,46 @@ def test_latest_capture_bundle_is_used_for_a_b_a_history(tmp_path) -> None:
     latest_lifecycle = store.lifecycle_for_bundle(latest_bundle_id)
     assert latest_lifecycle is not None
     assert analysis.episodes[0].first_user_anchor_id != "event-a"
-    assert analysis.lifecycle_observation_id == latest_lifecycle.lifecycle_observation_id
+    assert analysis.exact_inputs[0].lifecycle_observation_id == (
+        latest_lifecycle.lifecycle_observation_id
+    )
+    replay = analyze_session_episodes(store, "session-history", store.database_path)
+    assert replay.model_dump(mode="json") == analysis.model_dump(mode="json")
+    historical = analyze_session_episodes(
+        store,
+        "session-history",
+        store.database_path,
+        snapshot_id=first_snapshot_id,
+    )
+    assert historical.analysis_identity != analysis.analysis_identity
+    assert historical.episodes[0].episode_id == analysis.episodes[0].episode_id
+    with duckdb.connect(str(store.database_path), read_only=True) as connection:
+        normalized_keys = set(
+            connection.execute(
+                """
+                SELECT entity_kind, entity_id, entity_order
+                FROM normalized_entities WHERE normalization_run_id = ?
+                """,
+                [analysis.exact_inputs[0].normalization_run_id],
+            ).fetchall()
+        )
+        membership_keys = {
+            (row.entity_kind, row.entity_id, row.entity_order) for row in analysis.memberships
+        }
+        assert membership_keys == normalized_keys
+        assert connection.execute("SELECT count(*) FROM episode_analysis_episodes").fetchone() == (
+            2,
+        )
     store.capture_source(source, b"unparsed-C")
     with pytest.raises(EpisodeAnalysisUnavailable, match="latest capture"):
         analyze_session_episodes(store, "session-history", store.database_path)
+    stored = analyze_session_episodes(
+        store,
+        "session-history",
+        store.database_path,
+        projection_id=analysis.episode_projection_id,
+    )
+    assert stored == analysis
 
 
 def test_v1_payload_and_producer_modules_are_absent() -> None:

@@ -692,6 +692,14 @@ def analyze(
     output_format: Annotated[
         str, typer.Option("--format", help="Output format: terminal or json.")
     ] = "terminal",
+    snapshot_id: Annotated[
+        str | None,
+        typer.Option("--snapshot-id", help="Persist analysis for one exact historical snapshot."),
+    ] = None,
+    projection_id: Annotated[
+        str | None,
+        typer.Option("--projection-id", help="Read one stored projection without recomputing."),
+    ] = None,
 ) -> None:
     """Produce deterministic task episodes, boundaries, lifecycle, and observations."""
     require_analysis_output_format(output_format)
@@ -700,7 +708,13 @@ def analyze(
     require_existing_database_path(database_path)
     require_current_database_schema(database_path)
     try:
-        analysis = analyze_session_episodes(DuckDBStore(database_path), session_id, database_path)
+        analysis = analyze_session_episodes(
+            DuckDBStore(database_path),
+            session_id,
+            database_path,
+            snapshot_id=snapshot_id,
+            projection_id=projection_id,
+        )
     except EpisodeAnalysisUnavailable as exc:
         console.print(f"[red]Episode analysis unavailable:[/red] {exc}")
         raise typer.Exit(1) from exc
@@ -711,7 +725,16 @@ def analyze(
     console.print(
         f"[bold]Episode analysis[/bold] {session_id}: "
         f"{len(analysis.episodes)} episodes, {len(analysis.boundaries)} boundaries, "
-        f"lifecycle={analysis.lifecycle_state}"
+        f"identity={analysis.analysis_identity} projection={analysis.episode_projection_id}"
+    )
+    status_counts: dict[str, int] = {}
+    for membership in analysis.memberships:
+        status_counts[membership.membership_status] = (
+            status_counts.get(membership.membership_status, 0) + 1
+        )
+    console.print(
+        "- memberships "
+        + " ".join(f"{status}={count}" for status, count in sorted(status_counts.items()))
     )
     for episode in analysis.episodes:
         console.print(
@@ -726,6 +749,17 @@ def analyze(
     for observation in analysis.observations:
         console.print(
             f"- observation {observation.observation_id} kind={observation.observation_kind}"
+        )
+    for candidate in analysis.delegation.candidates:
+        console.print(
+            f"- delegation {candidate.topology_candidate_id} status={candidate.status} "
+            f"reason={candidate.reason}"
+        )
+    for edge in analysis.delegation.child_episode_edges:
+        console.print(
+            f"- delegation-edge {edge.delegation_id} "
+            f"parent={edge.parent_analysis_identity}:{edge.parent_episode_id} "
+            f"child={edge.child_analysis_identity}:{edge.child_episode_id}"
         )
 
 

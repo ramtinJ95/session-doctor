@@ -3,19 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from session_doctor.adapters import built_in_adapters
-from session_doctor.schemas import AgentName, EpisodeAnalysis
-from session_doctor.segmentation import segment_session
+from session_doctor.schemas import EpisodeAnalysisPayload, Session
 from session_doctor.store import DuckDBStore
-from session_doctor.store.connection import read_connection
-from session_doctor.store.json_values import parse_metadata
-from session_doctor.store.lifecycle import LifecycleObservation
-from session_doctor.store.normalization_runs import (
-    NORMALIZATION_CONFIGURATION_HASH,
-    NORMALIZATION_VERSION,
-    load_normalization_from_connection,
-    normalization_configuration_hash,
-    parser_version_key,
-    versions_compatible,
+from session_doctor.store.connection import read_connection, transaction, write_connection
+from session_doctor.store.episode_analysis import (
+    EpisodePersistenceConflict,
+    load_episode_analysis,
+    persist_requested_episode_analysis,
+    select_exact_episode_input,
 )
 
 
@@ -27,133 +22,60 @@ def analyze_session_episodes(
     _store: DuckDBStore,
     session_id: str,
     database_path: Path,
-) -> EpisodeAnalysis:
-    with read_connection(database_path) as connection:
-        connection.execute("BEGIN TRANSACTION")
-        row = connection.execute(
-            """
-            SELECT sources.snapshot_bundle_id, sessions.agent_name
-            FROM sessions
-            JOIN session_sources AS sources USING (source_id)
-            WHERE sessions.session_id = ?
-            """,
-            [session_id],
-        ).fetchone()
-        if row is None:
-            raise EpisodeAnalysisUnavailable("session has no normalized v2 input")
-        snapshot_bundle_id = str(row[0])
-        logical_source = connection.execute(
-            """
-            SELECT snapshots.logical_source_id
-            FROM snapshot_bundles AS bundles
-            JOIN source_snapshots AS snapshots
-                ON snapshots.snapshot_id = bundles.primary_snapshot_id
-            WHERE bundles.snapshot_bundle_id = ?
-            """,
-            [snapshot_bundle_id],
-        ).fetchone()
-        latest_snapshot = (
-            connection.execute(
-                """
-                SELECT snapshots.snapshot_id, bundles.snapshot_bundle_id
-                FROM source_snapshots AS snapshots
-                LEFT JOIN snapshot_bundles AS bundles
-                    ON bundles.primary_snapshot_id = snapshots.snapshot_id
-                WHERE snapshots.logical_source_id = ?
-                ORDER BY snapshots.capture_sequence DESC
-                LIMIT 1
-                """,
-                [str(logical_source[0])],
-            ).fetchone()
-            if logical_source is not None
-            else None
-        )
-        if (
-            latest_snapshot is None
-            or latest_snapshot[1] is None
-            or str(latest_snapshot[1]) != snapshot_bundle_id
-        ):
-            raise EpisodeAnalysisUnavailable("latest capture has no current normalized projection")
+    *,
+    snapshot_id: str | None = None,
+    projection_id: str | None = None,
+) -> EpisodeAnalysisPayload:
+    if snapshot_id is not None and projection_id is not None:
+        raise EpisodeAnalysisUnavailable("snapshot and projection options are mutually exclusive")
+    if projection_id is not None:
+        try:
+            with read_connection(database_path) as connection:
+                connection.execute("BEGIN TRANSACTION")
+                payload = load_episode_analysis(connection, projection_id, session_id)
+                connection.execute("COMMIT")
+                return payload
+        except (ValueError, EpisodePersistenceConflict) as exc:
+            raise EpisodeAnalysisUnavailable(str(exc)) from exc
 
-        agent_name = AgentName(str(row[1]))
-        adapter = next(item for item in built_in_adapters() if item.name is agent_name)
-        expected_configuration = normalization_configuration_hash(
-            NORMALIZATION_CONFIGURATION_HASH,
-            adapter.capabilities,
-        )
-        run_rows = connection.execute(
-            """
-            SELECT runs.normalization_run_id, runs.adapter_name,
-                runs.adapter_version, runs.normalization_version,
-                runs.configuration_hash
-            FROM normalization_run_bundles AS links
-            JOIN normalization_runs AS runs USING (normalization_run_id)
-            WHERE links.snapshot_bundle_id = ?
-            """,
-            [snapshot_bundle_id],
-        ).fetchall()
-        ordered_runs = sorted(
-            run_rows,
-            key=lambda run: (parser_version_key(str(run[2])) or (-1,), str(run[0])),
-            reverse=True,
-        )
-        selected_run_id = next(
-            (
-                str(run[0])
-                for run in ordered_runs
-                if run[1:]
-                == (
-                    adapter.name.value,
-                    adapter.version,
-                    NORMALIZATION_VERSION,
-                    expected_configuration,
-                )
-            ),
-            None,
-        )
-        if selected_run_id is None:
-            current_version = parser_version_key(adapter.version)
-            selected_run_id = next(
-                (
-                    str(run[0])
-                    for run in ordered_runs
-                    if str(run[1]) == adapter.name.value
-                    and str(run[3]) == NORMALIZATION_VERSION
-                    and str(run[4]) == expected_configuration
-                    and versions_compatible(
-                        parser_version_key(str(run[2])),
-                        current_version,
-                        str(run[2]),
-                        adapter.version,
-                    )
-                ),
-                None,
+    try:
+        with write_connection(database_path) as connection, transaction(connection):
+            adapter = adapter_for_immutable_session(connection, session_id, snapshot_id)
+            exact = select_exact_episode_input(
+                connection,
+                session_id,
+                adapter,
+                snapshot_id=snapshot_id,
             )
-        if selected_run_id is None:
-            raise EpisodeAnalysisUnavailable("normalization input is unavailable")
-        stored = load_normalization_from_connection(
-            connection,
-            selected_run_id,
-            snapshot_bundle_id,
-        )
-        lifecycle_row = connection.execute(
-            """
-            SELECT lifecycle_observation_id, snapshot_bundle_id, state,
-                observed_at, evidence_json
-            FROM lifecycle_observations
-            WHERE snapshot_bundle_id = ?
-            """,
-            [snapshot_bundle_id],
-        ).fetchone()
-        if stored is None or lifecycle_row is None:
-            raise EpisodeAnalysisUnavailable("lifecycle or normalization input is unavailable")
-        lifecycle = LifecycleObservation(
-            lifecycle_observation_id=str(lifecycle_row[0]),
-            snapshot_bundle_id=str(lifecycle_row[1]),
-            state=str(lifecycle_row[2]),
-            observed_at=lifecycle_row[3],
-            evidence=parse_metadata(lifecycle_row[4]),
-        )
-        analysis = segment_session(stored.bundle, lifecycle)
-        connection.execute("COMMIT")
-        return analysis
+            return persist_requested_episode_analysis(connection, exact)
+    except (ValueError, EpisodePersistenceConflict) as exc:
+        raise EpisodeAnalysisUnavailable(str(exc)) from exc
+
+
+def adapter_for_immutable_session(connection, session_id: str, snapshot_id: str | None):
+    rows = connection.execute(
+        """
+        SELECT entities.payload_json, snapshots.snapshot_id
+        FROM normalized_entities AS entities
+        JOIN normalization_run_bundles AS links USING (normalization_run_id)
+        JOIN snapshot_bundles AS bundles USING (snapshot_bundle_id)
+        JOIN source_snapshots AS snapshots
+            ON snapshots.snapshot_id = bundles.primary_snapshot_id
+        WHERE entities.entity_kind = 'session'
+        """
+    ).fetchall()
+    agent_names = {
+        session.agent_name
+        for payload, candidate_snapshot_id in rows
+        if (session := Session.model_validate_json(str(payload))).session_id == session_id
+        and (snapshot_id is None or str(candidate_snapshot_id) == snapshot_id)
+    }
+    if not agent_names:
+        raise EpisodeAnalysisUnavailable("session has no normalized v2 input")
+    if len(agent_names) != 1:
+        raise EpisodePersistenceConflict("session resolves to multiple immutable agent identities")
+    agent_name = next(iter(agent_names))
+    adapter = next((item for item in built_in_adapters() if item.name is agent_name), None)
+    if adapter is None:
+        raise EpisodeAnalysisUnavailable("session adapter is unavailable")
+    return adapter

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import Field, model_validator
 
@@ -77,3 +78,77 @@ class EpisodeAnalysis(SessionDoctorModel):
     episodes: list[TaskEpisode] = Field(default_factory=list)
     boundaries: list[EpisodeBoundary] = Field(default_factory=list)
     observations: list[EpisodeObservation] = Field(default_factory=list)
+
+
+class EpisodeExactInput(SessionDoctorModel):
+    analysis_identity: str
+    discovery_role: Literal["requested", "ancestor", "descendant", "candidate"]
+    session_id: str
+    normalization_run_id: str
+    snapshot_bundle_id: str
+    lifecycle_observation_id: str
+
+
+class EpisodeMembership(SessionDoctorModel):
+    source_analysis_identity: str
+    entity_kind: str
+    entity_id: str
+    normalization_run_id: str
+    entity_order: int = Field(ge=0)
+    membership_status: Literal["assigned", "ambiguous", "unassigned"]
+    source_episode_id: str | None = None
+    rollup_owner_status: Literal["known", "unavailable"]
+    rollup_owner_analysis_identity: str | None = None
+    rollup_owner_episode_id: str | None = None
+    aggregate_eligibility: Literal["direct", "excluded_delegated", "ineligible"]
+    reason: str
+    candidate_episode_keys: list[tuple[str, str]] = Field(default_factory=list)
+
+
+class EpisodeTopologyCandidate(SessionDoctorModel):
+    topology_candidate_id: str
+    direction: Literal["parent", "child"]
+    native_spawn_identity: str | None = None
+    parent_analysis_identity: str | None = None
+    child_analysis_identity: str | None = None
+    status: Literal["linked", "unavailable", "ambiguous", "not_child"]
+    reason: str
+    endpoint_status: Literal["observed", "missing", "unavailable"]
+    witness_bundle_ids: list[str] = Field(default_factory=list)
+
+
+class EpisodeDelegationBinding(SessionDoctorModel):
+    child_analysis_identity: str
+    parent_analysis_identity: str
+    parent_episode_id: str
+    spawn_entity_kind: str
+    spawn_entity_id: str
+    spawn_anchor_id: str
+    witness_bundle_ids: list[str]
+
+
+class EpisodeDelegationEdge(SessionDoctorModel):
+    delegation_id: str
+    child_analysis_identity: str
+    child_episode_id: str
+    parent_analysis_identity: str
+    parent_episode_id: str
+
+
+class EpisodeDelegation(SessionDoctorModel):
+    candidates: list[EpisodeTopologyCandidate] = Field(default_factory=list)
+    bindings: list[EpisodeDelegationBinding] = Field(default_factory=list)
+    child_episode_edges: list[EpisodeDelegationEdge] = Field(default_factory=list)
+
+
+class EpisodeAnalysisPayload(SessionDoctorModel):
+    schema_version: Literal["episode-analysis-v2"] = "episode-analysis-v2"
+    requested_session_id: str
+    analysis_identity: str
+    episode_projection_id: str
+    exact_inputs: list[EpisodeExactInput]
+    episodes: list[TaskEpisode]
+    boundaries: list[EpisodeBoundary]
+    observations: list[EpisodeObservation]
+    memberships: list[EpisodeMembership]
+    delegation: EpisodeDelegation
