@@ -6,7 +6,7 @@ import duckdb
 
 from session_doctor.ids import stable_id
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 BASE_DURABLE_TABLE_NAMES = (
     "source_blobs",
@@ -37,6 +37,22 @@ DERIVED_TABLE_NAMES = (
     "normalized_entities",
     "normalization_semantics",
     "semantic_analysis_runs",
+    "episode_analysis_episodes",
+    "episode_analysis_user_anchors",
+    "episode_analysis_event_anchors",
+    "episode_analysis_boundaries",
+    "episode_boundary_evidence",
+    "episode_episode_boundaries",
+    "episode_analysis_observations",
+    "episode_observation_evidence",
+    "episode_projection_runs",
+    "episode_projection_inputs",
+    "episode_topology_candidates",
+    "episode_topology_candidate_witnesses",
+    "episode_delegation_bindings",
+    "episode_delegation_binding_witnesses",
+    "episode_delegations",
+    "episode_entity_memberships",
     "session_sources",
     "sessions",
     "raw_events",
@@ -350,6 +366,264 @@ CREATE_TABLE_STATEMENTS = (
         started_at TIMESTAMP,
         completed_at TIMESTAMP,
         metadata_json VARCHAR NOT NULL DEFAULT '{}'
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_analysis_episodes (
+        analysis_identity VARCHAR NOT NULL,
+        episode_id VARCHAR NOT NULL,
+        episode_order INTEGER NOT NULL CHECK (episode_order >= 0),
+        segmentation_version VARCHAR NOT NULL,
+        session_id VARCHAR NOT NULL,
+        first_user_analysis_anchor_id VARCHAR NOT NULL,
+        last_user_analysis_anchor_id VARCHAR NOT NULL,
+        lifecycle_state VARCHAR NOT NULL,
+        provisional BOOLEAN NOT NULL,
+        PRIMARY KEY (analysis_identity, episode_id),
+        UNIQUE (analysis_identity, episode_order)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_analysis_user_anchors (
+        analysis_identity VARCHAR NOT NULL,
+        episode_id VARCHAR NOT NULL,
+        anchor_order INTEGER NOT NULL CHECK (anchor_order >= 0),
+        anchor_id VARCHAR NOT NULL,
+        anchor_kind VARCHAR NOT NULL CHECK (anchor_kind IN ('raw_event', 'message')),
+        entity_id VARCHAR NOT NULL,
+        payload_digest VARCHAR NOT NULL,
+        PRIMARY KEY (analysis_identity, episode_id, anchor_order),
+        UNIQUE (analysis_identity, episode_id, anchor_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_analysis_event_anchors (
+        analysis_identity VARCHAR NOT NULL,
+        episode_id VARCHAR NOT NULL,
+        anchor_order INTEGER NOT NULL CHECK (anchor_order >= 0),
+        anchor_id VARCHAR NOT NULL,
+        anchor_kind VARCHAR NOT NULL CHECK (anchor_kind IN ('raw_event', 'message')),
+        entity_id VARCHAR NOT NULL,
+        payload_digest VARCHAR NOT NULL,
+        PRIMARY KEY (analysis_identity, episode_id, anchor_order),
+        UNIQUE (analysis_identity, anchor_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_analysis_boundaries (
+        analysis_identity VARCHAR NOT NULL,
+        boundary_id VARCHAR NOT NULL,
+        boundary_order INTEGER NOT NULL CHECK (boundary_order >= 0),
+        left_user_analysis_anchor_id VARCHAR NOT NULL,
+        right_user_analysis_anchor_id VARCHAR NOT NULL,
+        decision VARCHAR NOT NULL CHECK (decision IN ('split', 'no_split', 'ambiguous')),
+        reason VARCHAR NOT NULL,
+        broad_goal_similarity DOUBLE CHECK (
+            broad_goal_similarity IS NULL OR
+            (broad_goal_similarity >= 0 AND broad_goal_similarity <= 1)
+        ),
+        PRIMARY KEY (analysis_identity, boundary_id),
+        UNIQUE (analysis_identity, boundary_order)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_boundary_evidence (
+        analysis_identity VARCHAR NOT NULL,
+        boundary_id VARCHAR NOT NULL,
+        evidence_order INTEGER NOT NULL CHECK (evidence_order >= 0),
+        evidence_anchor_id VARCHAR NOT NULL,
+        anchor_kind VARCHAR NOT NULL CHECK (anchor_kind IN ('raw_event', 'message')),
+        entity_id VARCHAR NOT NULL,
+        payload_digest VARCHAR NOT NULL,
+        PRIMARY KEY (analysis_identity, boundary_id, evidence_order),
+        UNIQUE (analysis_identity, boundary_id, evidence_anchor_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_episode_boundaries (
+        analysis_identity VARCHAR NOT NULL,
+        episode_id VARCHAR NOT NULL,
+        boundary_order INTEGER NOT NULL CHECK (boundary_order >= 0),
+        boundary_id VARCHAR NOT NULL,
+        PRIMARY KEY (analysis_identity, episode_id, boundary_order),
+        UNIQUE (analysis_identity, episode_id, boundary_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_analysis_observations (
+        analysis_identity VARCHAR NOT NULL,
+        observation_id VARCHAR NOT NULL,
+        episode_id VARCHAR NOT NULL,
+        observation_kind VARCHAR NOT NULL,
+        observation_order INTEGER NOT NULL CHECK (observation_order >= 0),
+        PRIMARY KEY (analysis_identity, observation_id),
+        UNIQUE (analysis_identity, episode_id, observation_order)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_observation_evidence (
+        analysis_identity VARCHAR NOT NULL,
+        observation_id VARCHAR NOT NULL,
+        evidence_order INTEGER NOT NULL CHECK (evidence_order >= 0),
+        evidence_anchor_id VARCHAR NOT NULL,
+        anchor_kind VARCHAR NOT NULL CHECK (anchor_kind IN ('raw_event', 'message')),
+        entity_id VARCHAR NOT NULL,
+        payload_digest VARCHAR NOT NULL,
+        PRIMARY KEY (analysis_identity, observation_id, evidence_order),
+        UNIQUE (analysis_identity, observation_id, evidence_anchor_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_projection_runs (
+        episode_projection_id VARCHAR PRIMARY KEY,
+        requested_analysis_identity VARCHAR NOT NULL,
+        requested_session_id VARCHAR NOT NULL,
+        topology_policy_version VARCHAR NOT NULL,
+        configuration_hash VARCHAR NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT current_timestamp
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_projection_inputs (
+        episode_projection_id VARCHAR NOT NULL,
+        analysis_identity VARCHAR NOT NULL,
+        input_order INTEGER NOT NULL CHECK (input_order >= 0),
+        discovery_role VARCHAR NOT NULL CHECK (
+            discovery_role IN ('requested', 'ancestor', 'descendant', 'candidate')
+        ),
+        session_id VARCHAR NOT NULL,
+        normalization_run_id VARCHAR NOT NULL,
+        snapshot_bundle_id VARCHAR NOT NULL,
+        lifecycle_observation_id VARCHAR NOT NULL,
+        PRIMARY KEY (episode_projection_id, analysis_identity),
+        UNIQUE (episode_projection_id, input_order)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_topology_candidates (
+        episode_projection_id VARCHAR NOT NULL,
+        topology_candidate_id VARCHAR NOT NULL,
+        direction VARCHAR NOT NULL CHECK (direction IN ('parent', 'child')),
+        native_spawn_identity VARCHAR,
+        parent_source_id VARCHAR,
+        parent_logical_source_id VARCHAR,
+        parent_snapshot_content_id VARCHAR,
+        child_source_id VARCHAR,
+        child_logical_source_id VARCHAR,
+        child_snapshot_content_id VARCHAR,
+        parent_analysis_identity VARCHAR,
+        child_analysis_identity VARCHAR,
+        status VARCHAR NOT NULL CHECK (
+            status IN ('linked', 'unavailable', 'ambiguous', 'not_child')
+        ),
+        reason VARCHAR NOT NULL,
+        endpoint_status VARCHAR NOT NULL CHECK (
+            endpoint_status IN ('observed', 'missing', 'unavailable')
+        ),
+        CHECK (
+            endpoint_status = 'observed' OR
+            parent_analysis_identity IS NULL OR child_analysis_identity IS NULL
+        ),
+        PRIMARY KEY (episode_projection_id, topology_candidate_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_topology_candidate_witnesses (
+        episode_projection_id VARCHAR NOT NULL,
+        topology_candidate_id VARCHAR NOT NULL,
+        witness_bundle_id VARCHAR NOT NULL,
+        parent_member_snapshot_id VARCHAR,
+        child_member_snapshot_id VARCHAR,
+        spawn_entity_kind VARCHAR,
+        spawn_entity_id VARCHAR,
+        spawn_anchor_id VARCHAR,
+        PRIMARY KEY (episode_projection_id, topology_candidate_id, witness_bundle_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_delegation_bindings (
+        episode_projection_id VARCHAR NOT NULL,
+        child_analysis_identity VARCHAR NOT NULL,
+        parent_analysis_identity VARCHAR NOT NULL,
+        parent_episode_id VARCHAR NOT NULL,
+        spawn_entity_kind VARCHAR NOT NULL,
+        spawn_entity_id VARCHAR NOT NULL,
+        spawn_anchor_id VARCHAR NOT NULL,
+        topology_policy_version VARCHAR NOT NULL,
+        provenance_json VARCHAR NOT NULL,
+        PRIMARY KEY (episode_projection_id, child_analysis_identity)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_delegation_binding_witnesses (
+        episode_projection_id VARCHAR NOT NULL,
+        child_analysis_identity VARCHAR NOT NULL,
+        witness_bundle_id VARCHAR NOT NULL,
+        topology_candidate_id VARCHAR NOT NULL,
+        parent_member_snapshot_id VARCHAR NOT NULL,
+        child_member_snapshot_id VARCHAR NOT NULL,
+        spawn_entity_kind VARCHAR NOT NULL,
+        spawn_entity_id VARCHAR NOT NULL,
+        spawn_anchor_id VARCHAR NOT NULL,
+        PRIMARY KEY (episode_projection_id, child_analysis_identity, witness_bundle_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_delegations (
+        episode_projection_id VARCHAR NOT NULL,
+        child_analysis_identity VARCHAR NOT NULL,
+        child_episode_id VARCHAR NOT NULL,
+        parent_analysis_identity VARCHAR NOT NULL,
+        parent_episode_id VARCHAR NOT NULL,
+        delegation_id VARCHAR NOT NULL,
+        PRIMARY KEY (episode_projection_id, child_analysis_identity, child_episode_id),
+        UNIQUE (episode_projection_id, delegation_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_entity_memberships (
+        episode_projection_id VARCHAR NOT NULL,
+        source_analysis_identity VARCHAR NOT NULL,
+        entity_kind VARCHAR NOT NULL,
+        entity_id VARCHAR NOT NULL,
+        normalization_run_id VARCHAR NOT NULL,
+        entity_order INTEGER NOT NULL CHECK (entity_order >= 0),
+        membership_status VARCHAR NOT NULL CHECK (
+            membership_status IN ('assigned', 'ambiguous', 'unassigned')
+        ),
+        source_episode_id VARCHAR,
+        rollup_owner_status VARCHAR NOT NULL CHECK (
+            rollup_owner_status IN ('known', 'unavailable')
+        ),
+        rollup_owner_analysis_identity VARCHAR,
+        rollup_owner_episode_id VARCHAR,
+        aggregate_eligibility VARCHAR NOT NULL CHECK (
+            aggregate_eligibility IN ('direct', 'excluded_delegated', 'ineligible')
+        ),
+        reason VARCHAR NOT NULL,
+        candidate_episode_keys_json VARCHAR NOT NULL,
+        CHECK (
+            (membership_status = 'assigned' AND source_episode_id IS NOT NULL) OR
+            (membership_status != 'assigned' AND source_episode_id IS NULL)
+        ),
+        CHECK (
+            (rollup_owner_status = 'known' AND
+                rollup_owner_analysis_identity IS NOT NULL AND
+                rollup_owner_episode_id IS NOT NULL) OR
+            (rollup_owner_status = 'unavailable' AND
+                rollup_owner_analysis_identity IS NULL AND
+                rollup_owner_episode_id IS NULL)
+        ),
+        CHECK (
+            (membership_status = 'assigned' AND candidate_episode_keys_json = '[]') OR
+            membership_status != 'assigned'
+        ),
+        PRIMARY KEY (
+            episode_projection_id, source_analysis_identity, entity_kind, entity_id
+        ),
+        UNIQUE (
+            episode_projection_id, source_analysis_identity, entity_kind, entity_order
+        )
     )
     """,
     """

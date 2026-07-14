@@ -46,6 +46,13 @@ def test_store_initialize_creates_expected_tables(tmp_path) -> None:
     assert info.exists
     assert info.schema_version == SCHEMA_VERSION
     assert set(TABLE_NAMES).issubset(set(info.tables))
+    assert {
+        "episode_analysis_episodes",
+        "episode_entity_memberships",
+        "episode_projection_runs",
+        "episode_topology_candidates",
+        "episode_delegations",
+    }.issubset(info.tables)
     assert "graph_nodes" not in info.tables
     assert "graph_edges" not in info.tables
     assert set(DURABLE_TABLE_NAMES) == {
