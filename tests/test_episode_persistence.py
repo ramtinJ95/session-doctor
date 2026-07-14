@@ -177,6 +177,7 @@ def test_force_prune_reports_and_removes_episode_projections(tmp_path) -> None:
             "episode_delegations",
             "episode_topology_projections",
             "episode_topology_projection_delegations",
+            "episode_topology_projection_unavailable_children",
         ):
             assert connection.execute(f"SELECT count(*) FROM {table_name}").fetchone() == (0,)
 
@@ -344,7 +345,15 @@ def test_parent_topology_preserves_unavailable_child_without_failing(tmp_path) -
 
     assert parent.topology_projection is not None
     assert parent.topology_projection.delegations == []
-    assert parent.topology_projection.unavailable_child_session_ids == [child_session_id]
+    assert [
+        (row.child_session_id, row.reason)
+        for row in parent.topology_projection.unavailable_children
+    ] == [
+        (
+            child_session_id,
+            "analysis_unavailable:latest capture has no current normalized projection",
+        )
+    ]
     with duckdb.connect(str(store.database_path), read_only=True) as connection:
         payload = connection.execute(
             "SELECT payload_json FROM episode_topology_projections "
@@ -353,6 +362,62 @@ def test_parent_topology_preserves_unavailable_child_without_failing(tmp_path) -
         ).fetchone()
     assert payload is not None
     assert child_session_id in str(payload[0])
+    dependencies = store.snapshot_dependencies(captured.snapshot_id)
+    assert dependencies.derived_row_counts["episode_topology_projections"] == 1
+    assert dependencies.derived_row_counts["episode_topology_projection_unavailable_children"] == 1
+
+    store.prune_snapshot(captured.snapshot_id, force=True)
+
+    with duckdb.connect(str(store.database_path), read_only=True) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM episode_topology_projections"
+        ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT count(*) FROM episode_topology_projection_unavailable_children"
+        ).fetchone() == (0,)
+
+
+def test_parent_topology_records_child_with_no_episode(tmp_path) -> None:
+    store, parent_session_id = persisted_conflicting_bundle(tmp_path)
+    child_source = SessionSource(
+        source_id="empty-child-source",
+        agent_name=AgentName.CODEX,
+        source_path="/sessions/empty-child.jsonl",
+    )
+    captured = store.capture_source(child_source, b"empty-child")
+    child_bundle = store.create_single_source_bundle(
+        child_source,
+        captured,
+        "empty-child-native",
+    )
+    store.record_lifecycle(child_bundle.snapshot_bundle_id, terminal_observed=True)
+    child_session_id = "empty-child-session"
+    store.insert_parsed_bundle(
+        child_source,
+        ParsedSessionBundle(
+            session=Session(
+                session_id=child_session_id,
+                source_id=child_source.source_id,
+                agent_name=AgentName.CODEX,
+                native_session_id="empty-child-native",
+                parent_session_id=parent_session_id,
+                is_sidechain=True,
+                metadata={"parent_link_status": "missing"},
+            )
+        ),
+        captured,
+        child_bundle,
+        adapter_version=CodexAdapter.version,
+        capability_declarations=CodexAdapter.capabilities,
+    )
+
+    parent = analyze_session_episodes(store, parent_session_id, store.database_path)
+
+    assert parent.topology_projection is not None
+    assert [
+        (row.child_session_id, row.reason)
+        for row in parent.topology_projection.unavailable_children
+    ] == [(child_session_id, "child_has_no_episode_delegation")]
 
 
 def test_pruning_unnormalized_predecessor_removes_downstream_episode_analysis(

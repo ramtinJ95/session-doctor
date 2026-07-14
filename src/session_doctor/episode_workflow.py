@@ -19,6 +19,7 @@ from session_doctor.schemas import (
     EpisodeKind,
     EpisodeMembershipStatus,
     EpisodeTopologyProjection,
+    EpisodeUnavailableChild,
     SemanticAnalysisComponents,
     TaskEpisode,
 )
@@ -161,20 +162,43 @@ def _analyze_session(
             """,
             [session_id],
         ).fetchall()
-        unavailable_child_session_ids: list[str] = []
+        unavailable_children: list[EpisodeUnavailableChild] = []
         for child_row in child_rows:
             child_session_id = str(child_row[0])
             if child_session_id in (*stack, session_id):
+                unavailable_children.append(
+                    EpisodeUnavailableChild(
+                        child_session_id=child_session_id,
+                        reason="native_parent_cycle",
+                    )
+                )
                 continue
             try:
-                _analyze_session(
+                child_analysis, _ = _analyze_session(
                     connection,
                     child_session_id,
                     cache,
                     (*stack, session_id),
                 )
-            except EpisodeAnalysisUnavailable:
-                unavailable_child_session_ids.append(child_session_id)
+            except EpisodeAnalysisUnavailable as exc:
+                unavailable_children.append(
+                    EpisodeUnavailableChild(
+                        child_session_id=child_session_id,
+                        reason=f"analysis_unavailable:{exc}",
+                    )
+                )
+            else:
+                has_parent_link = any(
+                    row.parent_analysis_identity == analysis_identity
+                    for row in child_analysis.delegations
+                )
+                if not has_parent_link:
+                    unavailable_children.append(
+                        EpisodeUnavailableChild(
+                            child_session_id=child_session_id,
+                            reason="child_has_no_episode_delegation",
+                        )
+                    )
         topology_delegations = [
             EpisodeDelegation.model_validate_json(str(row[0]))
             for row in connection.execute(
@@ -190,7 +214,7 @@ def _analyze_session(
             connection,
             analysis_identity,
             topology_delegations,
-            unavailable_child_session_ids,
+            unavailable_children,
         )
         persisted = persisted.model_copy(update={"topology_projection": topology_projection})
         cache[session_id] = (persisted, selected)
@@ -201,22 +225,23 @@ def _persist_topology_projection(
     connection: duckdb.DuckDBPyConnection,
     analysis_identity: str,
     delegations: list[EpisodeDelegation],
-    unavailable_child_session_ids: list[str],
+    unavailable_children: list[EpisodeUnavailableChild],
 ) -> EpisodeTopologyProjection:
     ordered_delegations = sorted(delegations, key=lambda row: row.delegation_id)
-    unavailable_children = sorted(set(unavailable_child_session_ids))
+    unavailable_by_session = {row.child_session_id: row for row in unavailable_children}
+    ordered_unavailable = [unavailable_by_session[key] for key in sorted(unavailable_by_session)]
     projection = EpisodeTopologyProjection(
         topology_projection_id=stable_id(
             "episode-topology-projection",
             DELEGATION_TOPOLOGY_VERSION,
             analysis_identity,
             *(row.delegation_id for row in ordered_delegations),
-            *unavailable_children,
+            *(f"{row.child_session_id}:{row.reason}" for row in ordered_unavailable),
         ),
         topology_version=DELEGATION_TOPOLOGY_VERSION,
         analysis_identity=analysis_identity,
         delegations=ordered_delegations,
-        unavailable_child_session_ids=unavailable_children,
+        unavailable_children=ordered_unavailable,
     )
     values = (
         projection.topology_projection_id,
@@ -253,6 +278,28 @@ def _persist_topology_projection(
     ).fetchall()
     if stored_links != [(row.delegation_id,) for row in ordered_delegations]:
         raise EpisodePersistenceConflict("episode topology projection is incomplete")
+    if ordered_unavailable:
+        connection.executemany(
+            "INSERT INTO episode_topology_projection_unavailable_children "
+            "VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
+            [
+                (
+                    projection.topology_projection_id,
+                    row.child_session_id,
+                    row.reason,
+                    row_order,
+                )
+                for row_order, row in enumerate(ordered_unavailable)
+            ],
+        )
+    stored_unavailable = connection.execute(
+        "SELECT child_session_id, unavailable_reason "
+        "FROM episode_topology_projection_unavailable_children "
+        "WHERE topology_projection_id = ? ORDER BY child_order",
+        [projection.topology_projection_id],
+    ).fetchall()
+    if stored_unavailable != [(row.child_session_id, row.reason) for row in ordered_unavailable]:
+        raise EpisodePersistenceConflict("episode unavailable-child projection is incomplete")
     return EpisodeTopologyProjection.model_validate_json(str(stored[3]))
 
 

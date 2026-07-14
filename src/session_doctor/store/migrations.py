@@ -45,6 +45,7 @@ DERIVED_TABLE_NAMES = (
     "episode_delegations",
     "episode_topology_projections",
     "episode_topology_projection_delegations",
+    "episode_topology_projection_unavailable_children",
     "session_sources",
     "sessions",
     "raw_events",
@@ -455,6 +456,16 @@ CREATE_TABLE_STATEMENTS = (
         delegation_order INTEGER NOT NULL CHECK (delegation_order >= 0),
         PRIMARY KEY (topology_projection_id, delegation_id),
         UNIQUE (topology_projection_id, delegation_order)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS episode_topology_projection_unavailable_children (
+        topology_projection_id VARCHAR NOT NULL,
+        child_session_id VARCHAR NOT NULL,
+        unavailable_reason VARCHAR NOT NULL,
+        child_order INTEGER NOT NULL CHECK (child_order >= 0),
+        PRIMARY KEY (topology_projection_id, child_session_id),
+        UNIQUE (topology_projection_id, child_order)
     )
     """,
     """

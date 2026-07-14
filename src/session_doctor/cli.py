@@ -719,7 +719,7 @@ def analyze(
         console.print(
             f"- topology {topology.topology_projection_id} "
             f"links={len(topology.delegations)} "
-            f"unavailable_children={len(topology.unavailable_child_session_ids)}"
+            f"unavailable_children={len(topology.unavailable_children)}"
         )
     for episode in analysis.episodes:
         console.print(

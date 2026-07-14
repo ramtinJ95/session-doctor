@@ -120,12 +120,17 @@ class EpisodeDelegation(SessionDoctorModel):
     provenance: dict[str, object] = Field(default_factory=dict)
 
 
+class EpisodeUnavailableChild(SessionDoctorModel):
+    child_session_id: str
+    reason: str
+
+
 class EpisodeTopologyProjection(SessionDoctorModel):
     topology_projection_id: str
     topology_version: str
     analysis_identity: str
     delegations: list[EpisodeDelegation] = Field(default_factory=list)
-    unavailable_child_session_ids: list[str] = Field(default_factory=list)
+    unavailable_children: list[EpisodeUnavailableChild] = Field(default_factory=list)
 
 
 class EpisodeAnalysis(SessionDoctorModel):
