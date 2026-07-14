@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
 import duckdb
@@ -24,6 +25,7 @@ from session_doctor.schemas import (
 )
 from session_doctor.segmentation import SEGMENTATION_VERSION, broad_goal_similarity, segment_session
 from session_doctor.store import DuckDBStore
+from session_doctor.store.connection import DatabaseOpenError
 from session_doctor.store.lifecycle import LifecycleObservation
 
 runner = CliRunner()
@@ -282,6 +284,45 @@ def test_episode_analysis_json_contains_no_v1_scores(tmp_path) -> None:
     assert "analysis_runs" not in tables
     assert "session_classifications" not in tables
     assert "score" not in analyzed.stdout
+
+
+def test_identical_episode_writers_leave_one_complete_projection(tmp_path) -> None:
+    fixture = "tests/fixtures/codex/basic-session.jsonl"
+    database = tmp_path / "concurrent.duckdb"
+    ingested = runner.invoke(
+        app,
+        ["ingest", "--agent", "codex", "--source", fixture, "--db", str(database)],
+    )
+    assert ingested.exit_code == 0
+    with duckdb.connect(str(database), read_only=True) as connection:
+        session_row = connection.execute("SELECT session_id FROM sessions").fetchone()
+    assert session_row is not None
+    session_id = str(session_row[0])
+    store = DuckDBStore(database)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(analyze_session_episodes, store, session_id, database) for _ in range(2)
+        ]
+    results = []
+    failures = []
+    for future in futures:
+        try:
+            results.append(future.result())
+        except (duckdb.Error, DatabaseOpenError, EpisodeAnalysisUnavailable) as exc:
+            failures.append(exc)
+    assert results
+    assert not failures or len(failures) == 1
+    assert not failures or "database busy" in str(failures[0])
+    if len(results) == 2:
+        assert results[0] == results[1]
+    with duckdb.connect(str(database), read_only=True) as connection:
+        assert connection.execute("SELECT count(*) FROM episode_projection_runs").fetchone() == (1,)
+        membership_count = connection.execute(
+            "SELECT count(*) FROM episode_entity_memberships"
+        ).fetchone()
+        normalized_count = connection.execute("SELECT count(*) FROM normalized_entities").fetchone()
+        assert membership_count == normalized_count
 
 
 def test_schema_v10_rebuild_drops_legacy_analysis_tables(tmp_path) -> None:

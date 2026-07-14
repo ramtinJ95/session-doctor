@@ -2,10 +2,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import duckdb
+
 from session_doctor.adapters import built_in_adapters
 from session_doctor.schemas import EpisodeAnalysisPayload, Session
 from session_doctor.store import DuckDBStore
-from session_doctor.store.connection import read_connection, transaction, write_connection
+from session_doctor.store.connection import (
+    DatabaseOpenError,
+    read_connection,
+    transaction,
+    write_connection,
+)
 from session_doctor.store.episode_analysis import (
     EpisodePersistenceConflict,
     load_episode_analysis,
@@ -50,6 +57,10 @@ def analyze_session_episodes(
             return persist_requested_episode_analysis(connection, exact)
     except (ValueError, EpisodePersistenceConflict) as exc:
         raise EpisodeAnalysisUnavailable(str(exc)) from exc
+    except (duckdb.TransactionException, DatabaseOpenError) as exc:
+        raise EpisodeAnalysisUnavailable(
+            "database busy while starting episode analysis; no partial rows were committed"
+        ) from exc
 
 
 def adapter_for_immutable_session(connection, session_id: str, snapshot_id: str | None):
